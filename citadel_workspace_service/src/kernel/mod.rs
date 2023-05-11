@@ -25,7 +25,7 @@ impl NetKernel for CitadelWorkspaceService {
 
         let listener_task = async move {
             while let Ok((conn, addr)) = listener.accept().await? {
-                handle_connection(conn, tx.clone());
+                handle_connection(conn, tx.clone(), rx.clone());
             }
         };
 
@@ -37,7 +37,7 @@ impl NetKernel for CitadelWorkspaceService {
                     InternalServicePayload::StartGroup {  } => {
 
                     }
-                    InternalServicePayload::Connect {  } => {
+                    InternalServicePayload::Connect { auth, connect_mode, udp_mode, keep_alive_timeout, session_security_settings } => {
                         let response_to_internal_client = match remote.connect().await {
                             Ok(conn_success) => {
                                 let cid = conn_success.cid;
@@ -64,15 +64,15 @@ impl NetKernel for CitadelWorkspaceService {
 
 
                     }
-                    InternalServicePayload::Register { .. } => {}
+                    InternalServicePayload::Register { addr, full_name, username, proposed_password, default_security_settings } => {}
                     InternalServicePayload::Message { message, cid, security_level } => {
                         let (sink, stream) = connection_map.get_mut(&cid).unwrap();
                         sink.set_security_level(security_level);
                         sink.send_message(message).await?;
                     }
-                    InternalServicePayload::Disconnect { .. } => {}
-                    InternalServicePayload::SendFile { .. } => {}
-                    InternalServicePayload::DownloadFile { .. } => {}
+                    InternalServicePayload::Disconnect { ticket, cid_opt, success, v_conn_type, message } => {}
+                    InternalServicePayload::SendFile { source, cid, transfer_security_level, chunk_size, transfer_type } => {}
+                    InternalServicePayload::DownloadFile { virtual_path, transfer_security_level, delete_on_pull } => {}
                 }
             }
         };
