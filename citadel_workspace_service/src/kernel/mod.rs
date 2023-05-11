@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use citadel_sdk::prelude::*;
 use tokio::io::AsyncWriteExt;
@@ -6,6 +7,7 @@ use citadel_workspace_types::InternalServicePayload;
 
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
+    // 127.0.0.1:55555
     pub bind_address: SocketAddr
 }
 
@@ -27,13 +29,32 @@ impl NetKernel for CitadelWorkspaceService {
             }
         };
 
+        let mut connection_map = HashMap::new();
+
         let inbound_command_task = async move {
             while let Some(command) = rx.recv().await {
                 match command {
+                    InternalServicePayload::StartGroup {  } => {
+
+                    }
                     InternalServicePayload::Connect {  } => {
                         let response_to_internal_client = match remote.connect().await {
                             Ok(conn_success) => {
+                                let cid = conn_success.cid;
+                                let connection_task_to_this_server = async move {
+                                    let read_task = async move {
 
+                                    };
+
+                                    let write_task = async move {
+
+                                    };
+
+                                    tokio::select! {
+                                        res0 = read_task => res0,
+                                        res1 = write_task => res1,
+                                    }
+                                };
                             },
 
                             Err(err) => {
@@ -44,7 +65,11 @@ impl NetKernel for CitadelWorkspaceService {
 
                     }
                     InternalServicePayload::Register { .. } => {}
-                    InternalServicePayload::Message { .. } => {}
+                    InternalServicePayload::Message { message, cid, security_level } => {
+                        let (sink, stream) = connection_map.get_mut(&cid).unwrap();
+                        sink.set_security_level(security_level);
+                        sink.send_message(message).await?;
+                    }
                     InternalServicePayload::Disconnect { .. } => {}
                     InternalServicePayload::SendFile { .. } => {}
                     InternalServicePayload::DownloadFile { .. } => {}
