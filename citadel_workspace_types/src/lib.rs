@@ -8,4 +8,7 @@ pub enum InternalServicePayload {
     Disconnect {},
     SendFile {},
     DownloadFile {},
+
+    // response
+    ResponseConnect {}
 }

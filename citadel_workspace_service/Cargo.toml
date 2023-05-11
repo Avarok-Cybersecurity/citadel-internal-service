@@ -7,3 +7,7 @@ edition = "2021"
 
 [dependencies]
 citadel_sdk = { workspace = true }
+tokio = { workspace = true, features = ["net", "rt", "macros"] }
+tokio-util = { workspace = true, features = ["codec"] }
+bincode2 = { workspace = true }
+citadel_workspace_types = { workspace = true }

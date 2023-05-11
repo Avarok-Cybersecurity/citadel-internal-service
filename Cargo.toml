@@ -3,6 +3,7 @@
 members = [
     "citadel_workspace_types",
     "citadel_workspace_service",
+    "citadel_workspace_cli"
 ]
 
 exclude = [
@@ -13,7 +14,11 @@ exclude = [
 # workspace deps
 citadel_workspace_types = { path = "./citadel_workspace_types", default-features = false, version = "0.1.0" }
 citadel_workspace_service = { path = "./citadel_workspace_service", default-features = false, version = "0.1.0" }
+citadel_workspace_cli = { path = "./citadel_workspace_cli", default-features = false, version = "0.1.0" }
 
 # standard deps
 serde = { version = "1.0.104", default-features = false }
 citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol" }
+tokio = { version = "1.28.1", default-features = false }
+tokio-util = { version = "0.7.8", default-features = false }
+bincode2 = { version = "2.0.1", default-features = false }
