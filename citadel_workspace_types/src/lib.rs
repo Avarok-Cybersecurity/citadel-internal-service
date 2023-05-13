@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum InternalServicePayload {
     Connect {},
     Register {},
@@ -8,8 +8,6 @@ pub enum InternalServicePayload {
     Disconnect {},
     SendFile {},
     DownloadFile {},
-    StartGroup {},
-
     // response
-    ResponseConnect {}
+    // ResponseConnect {},
 }

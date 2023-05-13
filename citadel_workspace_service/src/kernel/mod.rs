@@ -1,14 +1,13 @@
-use std::collections::HashMap;
-use std::net::SocketAddr;
 use citadel_sdk::prelude::*;
-use tokio::io::AsyncWriteExt;
-use tokio_util::codec::LengthDelimitedCodec;
 use citadel_workspace_types::InternalServicePayload;
+use std::net::SocketAddr;
+use std::{collections::HashMap, io::Bytes};
+use tokio_util::codec::LengthDelimitedCodec;
 
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
     // 127.0.0.1:55555
-    pub bind_address: SocketAddr
+    pub bind_address: SocketAddr,
 }
 
 #[async_trait]
@@ -24,30 +23,28 @@ impl NetKernel for CitadelWorkspaceService {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
         let listener_task = async move {
-            while let Ok((conn, addr)) = listener.accept().await? {
+            while let Ok((conn, addr)) = listener.accept().await {
                 handle_connection(conn, tx.clone());
             }
+            Ok(())
         };
 
-        let mut connection_map = HashMap::new();
+        // let mut connection_map = HashMap::new();
 
         let inbound_command_task = async move {
             while let Some(command) = rx.recv().await {
                 match command {
-                    InternalServicePayload::StartGroup {  } => {
-
-                    }
-                    InternalServicePayload::Connect {  } => {
-                        let response_to_internal_client = match remote.connect().await {
+                    InternalServicePayload::Connect {} => {
+                        let response_to_internal_client = match remote.register_with_defaults(self.bind_address, "R", "V", "12345678").await { //adde or self.bind_addr??
                             Ok(conn_success) => {
-                                let cid = conn_success.cid;
+                                // let cid = conn_success.cid;
                                 let connection_task_to_this_server = async move {
                                     let read_task = async move {
-
+                                      ()
                                     };
 
                                     let write_task = async move {
-
+                                      ()
                                     };
 
                                     tokio::select! {
@@ -55,26 +52,29 @@ impl NetKernel for CitadelWorkspaceService {
                                         res1 = write_task => res1,
                                     }
                                 };
-                            },
+                            }
 
                             Err(err) => {
-
+                              NetworkError::InternalError("Error");
                             }
                         };
-
-
                     }
                     InternalServicePayload::Register { .. } => {}
-                    InternalServicePayload::Message { message, cid, security_level } => {
-                        let (sink, stream) = connection_map.get_mut(&cid).unwrap();
-                        sink.set_security_level(security_level);
-                        sink.send_message(message).await?;
+                    InternalServicePayload::Message {
+                        // message,
+                        // cid,
+                        // security_level,
+                    } => {
+                        // let (sink, stream) = connection_map.get_mut(&cid).unwrap();
+                        // sink.set_security_level(security_level);
+                        // sink.send_message(message).await?;
                     }
                     InternalServicePayload::Disconnect { .. } => {}
                     InternalServicePayload::SendFile { .. } => {}
                     InternalServicePayload::DownloadFile { .. } => {}
                 }
             }
+            Ok(())
         };
 
         tokio::select! {
@@ -92,9 +92,13 @@ impl NetKernel for CitadelWorkspaceService {
     }
 }
 
-fn handle_connection(conn: tokio::net::TcpStream, to_kernel: tokio::sync::mpsc::UnboundedSender<InternalServicePayload>, mut from_kernel: tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>) {
+fn handle_connection(
+    conn: tokio::net::TcpStream,
+    to_kernel: tokio::sync::mpsc::UnboundedSender<InternalServicePayload>,
+    // mut from_kernel: tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>, we don't need this
+) {
     tokio::task::spawn(async move {
-        let framed = LengthDelimitedCodec::builder()
+        let mut framed = LengthDelimitedCodec::builder()
             .length_field_offset(0) // default value
             .max_frame_length(1024 * 1024 * 64) // 64 MB
             .length_field_type::<u32>()
@@ -102,27 +106,27 @@ fn handle_connection(conn: tokio::net::TcpStream, to_kernel: tokio::sync::mpsc::
             // `num_skip` is not needed, the default is to skip
             .new_framed(conn);
 
-        let (mut sink, stream) = framed.split();
+        let (sink, _stream) = framed.get_mut().split();
 
-        let write_task = async move {
-            while let Some(kernel_response) = from_kernel.recv().await {
-                let serialized_response = bincode2::serialize(&kernel_response)?;
-                sink.send(serialized_response.into()).await?;
-            }
-
-            Ok(())
-        };
+        // let write_task = async move {
+        //     while let Some(kernel_response) = from_kernel.recv().await {
+        //         let serialized_response = bincode2::serialize(&kernel_response).unwrap();
+        //         stream.write(serialized_response.as_slice()).await;
+        //     }
+        // };
 
         let read_task = async move {
-            while let Some(message) = stream.next().await {
-                let message = message?;
-                let request: InternalServicePayload  = bincode2::deserialize(&message)?;
-                to_kernel.send(request)?;
+            let mut vec = vec![];
+            while let Ok(_) = sink.try_read(&mut vec) {
+                let request: InternalServicePayload =
+                    bincode2::deserialize(&vec.as_slice()).unwrap();
+                to_kernel.send(request).unwrap();
+                ()
             }
         };
 
-        let result = tokio::select! {
-            res0 = write_task => res0,
+        tokio::select! {
+            // res0 = write_task => res0,
             res1 = read_task => res1,
         };
     });
