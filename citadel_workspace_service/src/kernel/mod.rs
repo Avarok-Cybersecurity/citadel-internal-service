@@ -1,10 +1,10 @@
 use citadel_sdk::prelude::*;
 use citadel_workspace_types::InternalServicePayload;
+use futures::stream::StreamExt;
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::{collections::HashMap, io::Bytes};
-use tokio::net::TcpStream;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::codec::LengthDelimitedCodec;
+use uuid::Uuid;
 
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
@@ -23,56 +23,66 @@ impl NetKernel for CitadelWorkspaceService {
         let mut remote = self.remote.clone().unwrap();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
-        let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
 
+        let mut hm = HashMap::new();
         let listener_task = async move {
             while let Ok((conn, addr)) = listener.accept().await {
-                handle_connection(conn, tx.clone(), &mut rx1);
+                let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
+                handle_connection(conn, tx.clone(), rx1);
+                let id = Uuid::new_v4().to_string();
+                &hm.insert(id, tx1);
             }
             Ok(())
         };
 
-        // let mut connection_map = HashMap::new();
+        let mut connection_map = HashMap::new();
 
         let inbound_command_task = async move {
             while let Some(command) = rx.recv().await {
                 match command {
                     InternalServicePayload::Connect {} => {
-                        let response_to_internal_client = match remote.register_with_defaults(self.bind_address, "R", "V", "12345678").await { //adde or self.bind_addr??
+                        let response_to_internal_client = match remote
+                            .connect_with_defaults(AuthenticationRequest::credentialed(1, "12134"))
+                            .await
+                        {
+                            //adde or self.bind_addr??
                             Ok(conn_success) => {
-                                // let cid = conn_success.cid;
-                                //transaction tx1 to handler using rx1
-                                let connection_task_to_this_server = async move {
-                                    let read_task = async move {
-                                      ()
-                                    };
+                                let cid = conn_success.cid;
 
-                                    let write_task = async move {
-                                      ()
-                                    };
+                                let (sink, mut stream) = conn_success.channel.split();
+                                connection_map.insert(cid, sink);
 
-                                    tokio::select! {
-                                        res0 = read_task => res0,
-                                        res1 = write_task => res1,
+                                let connection_read_stream = async move {
+                                    while let Some(message) = stream.next().await {
+                                        let message = InternalServicePayload::MessageReceived {
+                                            message: message.into_buffer(),
+                                            cid: cid,
+                                            peer_cid: 0,
+                                        };
+                                        // &hm.get("1").unwrap().send(message);
                                     }
                                 };
+                                tokio::spawn(connection_read_stream);
+                                //transaction tx1 to handler using rx1
                             }
 
                             Err(err) => {
-                              NetworkError::InternalError("Error");
+                                NetworkError::InternalError("Error");
                             }
                         };
                     }
                     InternalServicePayload::Register { .. } => {}
                     InternalServicePayload::Message {
-                        // message,
-                        // cid,
-                        // security_level,
+                        message,
+                        cid,
+                        security_level,
                     } => {
-                        // let (sink, stream) = connection_map.get_mut(&cid).unwrap();
-                        // sink.set_security_level(security_level);
-                        // sink.send_message(message).await?;
+                        let sink = connection_map.get_mut(&cid).unwrap();
+                        sink.set_security_level(security_level);
+                        sink.send_message(message.into()).await?;
+                        // todo!("Proper error handling")
                     }
+                    InternalServicePayload::MessageReceived { .. } => {}
                     InternalServicePayload::Disconnect { .. } => {}
                     InternalServicePayload::SendFile { .. } => {}
                     InternalServicePayload::DownloadFile { .. } => {}
@@ -99,8 +109,7 @@ impl NetKernel for CitadelWorkspaceService {
 fn handle_connection(
     conn: tokio::net::TcpStream,
     to_kernel: tokio::sync::mpsc::UnboundedSender<InternalServicePayload>,
-    // here we use rx1 to get the tx1 from match command => {...}
-    from_kernel: &'static mut tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>,
+    mut from_kernel: tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>,
 ) {
     tokio::task::spawn(async move {
         let mut framed = LengthDelimitedCodec::builder()
