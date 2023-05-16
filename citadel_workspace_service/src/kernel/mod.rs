@@ -67,9 +67,9 @@ impl NetKernel for CitadelWorkspaceService {
                                         match hm_for_conn.lock().await.get(&uuid) {
                                             Some(entry) => match entry.send(message) {
                                                 Ok(res) => res,
-                                                Err(_) => info!("tx not sent"),
+                                                Err(_) => info!(target: "citadel", "tx not sent"),
                                             },
-                                            None => info!("Hash map connection not found"),
+                                            None => info!(target:"citadel","Hash map connection not found"),
                                         }
                                     }
                                 };
@@ -92,7 +92,7 @@ impl NetKernel for CitadelWorkspaceService {
                                 sink.set_security_level(security_level);
                                 sink.send_message(message.into()).await?;
                             }
-                            None => info!(""),
+                            None => info!(target: "citadel","connection not found"),
                         };
                     }
                     InternalServicePayload::MessageReceived { .. } => {}
