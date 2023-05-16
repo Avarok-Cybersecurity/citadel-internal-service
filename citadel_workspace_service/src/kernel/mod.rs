@@ -4,6 +4,7 @@ use citadel_sdk::prelude::*;
 use tokio::io::AsyncWriteExt;
 use tokio_util::codec::LengthDelimitedCodec;
 use citadel_workspace_types::InternalServicePayload;
+use uuid::Uuid; // UUID for cid
 
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
@@ -21,11 +22,12 @@ impl NetKernel for CitadelWorkspaceService {
     async fn on_start(&self) -> Result<(), NetworkError> {
         let mut remote = self.remote.clone().unwrap();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
 
         let listener_task = async move {
             while let Ok((conn, addr)) = listener.accept().await? {
                 handle_connection(conn, tx.clone(), rx.clone());
+                //let local_cid = Uuid::new_v4();
             }
         };
 
@@ -37,7 +39,7 @@ impl NetKernel for CitadelWorkspaceService {
                     InternalServicePayload::StartGroup {  } => {
 
                     }
-                    InternalServicePayload::Connect { auth, connect_mode, udp_mode, keep_alive_timeout, session_security_settings } => {
+                    InternalServicePayload::Connect { auth, udp_mode, keep_alive_timeout, session_security_settings, on_channel_received } => {
                         let response_to_internal_client = match remote.connect().await {
                             Ok(conn_success) => {
                                 let cid = conn_success.cid;
@@ -64,7 +66,7 @@ impl NetKernel for CitadelWorkspaceService {
 
 
                     }
-                    InternalServicePayload::Register { addr, full_name, username, proposed_password, default_security_settings } => {}
+                    InternalServicePayload::Register { full_name, username, proposed_password, server_addr, udp_mode, default_security_settings, on_channel_received } => {}
                     InternalServicePayload::Message { message, cid, security_level } => {
                         let (sink, stream) = connection_map.get_mut(&cid).unwrap();
                         sink.set_security_level(security_level);
