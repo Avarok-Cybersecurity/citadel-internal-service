@@ -1,10 +1,13 @@
 use bytes::BytesMut;
 use citadel_sdk::prelude::SecurityLevel;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum InternalServicePayload {
-    Connect {},
+    Connect {
+        uuid: Uuid,
+    },
     Register {},
     Message {
         message: Vec<u8>,
@@ -19,6 +22,9 @@ pub enum InternalServicePayload {
     Disconnect {},
     SendFile {},
     DownloadFile {},
-    // response
-    // ResponseConnect {},
+
+    ServiceConnectionAccepted {
+        id: Uuid,
+    }, // response
+       // ResponseConnect {},
 }
