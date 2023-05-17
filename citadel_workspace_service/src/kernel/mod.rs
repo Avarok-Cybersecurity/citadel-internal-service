@@ -1,3 +1,4 @@
+use citadel_logging::info;
 use citadel_sdk::prelude::*;
 use citadel_workspace_types::InternalServicePayload;
 use futures::stream::StreamExt;
@@ -63,7 +64,13 @@ impl NetKernel for CitadelWorkspaceService {
                                             cid: cid,
                                             peer_cid: 0,
                                         };
-                                        hm_for_conn.lock().await.get(&uuid).unwrap().send(message);
+                                        match hm_for_conn.lock().await.get(&uuid) {
+                                            Some(entry) => match entry.send(message) {
+                                                Ok(res) => res,
+                                                Err(_) => info!(target: "citadel", "tx not sent"),
+                                            },
+                                            None => info!(target:"citadel","Hash map connection not found"),
+                                        }
                                     }
                                 };
                                 tokio::spawn(connection_read_stream);
@@ -80,10 +87,13 @@ impl NetKernel for CitadelWorkspaceService {
                         cid,
                         security_level,
                     } => {
-                        let sink = connection_map.get_mut(&cid).unwrap();
-                        sink.set_security_level(security_level);
-                        sink.send_message(message.into()).await?;
-                        // todo!("Proper error handling")
+                        match connection_map.get_mut(&cid) {
+                            Some(sink) => {
+                                sink.set_security_level(security_level);
+                                sink.send_message(message.into()).await?;
+                            }
+                            None => info!(target: "citadel","connection not found"),
+                        };
                     }
                     InternalServicePayload::MessageReceived { .. } => {}
                     InternalServicePayload::Disconnect { .. } => {}
@@ -129,20 +139,41 @@ fn handle_connection(
 
         let write_task = async move {
             let response = InternalServicePayload::ServiceConnectionAccepted { id: conn_id };
-            let serialized_response = bincode2::serialize(&response).unwrap();
-            sink.send(serialized_response.into()).await.unwrap();
+            match bincode2::serialize(&response) {
+                Ok(res) => {
+                    match sink.send(res.into()).await {
+                        Ok(_) => (),
+                        Err(_) => info!(target: "citadel", "w task: sink send err"),
+                    };
+                }
+                Err(_) => info!(target: "citadel", "write task: serialization err"),
+            };
+
             while let Some(kernel_response) = from_kernel.recv().await {
-                let serialized_response = bincode2::serialize(&kernel_response).unwrap();
-                sink.send(serialized_response.into()).await.unwrap();
+                match bincode2::serialize(&kernel_response) {
+                    Ok(k_res) => {
+                        match sink.send(k_res.into()).await {
+                            Ok(_) => (),
+                            Err(_) => info!(target: "citadel", "w task: sink send err"),
+                        };
+                    }
+                    Err(_) => info!(target: "citadel", "write task: serialization err"),
+                };
                 ()
             }
         };
 
         let read_task = async move {
             while let Some(message) = stream.next().await {
-                let request: InternalServicePayload =
-                    bincode2::deserialize(&*message.unwrap()).unwrap();
-                to_kernel.send(request).unwrap();
+                match bincode2::deserialize(&*message.unwrap()) {
+                    Ok(request) => {
+                        match to_kernel.send(request) {
+                            Ok(res) => res,
+                            Err(_) => info!(target: "citadel", "r task: sink send err"),
+                        };
+                    }
+                    Err(_) => info!(target: "citadel", "read task deserialization err"),
+                }
                 ()
             }
         };

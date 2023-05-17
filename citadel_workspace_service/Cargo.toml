@@ -18,3 +18,4 @@ uuid = { workspace = true, features = [
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ]}
 anyhow = {workspace = true}
+citadel_logging = {workspace = true}
