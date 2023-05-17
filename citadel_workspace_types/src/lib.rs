@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use bytes::BytesMut;
 use citadel_sdk::prelude::SecurityLevel;
 use serde::{Deserialize, Serialize};
@@ -7,8 +8,15 @@ use uuid::Uuid;
 pub enum InternalServicePayload {
     Connect {
         uuid: Uuid,
+        username: String,
+        password: String
     },
-    Register {},
+    ConnectSuccess {
+        cid: u64,
+    },
+    Register {
+        server_addr: SocketAddr
+    },
     Message {
         message: Vec<u8>,
         cid: u64,

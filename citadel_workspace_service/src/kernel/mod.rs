@@ -6,8 +6,9 @@ use futures::SinkExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio_util::codec::LengthDelimitedCodec;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use uuid::Uuid;
 
 pub struct CitadelWorkspaceService {
@@ -33,8 +34,8 @@ impl NetKernel for CitadelWorkspaceService {
             while let Ok((conn, _addr)) = listener.accept().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
                 let id = Uuid::new_v4();
-                handle_connection(conn, tx.clone(), rx1, id);
                 hm.lock().await.insert(id, tx1);
+                handle_connection(conn, tx.clone(), rx1, id);
             }
             Ok(())
         };
@@ -70,9 +71,10 @@ async fn payload_handler(
     hm: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServicePayload>>>>,
 ) {
     match command {
-        InternalServicePayload::Connect { uuid } => {
+        InternalServicePayload::Connect { uuid, server_addr, username, password } => {
+            // TODO: make sure register before connect.
             let response_to_internal_client = match remote
-                .connect_with_defaults(AuthenticationRequest::credentialed(1, "12134"))
+                .connect_with_defaults(AuthenticationRequest::credentialed(username, password))
                 .await
             {
                 //adde or self.bind_addr??
@@ -84,11 +86,18 @@ async fn payload_handler(
 
                     let hm_for_conn = hm.clone();
 
+                    // TODO: tell the client that the connection was successful
+                    let response = InternalServicePayload::ConnectSuccess {
+                        cid,
+                    };
+
+                    hm.lock().await.get(&uuid).unwrap().send(response).unwrap();
+
                     let connection_read_stream = async move {
                         while let Some(message) = stream.next().await {
                             let message = InternalServicePayload::MessageReceived {
                                 message: message.into_buffer(),
-                                cid: cid,
+                                cid,
                                 peer_cid: 0,
                             };
                             match hm_for_conn.lock().await.get(&uuid) {
@@ -132,6 +141,16 @@ async fn payload_handler(
     };
 }
 
+pub fn wrap_tcp_conn(tcp: TcpStream) -> Framed<TcpStream, LengthDelimitedCodec> {
+    LengthDelimitedCodec::builder()
+        .length_field_offset(0) // default value
+        .max_frame_length(1024 * 1024 * 64) // 64 MB
+        .length_field_type::<u32>()
+        .length_adjustment(0) // default value
+        // `num_skip` is not needed, the default is to skip
+        .new_framed(conn)
+}
+
 fn handle_connection(
     conn: tokio::net::TcpStream,
     to_kernel: tokio::sync::mpsc::UnboundedSender<InternalServicePayload>,
@@ -139,14 +158,7 @@ fn handle_connection(
     conn_id: Uuid,
 ) {
     tokio::task::spawn(async move {
-        let mut framed = LengthDelimitedCodec::builder()
-            .length_field_offset(0) // default value
-            .max_frame_length(1024 * 1024 * 64) // 64 MB
-            .length_field_type::<u32>()
-            .length_adjustment(0) // default value
-            // `num_skip` is not needed, the default is to skip
-            .new_framed(conn);
-
+        let framed = wrap_tcp_conn(conn);
         let (mut sink, mut stream) = framed.split();
 
         let write_task = async move {
@@ -199,25 +211,63 @@ fn handle_connection(
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
+    use std::time::Duration;
+    use citadel_sdk::prefabs::server::empty::EmptyKernel;
     use super::*;
     use tokio::net::TcpStream;
 
     #[tokio::test]
-    async fn test_citadel_workspace_service() {
-        let bind_address: SocketAddr = "127.0.0.1:".parse().unwrap(); // Random available port
-        let mut conn = TcpStream::connect(bind_address).await.unwrap();
-        let conn_id = Uuid::new_v4();
+    async fn test_citadel_workspace_service() -> Result<(), Box<dyn Error>> {
+        let server_bind_address: SocketAddr = "127.0.0.1:55555".parse().unwrap();
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+        // TCP client -> internal service -> empty kernel server
+        let server = NodeBuilder::default()
+            .with_node_type(NodeType::server(server_bind_address)?)
+            .with_backend(BackendType::InMemory)
+            .build(EmptyKernel::default())
+            .unwrap();
 
-        //I think I have to initialize the CitadelWorkspaceService {
-        //  remote
-        //  conn
-        // }
-        // to be able to access the functionality implemented already?
+        let server = tokio::task::spawn(server);
 
-        let (mut sink, stream) = conn.split();
+        let internal_service_kernel = CitadelWorkspaceService { remote: None, bind_address: bind_address_internal_service };
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel)?;
 
-        let command = InternalServicePayload::Connect {
-            uuid: Uuid::new_v4(),
-        };
+        let internal_service = tokio::task::spawn(internal_service);
+
+        // give time for both the server and internal service to run
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let mut conn = TcpStream::connect(bind_address_internal_service).await?;
+        let framed = wrap_tcp_conn(conn);
+
+        let (mut sink, mut stream) = framed.split();
+
+        let first_packet = stream.next().await.unwrap()?;
+        let greeter_packet: InternalServicePayload = bincode2::deserialize(&*first_packet)?;
+
+        if let InternalServicePayload::ServiceConnectionAccepted { id } = greeter_packet {
+            // TODO: first register, THEN connect
+            let command = InternalServicePayload::Connect {
+                server_addr: server_bind_address,
+                uuid: id,
+            };
+            let command = bincode2::serialize(&command)?;
+            // send the command
+            sink.send(command.into()).await?;
+
+            let second_packet = stream.next().await.unwrap()?;
+            let response_packet: InternalServicePayload = bincode2::deserialize(&*second_packet)?;
+            if let InternalServicePayload::ConnectSuccess { cid } = response_packet {
+                return Ok(())
+            } else {
+                panic!("Connection to server was not a success")
+            }
+        } else {
+            panic!("Wrong packet type");
+        }
     }
 }
