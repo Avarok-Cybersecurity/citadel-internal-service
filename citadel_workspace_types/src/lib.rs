@@ -10,7 +10,11 @@ pub enum InternalServicePayload {
         uuid: Uuid,
         server_addr: dyn ToSocketAddrs<Iter=()>,
         username: String,
-        password: SecBuffer
+        password: SecBuffer,
+        //connect_mode: ConnectMode,
+        //udp_mode: UdpMode,
+        //keep_alive_timeout: Option<Duration>,
+        //session_security_settings: SessionSecuritySettings
     },
     Register {
         full_name: String,
