@@ -86,18 +86,10 @@ async fn payload_handler(
     hm: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServicePayload>>>>,
 ) {
     match command {
-        InternalServicePayload::Connect {
-            uuid,
-            // server_addr,
-            username,
-            password,
-        } => {
+        InternalServicePayload::Connect { uuid, server_addr, username, password } => {
             // TODO: make sure register before connect.
             let response_to_internal_client = match remote
-                .connect_with_defaults(AuthenticationRequest::credentialed(
-                    username,
-                    password.into_bytes(),
-                ))
+                .connect_with_defaults(AuthenticationRequest::credentialed(username, password))
                 .await
             {
                 //adde or self.bind_addr??
@@ -196,6 +188,16 @@ pub fn wrap_tcp_conn(tcp: TcpStream) -> Framed<TcpStream, LengthDelimitedCodec> 
         .new_framed(tcp)
 }
 
+pub fn wrap_tcp_conn(tcp: TcpStream) -> Framed<TcpStream, LengthDelimitedCodec> {
+    LengthDelimitedCodec::builder()
+        .length_field_offset(0) // default value
+        .max_frame_length(1024 * 1024 * 64) // 64 MB
+        .length_field_type::<u32>()
+        .length_adjustment(0) // default value
+        // `num_skip` is not needed, the default is to skip
+        .new_framed(conn)
+}
+
 fn handle_connection(
     conn: tokio::net::TcpStream,
     to_kernel: tokio::sync::mpsc::UnboundedSender<InternalServicePayload>,
@@ -256,6 +258,9 @@ fn handle_connection(
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
+    use std::time::Duration;
+    use citadel_sdk::prefabs::server::empty::EmptyKernel;
     use super::*;
     use citadel_sdk::prefabs::server::empty::EmptyKernel;
     use std::error::Error;
@@ -266,6 +271,7 @@ mod tests {
     async fn test_citadel_workspace_service() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
+
         let server_bind_address: SocketAddr = "127.0.0.1:55555".parse().unwrap();
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
         // TCP client -> internal service -> empty kernel server
@@ -322,6 +328,7 @@ mod tests {
                 // server_addr: server_bind_address,
                 username: String::from("Radu"),
                 password: String::from("Password"),
+
                 uuid: id,
             };
             let command = bincode2::serialize(&command)?;
@@ -332,6 +339,7 @@ mod tests {
             let response_packet: InternalServicePayload = bincode2::deserialize(&*second_packet)?;
             if let InternalServicePayload::ConnectSuccess { cid } = response_packet {
                 return Ok(());
+
             } else {
                 panic!("Connection to server was not a success")
             }
