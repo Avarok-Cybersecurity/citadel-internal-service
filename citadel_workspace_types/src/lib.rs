@@ -28,7 +28,7 @@ pub enum InternalServicePayload {
         id: Uuid,
     },
     RegisterFailure {
-        message: String
+        message: String,
     },
     Message {
         message: Vec<u8>,
@@ -49,4 +49,3 @@ pub enum InternalServicePayload {
     }, // response
        // ResponseConnect {},
 }
-

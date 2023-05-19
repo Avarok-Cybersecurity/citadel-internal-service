@@ -56,12 +56,13 @@ impl NetKernel for CitadelWorkspaceService {
         }
     }
 
-    async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
-        todo!()
+    async fn on_node_event_received(&self, _message: NodeResult) -> Result<(), NetworkError> {
+        // TODO: handle disconnect properly by removing entries from the hashmap
+        Ok(())
     }
 
     async fn on_stop(&mut self) -> Result<(), NetworkError> {
-        todo!()
+        Ok(())
     }
 }
 
@@ -86,7 +87,11 @@ async fn payload_handler(
     hm: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServicePayload>>>>,
 ) {
     match command {
-        InternalServicePayload::Connect { uuid, username, password } => {
+        InternalServicePayload::Connect {
+            uuid,
+            username,
+            password,
+        } => {
             // TODO: make sure register before connect.
             let response_to_internal_client = match remote
                 .connect_with_defaults(AuthenticationRequest::credentialed(username, password))
@@ -153,7 +158,9 @@ async fn payload_handler(
                     send_response_to_tcp_client(hm, response, uuid).await
                 }
                 Err(err) => {
-                    let response = InternalServicePayload::RegisterFailure { message: err.to_string() };
+                    let response = InternalServicePayload::RegisterFailure {
+                        message: err.to_string(),
+                    };
                     send_response_to_tcp_client(hm, response, uuid).await
                 }
             };
@@ -254,15 +261,18 @@ fn handle_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
+    use bytes::BytesMut;
     use citadel_sdk::prefabs::server::empty::EmptyKernel;
+    use futures::stream::SplitSink;
     use std::error::Error;
     use std::time::Duration;
-    use bytes::BytesMut;
-    use bytes::Bytes;
-    use futures::stream::SplitSink;
     use tokio::net::TcpStream;
 
-    async fn send(sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>, command: InternalServicePayload) -> Result<(), Box<dyn Error>> {
+    async fn send(
+        sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
+        command: InternalServicePayload,
+    ) -> Result<(), Box<dyn Error>> {
         let command = bincode2::serialize(&command)?;
         // send the command
         sink.send(command.into()).await?;
