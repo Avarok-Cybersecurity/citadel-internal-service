@@ -9,7 +9,7 @@ pub enum InternalServicePayload {
     Connect {
         uuid: Uuid,
         username: String,
-        password: String,
+        password: SecBuffer,
     },
     ConnectSuccess {
         cid: u64,
@@ -18,6 +18,7 @@ pub enum InternalServicePayload {
         message: String,
     },
     Register {
+        uuid: Uuid,
         server_addr: SocketAddr,
         full_name: String,
         username: String,
@@ -26,7 +27,9 @@ pub enum InternalServicePayload {
     RegisterSuccess {
         id: Uuid,
     },
-    RegisterFailure {},
+    RegisterFailure {
+        message: String
+    },
     Message {
         message: Vec<u8>,
         cid: u64,

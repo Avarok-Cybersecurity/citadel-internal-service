@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-citadel_sdk = { workspace = true, features=["multi-threaded"]}
+citadel_sdk = { workspace = true, features=["multi-threaded"] }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
 tokio-util = { workspace = true, features = ["codec"] }
 bincode2 = { workspace = true }
@@ -20,3 +20,6 @@ uuid = { workspace = true, features = [
 anyhow = {workspace = true}
 citadel_logging = {workspace = true}
 bytes = {workspace = true}
+
+[dev-dependencies]
+citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }
