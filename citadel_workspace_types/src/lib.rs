@@ -1,7 +1,7 @@
-use std::net::SocketAddr;
 use bytes::BytesMut;
-use citadel_sdk::prelude::SecurityLevel;
+use citadel_sdk::prelude::{SecBuffer, SecurityLevel};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -9,14 +9,24 @@ pub enum InternalServicePayload {
     Connect {
         uuid: Uuid,
         username: String,
-        password: String
+        password: String,
     },
     ConnectSuccess {
         cid: u64,
     },
-    Register {
-        server_addr: SocketAddr
+    ConnectionFailure {
+        message: String,
     },
+    Register {
+        server_addr: SocketAddr,
+        full_name: String,
+        username: String,
+        proposed_password: SecBuffer,
+    },
+    RegisterSuccess {
+        id: Uuid,
+    },
+    RegisterFailure {},
     Message {
         message: Vec<u8>,
         cid: u64,
@@ -36,3 +46,4 @@ pub enum InternalServicePayload {
     }, // response
        // ResponseConnect {},
 }
+
