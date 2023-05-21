@@ -32,9 +32,8 @@ impl NetKernel for CitadelWorkspaceService {
         //read task
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
 
-        let ref hm: Arc<
-            tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>,
-        > = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let hm: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>> =
+            &Arc::new(tokio::sync::Mutex::new(HashMap::new()));
         let listener_task = async move {
             while let Ok((conn, _addr)) = listener.accept().await {
                 //from command handler to the TCP write tak in handle_connection
