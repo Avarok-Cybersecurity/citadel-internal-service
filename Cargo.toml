@@ -17,8 +17,17 @@ citadel_workspace_service = { path = "./citadel_workspace_service", default-feat
 #citadel_workspace_cli = { path = "./citadel_workspace_cli", default-features = false, version = "0.1.0" }
 
 # standard deps
-serde = { version = "1.0.104", default-features = false }
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol" }
+serde = { version = "1.0.104", features = ["derive"] }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "master"}
 tokio = { version = "1.28.1", default-features = false }
 tokio-util = { version = "0.7.8", default-features = false }
 bincode2 = { version = "2.0.1", default-features = false }
+futures = { version = "0.3.28", default-features = false }
+bytes = { version = "1.4.0", default-features = false }
+uuid = {version="1.3.3", features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]}
+anyhow = "1.0.71"
+citadel_logging = { version = "0.5.0", default-features = false }
