@@ -190,6 +190,8 @@ async fn payload_handler(
             connection_map.remove(&cid);
             match remote.send(request).await {
                 Ok(res) => {
+                    let disconnect_success = InternalServiceResponse::DisconnectSuccess(cid);
+                    send_response_to_tcp_client(hm, disconnect_success, uuid).await;
                     info!(target: "citadel", "Disconnected {res:?}")
                 }
                 Err(err) => info!(target: "citadel", "Unable to send disconnect request: {err:?}"),
@@ -355,7 +357,21 @@ mod tests {
                 let response_packet: InternalServiceResponse =
                     bincode2::deserialize(&*next_packet)?;
                 if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
-                    return Ok(());
+                    let disconnect_command = InternalServicePayload::Disconnect { uuid: id, cid };
+
+                    send(&mut sink, disconnect_command).await?;
+                    let next_packet = stream.next().await.unwrap()?;
+                    let response_disconnect_packet: InternalServiceResponse =
+                        bincode2::deserialize(&*next_packet)?;
+
+                    if let InternalServiceResponse::DisconnectSuccess(cid) =
+                        response_disconnect_packet
+                    {
+                        info!(target:"citadel", "Disconnected {cid}");
+                        Ok(())
+                    } else {
+                        panic!("Disconnection failed");
+                    }
                 } else {
                     panic!("Connection to server was not a success")
                 }
