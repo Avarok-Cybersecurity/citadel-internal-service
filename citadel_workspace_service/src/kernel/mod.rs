@@ -1,4 +1,4 @@
-use bytes::BufMut;
+
 use citadel_logging::info;
 use citadel_sdk::prelude::*;
 use citadel_workspace_types::InternalServicePayload;
@@ -30,7 +30,7 @@ impl NetKernel for CitadelWorkspaceService {
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
 
-        let ref hm = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let hm = &Arc::new(tokio::sync::Mutex::new(HashMap::new()));
         let listener_task = async move {
             while let Ok((conn, _addr)) = listener.accept().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
@@ -93,7 +93,7 @@ async fn payload_handler(
             password,
         } => {
             // TODO: make sure register before connect.
-            let response_to_internal_client = match remote
+            match remote
                 .connect_with_defaults(AuthenticationRequest::credentialed(username, password))
                 .await
             {
@@ -148,11 +148,11 @@ async fn payload_handler(
             proposed_password,
         } => {
             citadel_logging::info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
-            let register_success = match remote
+            match remote
                 .register_with_defaults(server_addr, full_name, username, proposed_password)
                 .await
             {
-                Ok(res) => {
+                Ok(_res) => {
                     // TODO: add trace ID to ensure uniqueness of request
                     let response = InternalServicePayload::RegisterSuccess { id: uuid };
                     send_response_to_tcp_client(hm, response, uuid).await
@@ -184,7 +184,7 @@ async fn payload_handler(
         InternalServicePayload::SendFile { .. } => {}
         InternalServicePayload::DownloadFile { .. } => {}
         InternalServicePayload::ServiceConnectionAccepted { .. } => {}
-        InternalServicePayload::ConnectSuccess { cid } => {}
+        InternalServicePayload::ConnectSuccess { cid: _ } => {}
         InternalServicePayload::RegisterSuccess { .. } => {}
         InternalServicePayload::RegisterFailure { .. } => todo!(),
     }
@@ -232,13 +232,13 @@ fn handle_connection(
                     }
                     Err(_) => info!(target: "citadel", "write task: serialization err"),
                 };
-                ()
+                
             }
         };
 
         let read_task = async move {
             while let Some(message) = stream.next().await {
-                match bincode2::deserialize(&*message.unwrap()) {
+                match bincode2::deserialize(&message.unwrap()) {
                     Ok(request) => {
                         match to_kernel.send(request) {
                             Ok(res) => res,
@@ -247,7 +247,7 @@ fn handle_connection(
                     }
                     Err(_) => info!(target: "citadel", "read task deserialization err"),
                 }
-                ()
+                
             }
         };
 
@@ -262,8 +262,8 @@ fn handle_connection(
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use bytes::BytesMut;
-    use citadel_sdk::prefabs::server::empty::EmptyKernel;
+    
+    
     use futures::stream::SplitSink;
     use std::error::Error;
     use std::time::Duration;
@@ -317,7 +317,7 @@ mod tests {
 
         let first_packet = stream.next().await.unwrap()?;
         info!(target: "citadel", "First packet");
-        let greeter_packet: InternalServicePayload = bincode2::deserialize(&*first_packet)?;
+        let greeter_packet: InternalServicePayload = bincode2::deserialize(&first_packet)?;
 
         info!(target: "citadel", "Greeter packet {greeter_packet:?}");
 
@@ -332,7 +332,7 @@ mod tests {
             send(&mut sink, register_command).await?;
 
             let second_packet = stream.next().await.unwrap()?;
-            let response_packet: InternalServicePayload = bincode2::deserialize(&*second_packet)?;
+            let response_packet: InternalServicePayload = bincode2::deserialize(&second_packet)?;
             if let InternalServicePayload::RegisterSuccess { id } = response_packet {
                 // now, connect to the server
                 let command = InternalServicePayload::Connect {
@@ -345,9 +345,9 @@ mod tests {
                 send(&mut sink, command).await?;
 
                 let next_packet = stream.next().await.unwrap()?;
-                let response_packet: InternalServicePayload = bincode2::deserialize(&*next_packet)?;
-                if let InternalServicePayload::ConnectSuccess { cid } = response_packet {
-                    return Ok(());
+                let response_packet: InternalServicePayload = bincode2::deserialize(&next_packet)?;
+                if let InternalServicePayload::ConnectSuccess { cid: _ } = response_packet {
+                    Ok(())
                 } else {
                     panic!("Connection to server was not a success")
                 }
