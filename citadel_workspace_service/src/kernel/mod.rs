@@ -88,8 +88,13 @@ async fn payload_handler(
     match command {
         InternalServicePayload::Connect {
             uuid,
+            server_addr,
             username,
             password,
+            connect_mode,
+            udp_mode,
+            keep_alive_timeout,
+            session_security_settings
         } => {
             // TODO: make sure register before connect.
             match remote
@@ -113,9 +118,10 @@ async fn payload_handler(
                     let connection_read_stream = async move {
                         while let Some(message) = stream.next().await {
                             let message = InternalServicePayload::MessageReceived {
-                                message: message.into_buffer(),
+                                message: SecureProtocolPacket::from(message),
                                 cid,
                                 peer_cid: 0,
+                                security_level: Default::default(),
                             };
                             match hm_for_conn.lock().await.get(&uuid) {
                                 Some(entry) => match entry.send(message) {
@@ -145,6 +151,7 @@ async fn payload_handler(
             full_name,
             username,
             proposed_password,
+            default_security_settings,
         } => {
             citadel_logging::info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
             match remote
@@ -182,6 +189,7 @@ async fn payload_handler(
         InternalServicePayload::Disconnect { .. } => {}
         InternalServicePayload::SendFile { .. } => {}
         InternalServicePayload::DownloadFile { .. } => {}
+        InternalServicePayload::StartGroup { .. } => {}
         InternalServicePayload::ServiceConnectionAccepted { .. } => {}
         InternalServicePayload::ConnectSuccess { cid: _ } => {}
         InternalServicePayload::RegisterSuccess { .. } => {}
@@ -324,6 +332,7 @@ mod tests {
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
                 proposed_password: String::from("test12345").into_bytes().into(),
+                default_security_settings: Default::default(),
             };
             send(&mut sink, register_command).await?;
 
@@ -335,7 +344,12 @@ mod tests {
                     // server_addr: server_bind_address,
                     username: String::from("john_doe"),
                     password: String::from("test12345").into_bytes().into(),
+                    connect_mode: Default::default(),
+                    udp_mode: Default::default(),
+                    keep_alive_timeout: None,
                     uuid: id,
+                    server_addr: server_bind_address,
+                    session_security_settings: Default::default(),
                 };
 
                 send(&mut sink, command).await?;
