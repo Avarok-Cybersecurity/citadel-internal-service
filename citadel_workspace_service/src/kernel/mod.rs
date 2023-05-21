@@ -32,9 +32,9 @@ impl NetKernel for CitadelWorkspaceService {
         //read task
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
 
-        let ref hm: &Arc<
+        let ref hm: Arc<
             tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>,
-        > = &Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        > = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
         let listener_task = async move {
             while let Ok((conn, _addr)) = listener.accept().await {
                 //from command handler to the TCP write tak in handle_connection
@@ -97,7 +97,7 @@ async fn payload_handler(
             username,
             password,
         } => {
-            let response_to_internal_client = match remote
+            match remote
                 .connect_with_defaults(AuthenticationRequest::credentialed(username, password))
                 .await
             {
@@ -150,11 +150,11 @@ async fn payload_handler(
             proposed_password,
         } => {
             citadel_logging::info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
-            let register_success = match remote
+            match remote
                 .register_with_defaults(server_addr, full_name, username, proposed_password)
                 .await
             {
-                Ok(res) => {
+                Ok(_res) => {
                     // TODO: add trace ID to ensure uniqueness of request
                     let response = InternalServiceResponse::RegisterSuccess { id: uuid };
                     send_response_to_tcp_client(hm, response, uuid).await
@@ -170,7 +170,7 @@ async fn payload_handler(
         InternalServicePayload::Message {
             message,
             cid,
-            user_cid,
+            user_cid: _,
             security_level,
         } => {
             match connection_map.get_mut(&cid) {
@@ -220,7 +220,7 @@ async fn sink_send_payload(
     payload: &InternalServiceResponse,
     sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
 ) {
-    let payload = serialize_payload(&payload);
+    let payload = serialize_payload(payload);
     match sink.send(payload.into()).await {
         Ok(_) => (),
         Err(_) => info!(target: "citadel", "w task: sink send err"),
@@ -258,7 +258,7 @@ fn handle_connection(
 
         let read_task = async move {
             while let Some(message) = stream.next().await {
-                send_to_kernel(&*message.unwrap(), &to_kernel);
+                send_to_kernel(&message.unwrap(), &to_kernel);
             }
             info!(target: "citadel", "Disconnected");
         };
