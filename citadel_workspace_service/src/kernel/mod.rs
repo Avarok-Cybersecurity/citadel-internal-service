@@ -1,4 +1,3 @@
-
 use citadel_logging::info;
 use citadel_sdk::prelude::*;
 use citadel_workspace_types::InternalServicePayload;
@@ -232,7 +231,6 @@ fn handle_connection(
                     }
                     Err(_) => info!(target: "citadel", "write task: serialization err"),
                 };
-                
             }
         };
 
@@ -247,7 +245,6 @@ fn handle_connection(
                     }
                     Err(_) => info!(target: "citadel", "read task deserialization err"),
                 }
-                
             }
         };
 
@@ -262,8 +259,7 @@ fn handle_connection(
 mod tests {
     use super::*;
     use bytes::Bytes;
-    
-    
+
     use futures::stream::SplitSink;
     use std::error::Error;
     use std::time::Duration;
