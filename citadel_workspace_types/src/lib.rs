@@ -5,17 +5,37 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum InternalServicePayload {
-    Connect {
-        uuid: Uuid,
-        username: String,
-        password: SecBuffer,
-    },
+pub enum InternalServiceResponse {
     ConnectSuccess {
         cid: u64,
     },
     ConnectionFailure {
         message: String,
+    },
+    RegisterSuccess {
+        id: Uuid,
+    },
+    RegisterFailure {
+        message: String,
+    },
+    ServiceConnectionAccepted {
+        id: Uuid,
+    },
+    MessageReceived {
+        message: BytesMut,
+        cid: u64,
+        peer_cid: u64,
+    },
+    DisconnectSuccess(u64),
+    DisconnectFailed(u64),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum InternalServicePayload {
+    Connect {
+        uuid: Uuid,
+        username: String,
+        password: SecBuffer,
     },
     Register {
         uuid: Uuid,
@@ -24,28 +44,16 @@ pub enum InternalServicePayload {
         username: String,
         proposed_password: SecBuffer,
     },
-    RegisterSuccess {
-        id: Uuid,
-    },
-    RegisterFailure {
-        message: String,
-    },
     Message {
         message: Vec<u8>,
         cid: u64,
+        user_cid: u64,
         security_level: SecurityLevel,
     },
-    MessageReceived {
-        message: BytesMut,
+    Disconnect {
+        uuid: Uuid,
         cid: u64,
-        peer_cid: u64,
     },
-    Disconnect {},
     SendFile {},
     DownloadFile {},
-
-    ServiceConnectionAccepted {
-        id: Uuid,
-    }, // response
-       // ResponseConnect {},
 }

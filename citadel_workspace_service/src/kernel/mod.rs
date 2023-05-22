@@ -1,7 +1,8 @@
+use bytes::Bytes;
 use citadel_logging::info;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::InternalServicePayload;
-use futures::stream::StreamExt;
+use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
+use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -27,12 +28,16 @@ impl NetKernel for CitadelWorkspaceService {
     async fn on_start(&self) -> Result<(), NetworkError> {
         let mut remote = self.remote.clone().unwrap();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
+        //from TCP to command handler
+        //read task
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
 
-        let hm = &Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let hm: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>> =
+            &Arc::new(tokio::sync::Mutex::new(HashMap::new()));
         let listener_task = async move {
             while let Ok((conn, _addr)) = listener.accept().await {
-                let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
+                //from command handler to the TCP write tak in handle_connection
+                let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
                 let id = Uuid::new_v4();
                 hm.lock().await.insert(id, tx1);
                 handle_connection(conn, tx.clone(), rx1, id);
@@ -66,8 +71,8 @@ impl NetKernel for CitadelWorkspaceService {
 }
 
 async fn send_response_to_tcp_client(
-    hash_map: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServicePayload>>>>,
-    response: InternalServicePayload,
+    hash_map: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    response: InternalServiceResponse,
     uuid: Uuid,
 ) {
     hash_map
@@ -83,7 +88,7 @@ async fn payload_handler(
     command: InternalServicePayload,
     connection_map: &mut HashMap<u64, PeerChannelSendHalf>,
     remote: &mut NodeRemote,
-    hm: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServicePayload>>>>,
+    hm: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
     match command {
         InternalServicePayload::Connect {
@@ -91,12 +96,10 @@ async fn payload_handler(
             username,
             password,
         } => {
-            // TODO: make sure register before connect.
             match remote
                 .connect_with_defaults(AuthenticationRequest::credentialed(username, password))
                 .await
             {
-                //adde or self.bind_addr??
                 Ok(conn_success) => {
                     let cid = conn_success.cid;
 
@@ -105,14 +108,13 @@ async fn payload_handler(
 
                     let hm_for_conn = hm.clone();
 
-                    // TODO: tell the client that the connection was successful
-                    let response = InternalServicePayload::ConnectSuccess { cid };
+                    let response = InternalServiceResponse::ConnectSuccess { cid };
 
                     send_response_to_tcp_client(hm, response, uuid).await;
 
                     let connection_read_stream = async move {
                         while let Some(message) = stream.next().await {
-                            let message = InternalServicePayload::MessageReceived {
+                            let message = InternalServiceResponse::MessageReceived {
                                 message: message.into_buffer(),
                                 cid,
                                 peer_cid: 0,
@@ -132,7 +134,7 @@ async fn payload_handler(
                 }
 
                 Err(err) => {
-                    let response = InternalServicePayload::ConnectionFailure {
+                    let response = InternalServiceResponse::ConnectionFailure {
                         message: err.to_string(),
                     };
                     send_response_to_tcp_client(hm, response, uuid).await;
@@ -153,11 +155,11 @@ async fn payload_handler(
             {
                 Ok(_res) => {
                     // TODO: add trace ID to ensure uniqueness of request
-                    let response = InternalServicePayload::RegisterSuccess { id: uuid };
+                    let response = InternalServiceResponse::RegisterSuccess { id: uuid };
                     send_response_to_tcp_client(hm, response, uuid).await
                 }
                 Err(err) => {
-                    let response = InternalServicePayload::RegisterFailure {
+                    let response = InternalServiceResponse::RegisterFailure {
                         message: err.to_string(),
                     };
                     send_response_to_tcp_client(hm, response, uuid).await
@@ -167,6 +169,7 @@ async fn payload_handler(
         InternalServicePayload::Message {
             message,
             cid,
+            user_cid: _,
             security_level,
         } => {
             match connection_map.get_mut(&cid) {
@@ -177,15 +180,24 @@ async fn payload_handler(
                 None => info!(target: "citadel","connection not found"),
             };
         }
-        InternalServicePayload::ConnectionFailure { .. } => {}
-        InternalServicePayload::MessageReceived { .. } => {}
-        InternalServicePayload::Disconnect { .. } => {}
+
+        InternalServicePayload::Disconnect { cid, uuid } => {
+            let request = NodeRequest::DisconnectFromHypernode(DisconnectFromHypernode {
+                implicated_cid: cid,
+                v_conn_type: VirtualTargetType::LocalGroupServer(cid),
+            });
+            connection_map.remove(&cid);
+            match remote.send(request).await {
+                Ok(res) => {
+                    let disconnect_success = InternalServiceResponse::DisconnectSuccess(cid);
+                    send_response_to_tcp_client(hm, disconnect_success, uuid).await;
+                    info!(target: "citadel", "Disconnected {res:?}")
+                }
+                Err(err) => info!(target: "citadel", "Unable to send disconnect request: {err:?}"),
+            };
+        }
         InternalServicePayload::SendFile { .. } => {}
         InternalServicePayload::DownloadFile { .. } => {}
-        InternalServicePayload::ServiceConnectionAccepted { .. } => {}
-        InternalServicePayload::ConnectSuccess { cid: _ } => {}
-        InternalServicePayload::RegisterSuccess { .. } => {}
-        InternalServicePayload::RegisterFailure { .. } => todo!(),
     }
 }
 
@@ -199,10 +211,34 @@ pub fn wrap_tcp_conn(conn: TcpStream) -> Framed<TcpStream, LengthDelimitedCodec>
         .new_framed(conn)
 }
 
+fn serialize_payload(payload: &InternalServiceResponse) -> Vec<u8> {
+    bincode2::serialize(&payload).unwrap()
+}
+
+async fn sink_send_payload(
+    payload: &InternalServiceResponse,
+    sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
+) {
+    let payload = serialize_payload(payload);
+    match sink.send(payload.into()).await {
+        Ok(_) => (),
+        Err(_) => info!(target: "citadel", "w task: sink send err"),
+    }
+}
+
+fn deserialize(message: &[u8]) -> InternalServicePayload {
+    bincode2::deserialize(message).unwrap()
+}
+
+fn send_to_kernel(payload_to_send: &[u8], sender: &UnboundedSender<InternalServicePayload>) {
+    let payload = deserialize(payload_to_send);
+    sender.send(payload).unwrap();
+}
+
 fn handle_connection(
     conn: tokio::net::TcpStream,
     to_kernel: tokio::sync::mpsc::UnboundedSender<InternalServicePayload>,
-    mut from_kernel: tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>,
+    mut from_kernel: tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
     conn_id: Uuid,
 ) {
     tokio::task::spawn(async move {
@@ -210,42 +246,20 @@ fn handle_connection(
         let (mut sink, mut stream) = framed.split();
 
         let write_task = async move {
-            let response = InternalServicePayload::ServiceConnectionAccepted { id: conn_id };
-            match bincode2::serialize(&response) {
-                Ok(res) => {
-                    match sink.send(res.into()).await {
-                        Ok(_) => (),
-                        Err(_) => info!(target: "citadel", "w task: sink send err"),
-                    };
-                }
-                Err(_) => info!(target: "citadel", "write task: serialization err"),
-            };
+            let response = InternalServiceResponse::ServiceConnectionAccepted { id: conn_id };
+
+            sink_send_payload(&response, &mut sink).await;
 
             while let Some(kernel_response) = from_kernel.recv().await {
-                match bincode2::serialize(&kernel_response) {
-                    Ok(k_res) => {
-                        match sink.send(k_res.into()).await {
-                            Ok(_) => (),
-                            Err(_) => info!(target: "citadel", "w task: sink send err"),
-                        };
-                    }
-                    Err(_) => info!(target: "citadel", "write task: serialization err"),
-                };
+                sink_send_payload(&kernel_response, &mut sink).await;
             }
         };
 
         let read_task = async move {
             while let Some(message) = stream.next().await {
-                match bincode2::deserialize(&message.unwrap()) {
-                    Ok(request) => {
-                        match to_kernel.send(request) {
-                            Ok(res) => res,
-                            Err(_) => info!(target: "citadel", "r task: sink send err"),
-                        };
-                    }
-                    Err(_) => info!(target: "citadel", "read task deserialization err"),
-                }
+                send_to_kernel(&message.unwrap(), &to_kernel);
             }
+            info!(target: "citadel", "Disconnected");
         };
 
         tokio::select! {
@@ -259,7 +273,6 @@ fn handle_connection(
 mod tests {
     use super::*;
     use bytes::Bytes;
-
     use futures::stream::SplitSink;
     use std::error::Error;
     use std::time::Duration;
@@ -270,7 +283,6 @@ mod tests {
         command: InternalServicePayload,
     ) -> Result<(), Box<dyn Error>> {
         let command = bincode2::serialize(&command)?;
-        // send the command
         sink.send(command.into()).await?;
         Ok(())
     }
@@ -313,11 +325,11 @@ mod tests {
 
         let first_packet = stream.next().await.unwrap()?;
         info!(target: "citadel", "First packet");
-        let greeter_packet: InternalServicePayload = bincode2::deserialize(&first_packet)?;
+        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&*first_packet)?;
 
         info!(target: "citadel", "Greeter packet {greeter_packet:?}");
 
-        if let InternalServicePayload::ServiceConnectionAccepted { id } = greeter_packet {
+        if let InternalServiceResponse::ServiceConnectionAccepted { id } = greeter_packet {
             let register_command = InternalServicePayload::Register {
                 uuid: id,
                 server_addr: server_bind_address,
@@ -328,8 +340,8 @@ mod tests {
             send(&mut sink, register_command).await?;
 
             let second_packet = stream.next().await.unwrap()?;
-            let response_packet: InternalServicePayload = bincode2::deserialize(&second_packet)?;
-            if let InternalServicePayload::RegisterSuccess { id } = response_packet {
+            let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
+            if let InternalServiceResponse::RegisterSuccess { id } = response_packet {
                 // now, connect to the server
                 let command = InternalServicePayload::Connect {
                     // server_addr: server_bind_address,
@@ -341,9 +353,24 @@ mod tests {
                 send(&mut sink, command).await?;
 
                 let next_packet = stream.next().await.unwrap()?;
-                let response_packet: InternalServicePayload = bincode2::deserialize(&next_packet)?;
-                if let InternalServicePayload::ConnectSuccess { cid: _ } = response_packet {
-                    Ok(())
+                let response_packet: InternalServiceResponse =
+                    bincode2::deserialize(&*next_packet)?;
+                if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
+                    let disconnect_command = InternalServicePayload::Disconnect { uuid: id, cid };
+
+                    send(&mut sink, disconnect_command).await?;
+                    let next_packet = stream.next().await.unwrap()?;
+                    let response_disconnect_packet: InternalServiceResponse =
+                        bincode2::deserialize(&*next_packet)?;
+
+                    if let InternalServiceResponse::DisconnectSuccess(cid) =
+                        response_disconnect_packet
+                    {
+                        info!(target:"citadel", "Disconnected {cid}");
+                        Ok(())
+                    } else {
+                        panic!("Disconnection failed");
+                    }
                 } else {
                     panic!("Connection to server was not a success")
                 }
