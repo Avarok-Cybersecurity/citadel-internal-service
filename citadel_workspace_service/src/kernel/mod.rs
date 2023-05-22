@@ -93,8 +93,13 @@ async fn payload_handler(
     match command {
         InternalServicePayload::Connect {
             uuid,
+            server_addr,
             username,
             password,
+            connect_mode,
+            udp_mode,
+            keep_alive_timeout,
+            session_security_settings,
         } => {
             match remote
                 .connect_with_defaults(AuthenticationRequest::credentialed(username, password))
@@ -147,6 +152,7 @@ async fn payload_handler(
             full_name,
             username,
             proposed_password,
+            default_security_settings,
         } => {
             citadel_logging::info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
             match remote
@@ -196,8 +202,25 @@ async fn payload_handler(
                 Err(err) => info!(target: "citadel", "Unable to send disconnect request: {err:?}"),
             };
         }
-        InternalServicePayload::SendFile { .. } => {}
-        InternalServicePayload::DownloadFile { .. } => {}
+        InternalServicePayload::SendFile {
+            source,
+            cid,
+            transfer_security_level,
+            chunk_size,
+            transfer_type
+        } => {}
+
+        InternalServicePayload::DownloadFile {
+            virtual_path,
+            transfer_security_level,
+            delete_on_pull
+        } => {}
+
+        InternalServicePayload::StartGroup {
+            initial_users_to_invite,
+            session_security_settings
+        } => {}
+        
     }
 }
 
@@ -335,7 +358,8 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
-                proposed_password: String::from("test12345").into_bytes().into(),
+                proposed_password: SecBuffer::from("test12345"),
+                default_security_settings: Default::default(),
             };
             send(&mut sink, register_command).await?;
 
@@ -344,10 +368,14 @@ mod tests {
             if let InternalServiceResponse::RegisterSuccess { id } = response_packet {
                 // now, connect to the server
                 let command = InternalServicePayload::Connect {
-                    // server_addr: server_bind_address,
                     username: String::from("john_doe"),
-                    password: String::from("test12345").into_bytes().into(),
+                    password: SecBuffer::from("test12345"),
+                    connect_mode: Default::default(),
+                    udp_mode: Default::default(),
+                    keep_alive_timeout: None,
                     uuid: id,
+                    server_addr: server_bind_address,
+                    session_security_settings: Default::default(),
                 };
 
                 send(&mut sink, command).await?;
