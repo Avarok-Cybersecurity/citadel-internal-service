@@ -36,7 +36,6 @@ pub enum InternalServiceResponse {
 pub enum InternalServicePayload {
     Connect {
         uuid: Uuid,
-        server_addr: SocketAddr,
         username: String,
         password: SecBuffer,
         connect_mode: ConnectMode,
@@ -63,19 +62,19 @@ pub enum InternalServicePayload {
         cid: u64,
     },
     SendFile {
-        source: dyn ObjectSource,
+        source: PathBuf,
         cid: u64,
         transfer_security_level: SecurityLevel,
         chunk_size: usize,
         transfer_type: TransferType
     },
     DownloadFile {
-        virtual_path: dyn Into<PathBuf>,
+        virtual_path: PathBuf,
         transfer_security_level: SecurityLevel,
         delete_on_pull: bool
     },
     StartGroup {
-        initial_users_to_invite: Option <Vec<UserIdentifier>>,
+        initial_users_to_invite: Option<Vec<UserIdentifier>>,
         session_security_settings: SessionSecuritySettings
     },
 }

@@ -93,7 +93,6 @@ async fn payload_handler(
     match command {
         InternalServicePayload::Connect {
             uuid,
-            server_addr,
             username,
             password,
             connect_mode,
@@ -102,7 +101,7 @@ async fn payload_handler(
             session_security_settings,
         } => {
             match remote
-                .connect_with_defaults(AuthenticationRequest::credentialed(username, password))
+                .connect(AuthenticationRequest::credentialed(username, password), connect_mode, udp_mode, keep_alive_timeout, session_security_settings)
                 .await
             {
                 Ok(conn_success) => {
@@ -288,7 +287,7 @@ fn handle_connection(
         tokio::select! {
             res0 = write_task => res0,
             res1 = read_task => res1,
-        };
+        }
     });
 }
 
@@ -358,7 +357,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
-                proposed_password: SecBuffer::from("test12345"),
+                proposed_password: "test12345".into(),
                 default_security_settings: Default::default(),
             };
             send(&mut sink, register_command).await?;
@@ -369,12 +368,11 @@ mod tests {
                 // now, connect to the server
                 let command = InternalServicePayload::Connect {
                     username: String::from("john_doe"),
-                    password: SecBuffer::from("test12345"),
+                    password: "test12345".into(),
                     connect_mode: Default::default(),
                     udp_mode: Default::default(),
                     keep_alive_timeout: None,
                     uuid: id,
-                    server_addr: server_bind_address,
                     session_security_settings: Default::default(),
                 };
 
