@@ -272,7 +272,8 @@ fn handle_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
+    use bincode2::serialize;
+    use bytes::{Buf, Bytes};
     use futures::stream::SplitSink;
     use std::error::Error;
     use std::time::Duration;
@@ -287,17 +288,136 @@ mod tests {
         Ok(())
     }
 
+    // #[tokio::test]
+    // async fn test_citadel_workspace_service() -> Result<(), Box<dyn Error>> {
+    //     citadel_logging::setup_log();
+    //     info!(target: "citadel", "above server spawn");
+
+    //     let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+    //     // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
+    //     let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+
+    //     tokio::task::spawn(server);
+    //     info!(target: "citadel", "sub server spawn");
+    //     let internal_service_kernel = CitadelWorkspaceService {
+    //         remote: None,
+    //         bind_address: bind_address_internal_service,
+    //     };
+    //     let internal_service = NodeBuilder::default()
+    //         .with_node_type(NodeType::Peer)
+    //         .with_backend(BackendType::InMemory)
+    //         .build(internal_service_kernel)?;
+
+    //     tokio::task::spawn(internal_service);
+
+    //     // give time for both the server and internal service to run
+
+    //     tokio::time::sleep(Duration::from_millis(2000)).await;
+
+    //     info!(target: "citadel", "about to connect to internal service");
+
+    //     // begin mocking the GUI/CLI access
+    //     let conn = TcpStream::connect(bind_address_internal_service).await?;
+    //     info!(target: "citadel", "connected to the TCP stream");
+    //     let framed = wrap_tcp_conn(conn);
+    //     info!(target: "citadel", "wrapped tcp connection");
+
+    //     let (mut sink, mut stream) = framed.split();
+
+    //     let first_packet = stream.next().await.unwrap()?;
+    //     info!(target: "citadel", "First packet");
+    //     let greeter_packet: InternalServiceResponse = bincode2::deserialize(&*first_packet)?;
+
+    //     info!(target: "citadel", "Greeter packet {greeter_packet:?}");
+
+    //     if let InternalServiceResponse::ServiceConnectionAccepted { id } = greeter_packet {
+    //         let register_command = InternalServicePayload::Register {
+    //             uuid: id,
+    //             server_addr: server_bind_address,
+    //             full_name: String::from("John"),
+    //             username: String::from("john_doe"),
+    //             proposed_password: String::from("test12345").into_bytes().into(),
+    //         };
+    //         send(&mut sink, register_command).await?;
+
+    //         let second_packet = stream.next().await.unwrap()?;
+    //         let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
+    //         if let InternalServiceResponse::RegisterSuccess { id } = response_packet {
+    //             // now, connect to the server
+    //             let command = InternalServicePayload::Connect {
+    //                 // server_addr: server_bind_address,
+    //                 username: String::from("john_doe"),
+    //                 password: String::from("test12345").into_bytes().into(),
+    //                 uuid: id,
+    //             };
+
+    //             send(&mut sink, command).await?;
+
+    //             let next_packet = stream.next().await.unwrap()?;
+    //             let response_packet: InternalServiceResponse =
+    //                 bincode2::deserialize(&*next_packet)?;
+    //             if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
+    //                 let disconnect_command = InternalServicePayload::Disconnect { uuid: id, cid };
+
+    //                 send(&mut sink, disconnect_command).await?;
+    //                 let next_packet = stream.next().await.unwrap()?;
+    //                 let response_disconnect_packet: InternalServiceResponse =
+    //                     bincode2::deserialize(&*next_packet)?;
+
+    //                 if let InternalServiceResponse::DisconnectSuccess(cid) =
+    //                     response_disconnect_packet
+    //                 {
+    //                     info!(target:"citadel", "Disconnected {cid}");
+    //                     Ok(())
+    //                 } else {
+    //                     panic!("Disconnection failed");
+    //                 }
+    //             } else {
+    //                 panic!("Connection to server was not a success")
+    //             }
+    //         } else {
+    //             panic!("Registration to server was not a success")
+    //         }
+    //     } else {
+    //         panic!("Wrong packet type");
+    //     }
+    // }
+    // test
     #[tokio::test]
-    async fn test_citadel_workspace_service() -> Result<(), Box<dyn Error>> {
+    async fn message_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
-        info!(target: "citadel", "above server spawn");
+        info!(target: "citadel", "Message test start");
 
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+        let (server, server_bind_address) = citadel_sdk::test_common::server_info_reactive(
+            |conn, remote| async move {
+                let (mut sink, mut stream) = conn.channel.split();
+
+                while let Some(message) = stream.next().await {
+                    // let m: InternalServicePayload = deserialize(&message.into_buffer()[..]);
+                    // let serialized_message = serialize("Pong").unwrap();
+                    // let message = InternalServicePayload::Message {
+                    //     message: message.into_buffer().to_vec(),
+                    //     cid: 1,
+                    //     user_cid: 2,
+                    //     security_level: SecurityLevel::Standard,
+                    // };
+                    // let m = message.into_buffer();
+
+                    println!(
+                        "We are here 2 {:?}",
+                        String::from_utf8_lossy(message.into_buffer().chunk())
+                    );
+                }
+
+                Ok(())
+            },
+            |_| (),
+        );
 
         tokio::task::spawn(server);
-        info!(target: "citadel", "sub server spawn");
+        info!(target: "citadel", "Message server spawned");
         let internal_service_kernel = CitadelWorkspaceService {
             remote: None,
             bind_address: bind_address_internal_service,
@@ -356,20 +476,32 @@ mod tests {
                 let response_packet: InternalServiceResponse =
                     bincode2::deserialize(&*next_packet)?;
                 if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
-                    let disconnect_command = InternalServicePayload::Disconnect { uuid: id, cid };
+                    let serialized_message = bincode2::serialize("hi").unwrap();
+                    let message_command = InternalServicePayload::Message {
+                        message: serialized_message,
+                        cid: cid,
+                        user_cid: cid,
+                        security_level: SecurityLevel::Standard,
+                    };
 
-                    send(&mut sink, disconnect_command).await?;
+                    send(&mut sink, message_command).await?;
+                    info!(target:"citadel", "Message sent to sink from client");
                     let next_packet = stream.next().await.unwrap()?;
-                    let response_disconnect_packet: InternalServiceResponse =
+                    let response_message_packet: InternalServiceResponse =
                         bincode2::deserialize(&*next_packet)?;
 
-                    if let InternalServiceResponse::DisconnectSuccess(cid) =
-                        response_disconnect_packet
+                    if let InternalServiceResponse::MessageReceived {
+                        cid,
+                        message,
+                        peer_cid,
+                    } = response_message_packet
                     {
-                        info!(target:"citadel", "Disconnected {cid}");
+                        let mess = String::from_utf8_lossy(&message).to_string();
+                        assert_eq!(String::from("hi"), mess);
+                        info!(target:"citadel", "Message {mess}");
                         Ok(())
                     } else {
-                        panic!("Disconnection failed");
+                        panic!("Message sending failed");
                     }
                 } else {
                     panic!("Connection to server was not a success")
