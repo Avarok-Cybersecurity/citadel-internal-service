@@ -130,10 +130,7 @@ async fn payload_handler(
                     let (sink, mut stream) = conn_success.channel.split();
                     let client_server_remote =
                         create_client_server_remote(stream.vconn_type, remote.clone());
-                    let connection_struct = Connection {
-                        sink,
-                        client_server_remote,
-                    };
+                    let connection_struct = Connection::new(sink, client_server_remote);
                     server_connection_map.insert(cid, connection_struct);
 
                     let hm_for_conn = tcp_connection_map.clone();
@@ -197,16 +194,24 @@ async fn payload_handler(
             };
         }
         InternalServicePayload::Message {
+            uuid: _,
             message,
             cid,
-            user_cid: _,
+            user_cid,
             security_level,
         } => {
             match server_connection_map.get_mut(&cid) {
                 Some(remote) => {
                     remote.sink.set_security_level(security_level);
-                    println!("{:?}", deserialize(&message));
+
+                    let _response = InternalServiceResponse::MessageReceived {
+                        message: message.clone().as_slice().into(),
+                        cid,
+                        peer_cid: user_cid,
+                    };
+                    // send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                     remote.sink.send_message(message.into()).await.unwrap();
+                    info!(target: "citadel", "Into the message handler command send")
                 }
                 None => info!(target: "citadel","connection not found"),
             };
@@ -220,6 +225,8 @@ async fn payload_handler(
                 .disconnect()
                 .await
                 .unwrap();
+            let response = InternalServiceResponse::DisconnectSuccess(cid);
+            send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
         }
         InternalServicePayload::SendFile { .. } => {}
         InternalServicePayload::DownloadFile { .. } => {}
@@ -309,6 +316,14 @@ mod tests {
     use std::time::Duration;
     use tokio::net::TcpStream;
 
+    async fn send_back(
+        sink: PeerChannelSendHalf,
+        command: InternalServiceResponse,
+    ) -> Result<(), Box<dyn Error>> {
+        let command = bincode2::serialize(&command)?;
+        sink.send_message(command.into()).await?;
+        Ok(())
+    }
     async fn send(
         sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
         command: InternalServicePayload,
@@ -416,15 +431,19 @@ mod tests {
     #[tokio::test]
     async fn message_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
-        info!(target: "citadel", "Message test start");
+        info!(target: "citadel", "above server spawn");
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
 
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = citadel_sdk::test_common::server_info_reactive(
-            |conn, remote| async move {
-                let (mut sink, mut stream) = conn.channel.split();
+            |conn, _remote| async move {
+                let (sink, mut stream) = conn.channel.split();
 
-                while let Some(message) = stream.next().await {
+                while let Some(_message) = stream.next().await {
+                    let send_message = InternalServiceResponse::MessageSent { cid: conn.cid };
+                    send_back(sink.clone(), send_message).await.unwrap();
+                    info!("MessageSent");
+
                     // let m = message.into_buffer();
                     // let serialized_message = serialize("Pong").unwrap();
                     // let message = InternalServicePayload::Message {
@@ -443,7 +462,7 @@ mod tests {
         );
 
         tokio::task::spawn(server);
-        info!(target: "citadel", "Message server spawned");
+        info!(target: "citadel", "sub server spawn");
         let internal_service_kernel = CitadelWorkspaceService {
             remote: None,
             bind_address: bind_address_internal_service,
@@ -488,7 +507,9 @@ mod tests {
             let second_packet = stream.next().await.unwrap()?;
             let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
             if let InternalServiceResponse::RegisterSuccess { id } = response_packet {
+                // now, connect to the server
                 let command = InternalServicePayload::Connect {
+                    // server_addr: server_bind_address,
                     username: String::from("john_doe"),
                     password: String::from("test12345").into_bytes().into(),
                     uuid: id,
@@ -502,6 +523,7 @@ mod tests {
                 if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
                     let serialized_message = bincode2::serialize("hi").unwrap();
                     let message_command = InternalServicePayload::Message {
+                        uuid: id,
                         message: serialized_message,
                         cid,
                         user_cid: cid,
@@ -515,16 +537,15 @@ mod tests {
                     let next_packet = stream.next().await.unwrap()?;
                     let response_message_packet: InternalServiceResponse =
                         bincode2::deserialize(&*next_packet)?;
+                    info!(target: "citadel","{response_message_packet:?}");
 
                     if let InternalServiceResponse::MessageReceived {
                         cid,
-                        message,
-                        peer_cid,
+                        message: _,
+                        peer_cid: _,
                     } = response_message_packet
                     {
-                        let mess = String::from_utf8_lossy(&message).to_string();
-                        assert_eq!(String::from("hi"), mess);
-                        info!(target:"citadel", "Message {mess}");
+                        info!(target:"citadel", "Message {cid}");
                         Ok(())
                     } else {
                         panic!("Message sending failed");

@@ -26,6 +26,10 @@ pub enum InternalServiceResponse {
         cid: u64,
         peer_cid: u64,
     },
+    MessageSent {
+        cid: u64,
+        // uuid: Uuid,
+    },
     DisconnectSuccess(u64),
     DisconnectFailed(u64),
 }
@@ -45,6 +49,7 @@ pub enum InternalServicePayload {
         proposed_password: SecBuffer,
     },
     Message {
+        uuid: Uuid,
         message: Vec<u8>,
         cid: u64,
         user_cid: u64,
