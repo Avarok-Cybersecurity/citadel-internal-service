@@ -40,6 +40,10 @@ pub enum InternalServiceResponse {
     DisconnectFailure { cid: u64, message: String },
     SendFileSuccess { cid: u64 },
     SendFileFailure { cid: u64, message: String },
+    PeerConnectSuccess {cid: u64 },
+    PeerConnectFailure {cid: u64, message: String },
+    PeerRegisterSuccess {cid: u64 },
+    PeerRegisterFailure {cid: u64, message: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -90,5 +94,17 @@ pub enum InternalServicePayload {
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
         cid: u64,
         uuid: Uuid
+    },
+    PeerConnect {
+        uuid: Uuid,
+        cid: u64,
+        udp_mode: UdpMode,
+        session_security_settings: SessionSecuritySettings
+    },
+    PeerRegister {
+        uuid: Uuid,
+        cid: u64,
+        //interserver_cid: u64,
+        peer_cid: u64
     },
 }

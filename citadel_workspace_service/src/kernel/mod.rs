@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use citadel_sdk::prefabs::ClientServerRemote;
+use citadel_sdk::remote_ext;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -255,16 +256,52 @@ async fn payload_handler(
         InternalServicePayload::StartGroup {
             initial_users_to_invite,
             cid,
-            uuid
+            uuid: _uuid
         } => {
             let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
             match client_to_server_remote.create_group(initial_users_to_invite).await {
-                Ok(group_channel) => {
+                Ok(_group_channel) => {
 
                 },
 
-                Err(err) => {
+                Err(_err) => {
 
+                }
+            }
+        }
+
+        InternalServicePayload::PeerConnect {
+            uuid,
+            cid,
+            udp_mode,
+            session_security_settings
+        } => {
+            let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
+            match client_to_server_remote.connect_to_peer_custom(session_security_settings, udp_mode).await {
+                Ok(_peer_connect_success) => {
+                    send_response_to_tcp_client(hm, InternalServiceResponse::PeerConnectSuccess { cid }, uuid).await;
+                },
+
+                Err(err) => {
+                    send_response_to_tcp_client(hm, InternalServiceResponse::PeerConnectFailure { cid, message: err.into_string() }, uuid).await;
+                }
+            }
+
+        }
+
+        InternalServicePayload::PeerRegister {
+            uuid,
+            cid,
+            peer_cid: _peer_cid
+        } => {
+            let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
+            match client_to_server_remote.register_to_peer().await {
+                Ok(_peer_register_success) => {
+                    send_response_to_tcp_client(hm, InternalServiceResponse::PeerRegisterSuccess { cid }, uuid).await;
+                },
+
+                Err(err) => {
+                    send_response_to_tcp_client(hm, InternalServiceResponse::PeerRegisterFailure { cid, message: err.into_string() }, uuid).await;
                 }
             }
         }
