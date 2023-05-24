@@ -7,6 +7,7 @@ use futures::SinkExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use citadel_sdk::prefabs::ClientServerRemote;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -95,9 +96,13 @@ async fn payload_handler(
             uuid,
             username,
             password,
+            connect_mode,
+            udp_mode,
+            keep_alive_timeout,
+            session_security_settings,
         } => {
             match remote
-                .connect_with_defaults(AuthenticationRequest::credentialed(username, password))
+                .connect(AuthenticationRequest::credentialed(username, password), connect_mode, udp_mode, keep_alive_timeout, session_security_settings)
                 .await
             {
                 Ok(conn_success) => {
@@ -135,7 +140,7 @@ async fn payload_handler(
 
                 Err(err) => {
                     let response = InternalServiceResponse::ConnectionFailure {
-                        message: err.to_string(),
+                        message: err.into_string(),
                     };
                     send_response_to_tcp_client(hm, response, uuid).await;
                 }
@@ -147,10 +152,11 @@ async fn payload_handler(
             full_name,
             username,
             proposed_password,
+            default_security_settings,
         } => {
             citadel_logging::info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
             match remote
-                .register_with_defaults(server_addr, full_name, username, proposed_password)
+                .register(server_addr, full_name, username, proposed_password, default_security_settings)
                 .await
             {
                 Ok(_res) => {
@@ -160,13 +166,14 @@ async fn payload_handler(
                 }
                 Err(err) => {
                     let response = InternalServiceResponse::RegisterFailure {
-                        message: err.to_string(),
+                        message: err.into_string(),
                     };
                     send_response_to_tcp_client(hm, response, uuid).await
                 }
             };
         }
         InternalServicePayload::Message {
+            uuid,
             message,
             cid,
             user_cid: _,
@@ -176,28 +183,92 @@ async fn payload_handler(
                 Some(sink) => {
                     sink.set_security_level(security_level);
                     sink.send_message(message.into()).await.unwrap();
+                    send_response_to_tcp_client(hm, InternalServiceResponse::MessageSent { cid }, uuid).await;
                 }
-                None => info!(target: "citadel","connection not found"),
+                None => {
+                    info!(target: "citadel","connection not found");
+                    send_response_to_tcp_client(hm, InternalServiceResponse::MessageSendError { cid, message: format!("Connection for {cid} not found") }, uuid).await;
+                }
             };
         }
 
         InternalServicePayload::Disconnect { cid, uuid } => {
             let request = NodeRequest::DisconnectFromHypernode(DisconnectFromHypernode {
                 implicated_cid: cid,
-                v_conn_type: VirtualTargetType::LocalGroupServer(cid),
+                v_conn_type: VirtualTargetType::LocalGroupServer { implicated_cid: cid }
             });
             connection_map.remove(&cid);
             match remote.send(request).await {
                 Ok(res) => {
-                    let disconnect_success = InternalServiceResponse::DisconnectSuccess(cid);
+                    let disconnect_success = InternalServiceResponse::DisconnectSuccess { cid };
                     send_response_to_tcp_client(hm, disconnect_success, uuid).await;
                     info!(target: "citadel", "Disconnected {res:?}")
                 }
-                Err(err) => info!(target: "citadel", "Unable to send disconnect request: {err:?}"),
+                Err(err) => {
+                    let error_message = format!("Failed to disconnect {err:?}");
+                    info!(target: "citadel", "{error_message}");
+                    let disconnect_failure = InternalServiceResponse::DisconnectFailure {
+                        cid,
+                        message: error_message,
+                    };
+                    send_response_to_tcp_client(hm, disconnect_failure, uuid).await;
+                },
             };
         }
-        InternalServicePayload::SendFile { .. } => {}
-        InternalServicePayload::DownloadFile { .. } => {}
+        InternalServicePayload::SendFile {
+            uuid,
+            source,
+            cid,
+            chunk_size,
+            transfer_type
+        } => {
+            let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
+            match client_to_server_remote.send_file_with_custom_opts(source, chunk_size, transfer_type).await {
+                Ok(_) => {
+                    send_response_to_tcp_client(hm, InternalServiceResponse::SendFileSuccess { cid }, uuid).await;
+                },
+
+                Err(err) => {
+                    send_response_to_tcp_client(hm, InternalServiceResponse::SendFileFailure { cid, message: err.into_string() }, uuid).await;
+                }
+            }
+        }
+
+        InternalServicePayload::DownloadFile {
+            virtual_path,
+            transfer_security_level,
+            delete_on_pull,
+            cid,
+            uuid
+        } => {
+            /*let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
+            match client_to_server_remote.(virtual_path, transfer_security_level, delete_on_pull).await {
+                Ok(_) => {
+
+                },
+                Err(err) => {
+
+                }
+            }*/
+        }
+
+        InternalServicePayload::StartGroup {
+            initial_users_to_invite,
+            cid,
+            uuid
+        } => {
+            let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
+            match client_to_server_remote.create_group(initial_users_to_invite).await {
+                Ok(group_channel) => {
+
+                },
+
+                Err(err) => {
+
+                }
+            }
+        }
+
     }
 }
 
@@ -265,7 +336,7 @@ fn handle_connection(
         tokio::select! {
             res0 = write_task => res0,
             res1 = read_task => res1,
-        };
+        }
     });
 }
 
@@ -335,7 +406,8 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
-                proposed_password: String::from("test12345").into_bytes().into(),
+                proposed_password: "test12345".into(),
+                default_security_settings: Default::default(),
             };
             send(&mut sink, register_command).await?;
 
@@ -344,10 +416,13 @@ mod tests {
             if let InternalServiceResponse::RegisterSuccess { id } = response_packet {
                 // now, connect to the server
                 let command = InternalServicePayload::Connect {
-                    // server_addr: server_bind_address,
                     username: String::from("john_doe"),
-                    password: String::from("test12345").into_bytes().into(),
+                    password: "test12345".into(),
+                    connect_mode: Default::default(),
+                    udp_mode: Default::default(),
+                    keep_alive_timeout: None,
                     uuid: id,
+                    session_security_settings: Default::default(),
                 };
 
                 send(&mut sink, command).await?;
