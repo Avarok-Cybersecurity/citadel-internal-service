@@ -194,23 +194,19 @@ async fn payload_handler(
             };
         }
         InternalServicePayload::Message {
-            uuid: _,
+            uuid,
             message,
             cid,
-            user_cid,
+            user_cid: _,
             security_level,
         } => {
             match server_connection_map.get_mut(&cid) {
-                Some(remote) => {
-                    remote.sink.set_security_level(security_level);
+                Some(conn) => {
+                    conn.sink.set_security_level(security_level);
 
-                    let _response = InternalServiceResponse::MessageReceived {
-                        message: message.clone().as_slice().into(),
-                        cid,
-                        peer_cid: user_cid,
-                    };
-                    // send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
-                    remote.sink.send_message(message.into()).await.unwrap();
+                    let response = InternalServiceResponse::MessageSent { cid };
+                    conn.sink.send_message(message.into()).await.unwrap();
+                    send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                     info!(target: "citadel", "Into the message handler command send")
                 }
                 None => info!(target: "citadel","connection not found"),
@@ -316,14 +312,6 @@ mod tests {
     use std::time::Duration;
     use tokio::net::TcpStream;
 
-    async fn send_back(
-        sink: PeerChannelSendHalf,
-        command: InternalServiceResponse,
-    ) -> Result<(), Box<dyn Error>> {
-        let command = bincode2::serialize(&command)?;
-        sink.send_message(command.into()).await?;
-        Ok(())
-    }
     async fn send(
         sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
         command: InternalServicePayload,
@@ -440,20 +428,9 @@ mod tests {
                 let (sink, mut stream) = conn.channel.split();
 
                 while let Some(_message) = stream.next().await {
-                    let send_message = InternalServiceResponse::MessageSent { cid: conn.cid };
-                    send_back(sink.clone(), send_message).await.unwrap();
+                    let send_message = "pong".into();
+                    sink.send_message(send_message).await.unwrap();
                     info!("MessageSent");
-
-                    // let m = message.into_buffer();
-                    // let serialized_message = serialize("Pong").unwrap();
-                    // let message = InternalServicePayload::Message {
-                    //     message: message.to_vec(),
-                    //     cid: 1,
-                    //     user_cid: 2,
-                    //     security_level: SecurityLevel::Standard,
-                    // };
-
-                    // println!("We are here 2 {:?}", String::from_utf8_lossy(message));
                     ()
                 }
                 Ok(())
@@ -539,14 +516,24 @@ mod tests {
                         bincode2::deserialize(&*next_packet)?;
                     info!(target: "citadel","{response_message_packet:?}");
 
-                    if let InternalServiceResponse::MessageReceived {
-                        cid,
-                        message: _,
-                        peer_cid: _,
-                    } = response_message_packet
-                    {
+                    if let InternalServiceResponse::MessageSent { cid } = response_message_packet {
                         info!(target:"citadel", "Message {cid}");
-                        Ok(())
+                        let next_packet = stream.next().await.unwrap()?;
+                        let response_message_packet: InternalServiceResponse =
+                            bincode2::deserialize(&*next_packet)?;
+                        if let InternalServiceResponse::MessageReceived {
+                            message,
+                            cid,
+                            peer_cid: _,
+                        } = response_message_packet
+                        {
+                            println!("{message:?}");
+                            assert_eq!(SecBuffer::from("pong"), message);
+                            info!(target:"citadel", "Message sending success {cid}");
+                            Ok(())
+                        } else {
+                            panic!("Message sending is not right");
+                        }
                     } else {
                         panic!("Message sending failed");
                     }
