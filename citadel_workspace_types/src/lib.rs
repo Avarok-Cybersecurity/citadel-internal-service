@@ -67,7 +67,7 @@ pub enum InternalServicePayload {
     },
     Message {
         uuid: Uuid,
-        message: Bytes,
+        message: Vec<u8>,
         cid: u64,
         user_cid: u64,
         security_level: SecurityLevel,
