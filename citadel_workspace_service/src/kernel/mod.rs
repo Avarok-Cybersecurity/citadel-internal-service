@@ -181,7 +181,7 @@ async fn payload_handler(
             proposed_password,
             default_security_settings,
         } => {
-            citadel_logging::info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
+            info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
             match remote
                 .register(server_addr, full_name, username, proposed_password, default_security_settings)
                 .await
@@ -379,8 +379,8 @@ fn send_to_kernel(payload_to_send: &[u8], sender: &UnboundedSender<InternalServi
 }
 
 fn handle_connection(
-    conn: tokio::net::TcpStream,
-    to_kernel: tokio::sync::mpsc::UnboundedSender<InternalServicePayload>,
+    conn: TcpStream,
+    to_kernel: UnboundedSender<InternalServicePayload>,
     mut from_kernel: tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
     conn_id: Uuid,
 ) {
@@ -591,6 +591,7 @@ mod tests {
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
                 proposed_password: String::from("test12345").into_bytes().into(),
+                default_security_settings: Default::default(),
             };
             send(&mut sink, register_command).await?;
 
@@ -602,7 +603,11 @@ mod tests {
                     // server_addr: server_bind_address,
                     username: String::from("john_doe"),
                     password: String::from("test12345").into_bytes().into(),
+                    connect_mode: Default::default(),
+                    udp_mode: Default::default(),
+                    keep_alive_timeout: None,
                     uuid: id,
+                    session_security_settings: Default::default(),
                 };
 
                 send(&mut sink, command).await?;
