@@ -311,8 +311,7 @@ async fn payload_handler(
             let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupPeer { implicated_cid: cid, peer_cid }, remote.clone());
             match client_to_server_remote.propose_target(username, peer_username).await { // username or cid?
                 Ok(mut symmetric_identifier_handle_ref) => {
-                    let peer_connect = symmetric_identifier_handle_ref.connect_to_peer_custom(session_security_settings, udp_mode);
-                    match peer_connect {
+                    match symmetric_identifier_handle_ref.connect_to_peer_custom(session_security_settings, udp_mode).await {
                         Ok(_peer_connect_success) => {
                             send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::PeerConnectSuccess { cid }, uuid).await;
                         },
@@ -340,8 +339,7 @@ async fn payload_handler(
             let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
             match client_to_server_remote.propose_target(username, peer_username).await {
                 Ok(mut symmetric_identifier_handle_ref) => {
-                    let peer_register = symmetric_identifier_handle_ref.register_to_peer();
-                    match peer_register {
+                    match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(_peer_register_success) => {
                             send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::PeerRegisterSuccess { cid }, uuid).await;
                         },
