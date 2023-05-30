@@ -1,4 +1,4 @@
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use citadel_sdk::prelude::{ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, TransferType, UdpMode, UserIdentifier};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -98,7 +98,9 @@ pub enum InternalServicePayload {
     PeerConnect {
         uuid: Uuid,
         cid: u64,
+        username: String,
         peer_cid: u64,
+        peer_username: String,
         udp_mode: UdpMode,
         session_security_settings: SessionSecuritySettings
     },

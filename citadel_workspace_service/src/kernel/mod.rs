@@ -5,17 +5,14 @@ use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use std::collections::HashMap;
-use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use citadel_sdk::prefabs::ClientServerRemote;
-use citadel_sdk::prelude::results::{PeerConnectSuccess, PeerRegisterStatus};
-use citadel_sdk::remote_ext;
-use citadel_sdk::remote_ext::remote_specialization::PeerRemote;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use uuid::Uuid;
+use crate::kernel;
 
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
@@ -220,7 +217,7 @@ async fn payload_handler(
                 }
                 None => {
                     info!(target: "citadel","connection not found");
-                    send_response_to_tcp_client(hm, InternalServiceResponse::MessageSendError { cid, message: format!("Connection for {cid} not found") }, uuid).await;
+                    send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::MessageSendError { cid, message: format!("Connection for {cid} not found") }, uuid).await;
                 }
             };
         }
@@ -234,7 +231,7 @@ async fn payload_handler(
             match remote.send(request).await {
                 Ok(res) => {
                     let disconnect_success = InternalServiceResponse::DisconnectSuccess { cid };
-                    send_response_to_tcp_client(hm, disconnect_success, uuid).await;
+                    send_response_to_tcp_client(tcp_connection_map, disconnect_success, uuid).await;
                     info!(target: "citadel", "Disconnected {res:?}")
                 }
                 Err(err) => {
@@ -244,7 +241,7 @@ async fn payload_handler(
                         cid,
                         message: error_message,
                     };
-                    send_response_to_tcp_client(hm, disconnect_failure, uuid).await;
+                    send_response_to_tcp_client(tcp_connection_map, disconnect_failure, uuid).await;
                 },
             };
         }
@@ -258,11 +255,11 @@ async fn payload_handler(
             let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
             match client_to_server_remote.send_file_with_custom_opts(source, chunk_size, transfer_type).await {
                 Ok(_) => {
-                    send_response_to_tcp_client(hm, InternalServiceResponse::SendFileSuccess { cid }, uuid).await;
+                    send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::SendFileSuccess { cid }, uuid).await;
                 },
 
                 Err(err) => {
-                    send_response_to_tcp_client(hm, InternalServiceResponse::SendFileFailure { cid, message: err.into_string() }, uuid).await;
+                    send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::SendFileFailure { cid, message: err.into_string() }, uuid).await;
                 }
             }
         }
@@ -305,26 +302,29 @@ async fn payload_handler(
         InternalServicePayload::PeerConnect {
             uuid,
             cid,
+            username,
             peer_cid,
+            peer_username,
             udp_mode,
             session_security_settings
         } => {
             let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupPeer { implicated_cid: cid, peer_cid }, remote.clone());
-            match client_to_server_remote.propose_target(UserIdentifier(cid, username.cloned()), UserIdentifier(peer_cid, peer_username.cloned())).await {
+            match client_to_server_remote.propose_target(username, peer_username).await { // username or cid?
                 Ok(mut symmetric_identifier_handle_ref) => {
-                    match symmetric_identifier_handle_ref.connect_to_peer_custom(session_security_settings, udp_mode) {
+                    let peer_connect = symmetric_identifier_handle_ref.connect_to_peer_custom(session_security_settings, udp_mode);
+                    match peer_connect {
                         Ok(_peer_connect_success) => {
-                            send_response_to_tcp_client(hm, InternalServiceResponse::PeerConnectSuccess { cid }, uuid).await;
+                            send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::PeerConnectSuccess { cid }, uuid).await;
                         },
 
                         Err(err) => {
-                            send_response_to_tcp_client(hm, InternalServiceResponse::PeerConnectFailure { cid, message: err.into_string() }, uuid).await;
+                            send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::PeerConnectFailure { cid, message: err.into_string() }, uuid).await;
                         }
                     }
                 },
 
                 Err(err) => {
-                    send_response_to_tcp_client(hm, InternalServiceResponse::PeerConnectFailure { cid, message: err.into_string() }, uuid).await;
+                    send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::PeerConnectFailure { cid, message: err.into_string() }, uuid).await;
                 }
             }
 
@@ -334,25 +334,26 @@ async fn payload_handler(
             uuid,
             cid,
             username,
-            peer_cid,
+            peer_cid: _peer_cid,
             peer_username
         } => {
             let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
-            match client_to_server_remote.propose_target(UserIdentifier(cid, username.cloned()), UserIdentifier(peer_cid, peer_username.cloned())).await {
+            match client_to_server_remote.propose_target(username, peer_username).await {
                 Ok(mut symmetric_identifier_handle_ref) => {
-                    match symmetric_identifier_handle_ref.register_to_peer() {
+                    let peer_register = symmetric_identifier_handle_ref.register_to_peer();
+                    match peer_register {
                         Ok(_peer_register_success) => {
-                            send_response_to_tcp_client(hm, InternalServiceResponse::PeerRegisterSuccess { cid }, uuid).await;
+                            send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::PeerRegisterSuccess { cid }, uuid).await;
                         },
 
                         Err(err) => {
-                            send_response_to_tcp_client(hm, InternalServiceResponse::PeerRegisterFailure { cid, message: err.into_string() }, uuid).await;
+                            send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::PeerRegisterFailure { cid, message: err.into_string() }, uuid).await;
                         }
                     }
                 },
 
                 Err(err) => {
-                    send_response_to_tcp_client(hm, InternalServiceResponse::PeerRegisterFailure { cid, message: err.into_string() }, uuid).await;
+                    send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::PeerRegisterFailure { cid, message: err.into_string() }, uuid).await;
                 }
             }
         }
