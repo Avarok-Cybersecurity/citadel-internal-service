@@ -5,10 +5,13 @@ use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use citadel_sdk::prefabs::ClientServerRemote;
+use citadel_sdk::prelude::results::{PeerConnectSuccess, PeerRegisterStatus};
 use citadel_sdk::remote_ext;
+use citadel_sdk::remote_ext::remote_specialization::PeerRemote;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -302,13 +305,22 @@ async fn payload_handler(
         InternalServicePayload::PeerConnect {
             uuid,
             cid,
+            peer_cid,
             udp_mode,
             session_security_settings
         } => {
-            let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
-            match client_to_server_remote.connect_to_peer_custom(session_security_settings, udp_mode).await {
-                Ok(_peer_connect_success) => {
-                    send_response_to_tcp_client(hm, InternalServiceResponse::PeerConnectSuccess { cid }, uuid).await;
+            let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupPeer { implicated_cid: cid, peer_cid }, remote.clone());
+            match client_to_server_remote.propose_target(UserIdentifier(cid, username.cloned()), UserIdentifier(peer_cid, peer_username.cloned())).await {
+                Ok(mut symmetric_identifier_handle_ref) => {
+                    match symmetric_identifier_handle_ref.connect_to_peer_custom(session_security_settings, udp_mode) {
+                        Ok(_peer_connect_success) => {
+                            send_response_to_tcp_client(hm, InternalServiceResponse::PeerConnectSuccess { cid }, uuid).await;
+                        },
+
+                        Err(err) => {
+                            send_response_to_tcp_client(hm, InternalServiceResponse::PeerConnectFailure { cid, message: err.into_string() }, uuid).await;
+                        }
+                    }
                 },
 
                 Err(err) => {
@@ -321,12 +333,22 @@ async fn payload_handler(
         InternalServicePayload::PeerRegister {
             uuid,
             cid,
-            peer_cid: _peer_cid
+            username,
+            peer_cid,
+            peer_username
         } => {
             let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
-            match client_to_server_remote.register_to_peer().await {
-                Ok(_peer_register_success) => {
-                    send_response_to_tcp_client(hm, InternalServiceResponse::PeerRegisterSuccess { cid }, uuid).await;
+            match client_to_server_remote.propose_target(UserIdentifier(cid, username.cloned()), UserIdentifier(peer_cid, peer_username.cloned())).await {
+                Ok(mut symmetric_identifier_handle_ref) => {
+                    match symmetric_identifier_handle_ref.register_to_peer() {
+                        Ok(_peer_register_success) => {
+                            send_response_to_tcp_client(hm, InternalServiceResponse::PeerRegisterSuccess { cid }, uuid).await;
+                        },
+
+                        Err(err) => {
+                            send_response_to_tcp_client(hm, InternalServiceResponse::PeerRegisterFailure { cid, message: err.into_string() }, uuid).await;
+                        }
+                    }
                 },
 
                 Err(err) => {

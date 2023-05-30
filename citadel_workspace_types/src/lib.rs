@@ -98,13 +98,16 @@ pub enum InternalServicePayload {
     PeerConnect {
         uuid: Uuid,
         cid: u64,
+        peer_cid: u64,
         udp_mode: UdpMode,
         session_security_settings: SessionSecuritySettings
     },
     PeerRegister {
         uuid: Uuid,
         cid: u64,
+        username: String,
         //interserver_cid: u64,
-        peer_cid: u64
+        peer_cid: u64,
+        peer_username: String
     },
 }
