@@ -12,7 +12,6 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use uuid::Uuid;
-use crate::kernel;
 
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
@@ -312,8 +311,37 @@ async fn payload_handler(
             match client_to_server_remote.propose_target(username, peer_username).await { // username or cid?
                 Ok(mut symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.connect_to_peer_custom(session_security_settings, udp_mode).await {
-                        Ok(_peer_connect_success) => {
+                        Ok(peer_connect_success) => {
+                            let connection_cid = peer_connect_success.channel.get_peer_cid();
+
+                            let (sink, mut stream) = peer_connect_success.channel.split();
+                            let client_peer_remote = create_client_server_remote(stream.vconn_type, remote.clone());
+                            let connection_struct = Connection::new(sink, client_peer_remote);
+                            server_connection_map.insert(connection_cid, connection_struct);
+
+                            let hm_for_conn = tcp_connection_map.clone();
+
                             send_response_to_tcp_client(tcp_connection_map, InternalServiceResponse::PeerConnectSuccess { cid }, uuid).await;
+
+                            let connection_read_stream = async move {
+                                while let Some(message) = stream.next().await {
+                                    let message = InternalServiceResponse::MessageReceived {
+                                        message: message.into_buffer(),
+                                        cid: connection_cid,
+                                        peer_cid: 0,
+                                    };
+                                    match hm_for_conn.lock().await.get(&uuid) {
+                                        Some(entry) => match entry.send(message) {
+                                            Ok(res) => res,
+                                            Err(_) => info!(target: "citadel", "tx not sent"),
+                                        },
+                                        None => {
+                                            info!(target:"citadel","Hash map connection not found")
+                                        }
+                                    }
+                                }
+                            };
+                            tokio::spawn(connection_read_stream);
                         },
 
                         Err(err) => {
@@ -337,7 +365,7 @@ async fn payload_handler(
             peer_username
         } => {
             let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
-            match client_to_server_remote.propose_target(username, peer_username).await {
+            match client_to_server_remote.propose_target(username, peer_username).await { // username or cid?
                 Ok(mut symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(_peer_register_success) => {
