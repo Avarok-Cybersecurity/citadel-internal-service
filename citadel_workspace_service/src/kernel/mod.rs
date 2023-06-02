@@ -226,6 +226,97 @@ async fn payload_handler(
         }
         InternalServicePayload::SendFile { .. } => {}
         InternalServicePayload::DownloadFile { .. } => {}
+        InternalServicePayload::PeerConnect {
+            uuid,
+            cid,
+            username,
+            peer_cid,
+            peer_username,
+            udp_mode,
+            session_security_settings
+        } => {
+            // Initiate a remote connection between client and server
+            let mut client_to_server_remote = ClientServerRemote::new(
+                VirtualTargetType::LocalGroupPeer { implicated_cid: cid, peer_cid }, 
+                remote.clone(),
+            );
+            
+            // Try to propose a connection to the target peer
+            match client_to_server_remote.propose_target(username, peer_username).await {
+                // If the proposal is successful...
+                Ok(mut symmetric_identifier_handle_ref) => {
+                    // Try to establish a connection with custom security settings and UDP mode
+                    match symmetric_identifier_handle_ref.connect_to_peer_custom(session_security_settings, udp_mode).await {
+                        // If connection is successful...
+                        Ok(peer_connect_success) => {
+                            // Setup channel and remote for the connection
+                            let connection_cid = peer_connect_success.channel.get_peer_cid();
+                            let (sink, mut stream) = peer_connect_success.channel.split();
+                            let client_peer_remote = create_client_server_remote(stream.vconn_type, remote.clone());
+
+                            // Store connection in the server connection map
+                            let connection_struct = Connection::new(sink, client_peer_remote);
+                            server_connection_map.insert(connection_cid, connection_struct);
+
+                            // Clone the TCP connection map for sending response back to the client
+                            let hm_for_conn = tcp_connection_map.clone();
+
+                            // Send connection success response back to the TCP client
+                            send_response_to_tcp_client(
+                                tcp_connection_map, 
+                                InternalServiceResponse::PeerConnectSuccess { cid }, 
+                                uuid,
+                            ).await;
+
+                            // Create an async stream for handling incoming connection messages
+                            let connection_read_stream = async move {
+                                while let Some(message) = stream.next().await {
+                                    let message = InternalServiceResponse::MessageReceived {
+                                        message: message.into_buffer(),
+                                        cid: connection_cid,
+                                        peer_cid: 0,
+                                    };
+
+                                    // Try to find the corresponding TCP connection entry for this UUID
+                                    if let Some(entry) = hm_for_conn.lock().await.get(&uuid) {
+                                        // If entry found, send the message. If not, log an error
+                                        if let Err(_) = entry.send(message) {
+                                            info!(target: "citadel", "tx not sent");
+                                        }
+                                    } else {
+                                        info!(target:"citadel","Hash map connection not found");
+                                    }
+                                }
+                            };
+                            
+                            // Spawn the read stream
+                            tokio::spawn(connection_read_stream);
+                        },
+
+                        // If connection fails...
+                        Err(err) => {
+                            // Send connection failure response back to the TCP client
+                            send_response_to_tcp_client(
+                                tcp_connection_map, 
+                                InternalServiceResponse::PeerConnectFailure { cid, message: err.to_string() }, 
+                                uuid,
+                            ).await;
+                        }
+                    }
+                },
+
+                // If the proposal fails...
+                Err(err) => {
+                    // Send connection failure response back to the TCP client
+                    send_response_to_tcp_client(
+                        tcp_connection_map, 
+                        InternalServiceResponse::PeerConnectFailure { cid, message: err.to_string() }, 
+                        uuid,
+                    ).await;
+                }
+            }
+        }
+
     }
 }
 

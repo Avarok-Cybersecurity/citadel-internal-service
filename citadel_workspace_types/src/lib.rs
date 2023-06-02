@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_sdk::prelude::{SecBuffer, SecurityLevel};
+use citadel_sdk::prelude::{SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use uuid::Uuid;
@@ -32,6 +32,13 @@ pub enum InternalServiceResponse {
     },
     DisconnectSuccess(u64),
     DisconnectFailed(u64),
+    PeerConnectSuccess{
+        cid: u64,
+    },
+    PeerConnectFailure{
+        cid: u64,
+        message: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -61,4 +68,13 @@ pub enum InternalServicePayload {
     },
     SendFile {},
     DownloadFile {},
+    PeerConnect {
+        uuid: Uuid,
+        cid: u64,
+        username: String,
+        peer_cid: u64,
+        peer_username: String,
+        udp_mode: UdpMode,
+        session_security_settings: SessionSecuritySettings
+    },
 }
