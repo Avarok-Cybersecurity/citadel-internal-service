@@ -1,10 +1,13 @@
 use bytes::BytesMut;
-use citadel_sdk::prelude::{ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, TransferType, UdpMode, UserIdentifier};
+use citadel_sdk::prelude::{
+    ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, TransferType, UdpMode,
+    UserIdentifier,
+};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use uuid::Uuid;
 use std::path::PathBuf;
 use std::time::Duration;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum InternalServiceResponse {
@@ -36,14 +39,36 @@ pub enum InternalServiceResponse {
         cid: u64,
         peer_cid: u64,
     },
-    DisconnectSuccess { cid: u64 },
-    DisconnectFailure { cid: u64, message: String },
-    SendFileSuccess { cid: u64 },
-    SendFileFailure { cid: u64, message: String },
-    PeerConnectSuccess {cid: u64 },
-    PeerConnectFailure {cid: u64, message: String },
-    PeerRegisterSuccess {cid: u64 },
-    PeerRegisterFailure {cid: u64, message: String },
+    DisconnectSuccess {
+        cid: u64,
+    },
+    DisconnectFailure {
+        cid: u64,
+        message: String,
+    },
+    SendFileSuccess {
+        cid: u64,
+    },
+    SendFileFailure {
+        cid: u64,
+        message: String,
+    },
+    PeerConnectSuccess {
+        cid: u64,
+    },
+    PeerConnectFailure {
+        cid: u64,
+        message: String,
+    },
+    PeerRegisterSuccess {
+        cid: u64,
+        peer_cid: u64,
+        username: String,
+    },
+    PeerRegisterFailure {
+        cid: u64,
+        message: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -55,7 +80,7 @@ pub enum InternalServicePayload {
         connect_mode: ConnectMode,
         udp_mode: UdpMode,
         keep_alive_timeout: Option<Duration>,
-        session_security_settings: SessionSecuritySettings
+        session_security_settings: SessionSecuritySettings,
     },
     Register {
         uuid: Uuid,
@@ -63,7 +88,7 @@ pub enum InternalServicePayload {
         full_name: String,
         username: String,
         proposed_password: SecBuffer,
-        default_security_settings: SessionSecuritySettings
+        default_security_settings: SessionSecuritySettings,
     },
     Message {
         uuid: Uuid,
@@ -81,19 +106,19 @@ pub enum InternalServicePayload {
         source: PathBuf,
         cid: u64,
         chunk_size: usize,
-        transfer_type: TransferType
+        transfer_type: TransferType,
     },
     DownloadFile {
         virtual_path: PathBuf,
         transfer_security_level: SecurityLevel,
         delete_on_pull: bool,
         cid: u64,
-        uuid: Uuid
+        uuid: Uuid,
     },
     StartGroup {
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
         cid: u64,
-        uuid: Uuid
+        uuid: Uuid,
     },
     PeerConnect {
         uuid: Uuid,
@@ -102,7 +127,7 @@ pub enum InternalServicePayload {
         peer_cid: u64,
         peer_username: String,
         udp_mode: UdpMode,
-        session_security_settings: SessionSecuritySettings
+        session_security_settings: SessionSecuritySettings,
     },
     PeerRegister {
         uuid: Uuid,
@@ -110,6 +135,6 @@ pub enum InternalServicePayload {
         username: String,
         //interserver_cid: u64,
         peer_cid: u64,
-        peer_username: String
+        peer_username: String,
     },
 }
