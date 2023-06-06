@@ -1,3 +1,4 @@
+use async_recursion::async_recursion;
 use bytes::Bytes;
 use citadel_logging::info;
 use citadel_sdk::prefabs::ClientServerRemote;
@@ -106,6 +107,7 @@ async fn send_response_to_tcp_client(
         .unwrap()
 }
 
+#[async_recursion]
 async fn payload_handler(
     command: InternalServicePayload,
     server_connection_map: &mut HashMap<u64, Connection>,
@@ -174,16 +176,41 @@ async fn payload_handler(
             full_name,
             username,
             proposed_password,
+            connect_after_register,
         } => {
             citadel_logging::info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
             match remote
-                .register_with_defaults(server_addr, full_name, username, proposed_password)
+                .register_with_defaults(
+                    server_addr,
+                    full_name,
+                    username.clone(),
+                    proposed_password.clone(),
+                )
                 .await
             {
                 Ok(_res) => {
-                    // TODO: add trace ID to ensure uniqueness of request
-                    let response = InternalServiceResponse::RegisterSuccess { id: uuid };
-                    send_response_to_tcp_client(tcp_connection_map, response, uuid).await
+                    match connect_after_register {
+                        false => {
+                            // TODO: add trace ID to ensure uniqueness of request
+                            let response = InternalServiceResponse::RegisterSuccess { id: uuid };
+                            send_response_to_tcp_client(tcp_connection_map, response, uuid).await
+                        }
+                        true => {
+                            let connect_command = InternalServicePayload::Connect {
+                                uuid,
+                                username,
+                                password: proposed_password.clone(),
+                            };
+
+                            payload_handler(
+                                connect_command,
+                                server_connection_map,
+                                remote,
+                                tcp_connection_map,
+                            )
+                            .await
+                        }
+                    }
                 }
                 Err(err) => {
                     let response = InternalServiceResponse::RegisterFailure {
@@ -370,6 +397,7 @@ mod tests {
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
                 proposed_password: String::from("test12345").into_bytes().into(),
+                connect_after_register: false,
             };
             send(&mut sink, register_command).await?;
 
@@ -478,6 +506,7 @@ mod tests {
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
                 proposed_password: String::from("test12345").into_bytes().into(),
+                connect_after_register: false,
             };
             send(&mut sink, register_command).await?;
 

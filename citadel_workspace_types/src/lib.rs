@@ -47,6 +47,7 @@ pub enum InternalServicePayload {
         full_name: String,
         username: String,
         proposed_password: SecBuffer,
+        connect_after_register: bool,
     },
     Message {
         uuid: Uuid,
