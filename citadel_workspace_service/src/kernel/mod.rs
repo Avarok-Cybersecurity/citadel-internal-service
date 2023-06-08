@@ -448,7 +448,7 @@ mod tests {
     async fn message_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = citadel_sdk::test_common::server_info_reactive(
@@ -569,6 +569,85 @@ mod tests {
                 } else {
                     panic!("Connection to server was not a success")
                 }
+            } else {
+                panic!("Registration to server was not a success")
+            }
+        } else {
+            panic!("Wrong packet type");
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_after_register_true() -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        info!(target: "citadel", "above server spawn");
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
+
+        // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
+        let (server, server_bind_address) = citadel_sdk::test_common::server_info_reactive(
+            |conn, _remote| async move {
+                let (sink, mut stream) = conn.channel.split();
+
+                while let Some(_message) = stream.next().await {
+                    let send_message = "pong".into();
+                    sink.send_message(send_message).await.unwrap();
+                    info!("MessageSent");
+                    ()
+                }
+                Ok(())
+            },
+            |_| (),
+        );
+
+        tokio::task::spawn(server);
+        info!(target: "citadel", "sub server spawn");
+        let internal_service_kernel = CitadelWorkspaceService {
+            remote: None,
+            bind_address: bind_address_internal_service,
+        };
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel)?;
+
+        tokio::task::spawn(internal_service);
+
+        // give time for both the server and internal service to run
+
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        info!(target: "citadel", "about to connect to internal service");
+
+        // begin mocking the GUI/CLI access
+        let conn = TcpStream::connect(bind_address_internal_service).await?;
+        info!(target: "citadel", "connected to the TCP stream");
+        let framed = wrap_tcp_conn(conn);
+        info!(target: "citadel", "wrapped tcp connection");
+
+        let (mut sink, mut stream) = framed.split();
+
+        let first_packet = stream.next().await.unwrap()?;
+        info!(target: "citadel", "First packet");
+        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&*first_packet)?;
+
+        info!(target: "citadel", "Greeter packet {greeter_packet:?}");
+
+        if let InternalServiceResponse::ServiceConnectionAccepted { id } = greeter_packet {
+            let register_command = InternalServicePayload::Register {
+                uuid: id,
+                server_addr: server_bind_address,
+                full_name: String::from("John"),
+                username: String::from("john_doe"),
+                proposed_password: String::from("test12345").into_bytes().into(),
+                connect_after_register: true,
+            };
+            send(&mut sink, register_command).await?;
+
+            let second_packet = stream.next().await.unwrap()?;
+            let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
+
+            if let InternalServiceResponse::ConnectSuccess { cid: _ } = response_packet {
+                Ok(())
             } else {
                 panic!("Registration to server was not a success")
             }
