@@ -6,6 +6,7 @@ use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -295,6 +296,7 @@ async fn payload_handler(
                 }
             };
         }
+
         InternalServicePayload::SendFile {
             uuid,
             source,
@@ -302,7 +304,7 @@ async fn payload_handler(
             chunk_size,
             transfer_type,
         } => {
-            let client_to_server_remote = ClientServerRemote::new(
+            let mut client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
                     implicated_cid: cid,
                 },
@@ -358,7 +360,7 @@ async fn payload_handler(
             cid,
             uuid: _uuid,
         } => {
-            let client_to_server_remote = ClientServerRemote::new(
+            let mut client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
                     implicated_cid: cid,
                 },
@@ -378,10 +380,9 @@ async fn payload_handler(
             uuid,
             cid,
             username,
-            peer_cid,
             peer_username,
         } => {
-            let client_to_server_remote = ClientServerRemote::new(
+            let mut client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
                     implicated_cid: cid,
                 },
@@ -392,20 +393,26 @@ async fn payload_handler(
                 .await
             {
                 // username or cid?
-                Ok(symmetric_identifier_handle_ref) => {
+                Ok(mut symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(peer_register_success) => {
-                            // TODO: pass peer_cid and peer_username to the TCP client
-                            send_response_to_tcp_client(
-                                tcp_connection_map,
-                                InternalServiceResponse::PeerRegisterSuccess {
-                                    cid,
-                                    peer_cid,
-                                    username,
-                                },
-                                uuid,
-                            )
-                            .await;
+                            match symmetric_identifier_handle_ref.account_manager().find_target_information(cid, peer_username.clone()).await {
+                                Ok(target_information) => {
+                                    let (peer_cid, mutual_peer) = target_information.unwrap();
+                                    // TODO: pass peer_cid and peer_username to the TCP client
+                                    send_response_to_tcp_client(
+                                        tcp_connection_map,
+                                        InternalServiceResponse::PeerRegisterSuccess {
+                                            cid,
+                                            peer_cid,
+                                            username,
+                                        },
+                                        uuid,
+                                    )
+                                        .await;
+                                }
+                                Err(_) => {}
+                            }
                         }
 
                         Err(err) => {
@@ -446,7 +453,7 @@ async fn payload_handler(
             session_security_settings,
         } => {
             // TODO: check to see if peer is already in the hashmap
-            let client_to_server_remote = ClientServerRemote::new(
+            let mut client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupPeer {
                     implicated_cid: cid,
                     peer_cid,
@@ -458,19 +465,18 @@ async fn payload_handler(
                 .await
             {
                 // username or cid?
-                Ok(symmetric_identifier_handle_ref) => {
+                Ok(mut symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref
                         .connect_to_peer_custom(session_security_settings, udp_mode)
                         .await
                     {
                         Ok(peer_connect_success) => {
                             let connection_cid = peer_connect_success.channel.get_peer_cid();
-                            let (mut sink, mut stream) = peer_connect_success.channel.split();
-                            let symmetric_identifier = symmetric_identifier_handle_ref.into_owned();
+                            let (sink, mut stream) = peer_connect_success.channel.split();
                             server_connection_map
-                                .get(&cid)
+                                .get_mut(&cid)
                                 .unwrap()
-                                .add_peer_connection(peer_cid, sink, symmetric_identifier);
+                                .add_peer_connection(peer_cid, sink, symmetric_identifier_handle_ref.into_owned());
 
                             let hm_for_conn = tcp_connection_map.clone();
 
@@ -525,6 +531,51 @@ async fn payload_handler(
                         uuid,
                     )
                     .await;
+                }
+            }
+        }
+        InternalServicePayload::PeerDisconnect {
+            uuid,
+            cid,
+            peer_cid
+        } => {
+
+            let request = NodeRequest::PeerCommand(PeerCommand {
+                implicated_cid: cid,
+                command: PeerSignal::Disconnect(PeerConnectionType::LocalGroupPeer { implicated_cid: cid, peer_cid}, None)
+            });
+
+            match server_connection_map.get_mut(&cid) {
+                None => {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::PeerDisconnectFailure { cid, message: "Server connection not found".to_string() },
+                        uuid
+                    ).await;
+                }
+                Some(conn) => {
+                    match conn.peers.get_mut(&cid) {
+                        None => {}
+                        Some(target_peer) => {
+                            match target_peer.remote.send(request) {
+                                Ok(ticket) => {
+                                    conn.clear_peer_connection(peer_cid);
+                                    let peer_disconnect_success = InternalServiceResponse::PeerDisconnectSuccess { cid, ticket };
+                                    send_response_to_tcp_client(tcp_connection_map, peer_disconnect_success, uuid).await;
+                                    info!(target: "citadel", "Disconnected Peer{ticket:?}")
+                                },
+                                Err(network_error) => {
+                                    let error_message = format!("Failed to disconnect {network_error:?}");
+                                    info!(target: "citadel", "{error_message}");
+                                    let peer_disconnect_failure = InternalServiceResponse::PeerDisconnectFailure {
+                                        cid,
+                                        message: error_message,
+                                    };
+                                    send_response_to_tcp_client(tcp_connection_map, peer_disconnect_failure, uuid).await;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -857,5 +908,221 @@ mod tests {
         } else {
             panic!("Wrong packet type");
         }
+    }
+    #[tokio::test]
+    async fn test_citadel_workspace_service_peer_test() -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        info!(target: "citadel", "above server spawn");
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+
+        // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
+        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+
+        tokio::task::spawn(server);
+        info!(target: "citadel", "sub server spawn");
+        let internal_service_kernel = CitadelWorkspaceService {
+            remote: None,
+            bind_address: bind_address_internal_service,
+        };
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel)?;
+
+        tokio::task::spawn(internal_service);
+
+        // give time for both the server and internal service to run
+
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        info!(target: "citadel", "about to connect to internal service");
+
+        let peer_execute = async move {
+            // begin mocking the GUI/CLI access
+            let conn = TcpStream::connect(bind_address_internal_service).await?;
+            info!(target: "citadel", "connected to the TCP stream");
+            let framed = wrap_tcp_conn(conn);
+            info!(target: "citadel", "wrapped tcp connection");
+
+            let (mut sink, mut stream) = framed.split();
+
+            let first_packet = stream.next().await.unwrap()?;
+            info!(target: "citadel", "First packet");
+            let greeter_packet: InternalServiceResponse = bincode2::deserialize(&*first_packet)?;
+
+            info!(target: "citadel", "Greeter packet {greeter_packet:?}");
+
+            if let InternalServiceResponse::ServiceConnectionAccepted { id } = greeter_packet {
+                let register_command = InternalServicePayload::Register {
+                    uuid: id,
+                    server_addr: server_bind_address,
+                    full_name: String::from("Perry"),
+                    username: String::from("peer_test"),
+                    proposed_password: "test12345".into(),
+                    default_security_settings: Default::default(),
+                };
+                send(&mut sink, register_command).await?;
+
+                let second_packet = stream.next().await.unwrap()?;
+                let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
+                if let InternalServiceResponse::RegisterSuccess { id } = response_packet {
+                    // now, connect to the server
+                    let command = InternalServicePayload::Connect {
+                        username: String::from("peer_test"),
+                        password: "test12345".into(),
+                        connect_mode: Default::default(),
+                        udp_mode: Default::default(),
+                        keep_alive_timeout: None,
+                        uuid: id,
+                        session_security_settings: Default::default(),
+                    };
+
+                    send(&mut sink, command).await?;
+
+                    let next_packet = stream.next().await.unwrap()?;
+                    let response_packet: InternalServiceResponse =
+                        bincode2::deserialize(&*next_packet)?;
+                    if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
+
+                        let disconnect_command = InternalServicePayload::Disconnect { uuid: id, cid };
+
+                        send(&mut sink, disconnect_command).await?;
+                        let next_packet = stream.next().await.unwrap()?;
+                        let response_disconnect_packet: InternalServiceResponse =
+                            bincode2::deserialize(&*next_packet)?;
+
+                        if let InternalServiceResponse::DisconnectSuccess { cid } =
+                            response_disconnect_packet
+                        {
+                            info!(target:"citadel", "Disconnected {cid}");
+                            Ok(())
+                        } else {
+                            panic!("Disconnection failed");
+                        }
+                    } else {
+                        panic!("Connection to server was not a success")
+                    }
+                } else {
+                    panic!("Registration to server was not a success")
+                }
+            } else {
+                panic!("Wrong packet type");
+            }
+        };
+
+        // begin mocking the GUI/CLI access
+        let conn = TcpStream::connect(bind_address_internal_service).await?;
+        info!(target: "citadel", "connected to the TCP stream");
+        let framed = wrap_tcp_conn(conn);
+        info!(target: "citadel", "wrapped tcp connection");
+
+        let (mut sink, mut stream) = framed.split();
+
+        let first_packet = stream.next().await.unwrap()?;
+        info!(target: "citadel", "First packet");
+        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&*first_packet)?;
+
+        info!(target: "citadel", "Greeter packet {greeter_packet:?}");
+
+        if let InternalServiceResponse::ServiceConnectionAccepted { id } = greeter_packet {
+            let register_command = InternalServicePayload::Register {
+                uuid: id,
+                server_addr: server_bind_address,
+                full_name: String::from("John"),
+                username: String::from("john_doe"),
+                proposed_password: "test12345".into(),
+                default_security_settings: Default::default(),
+            };
+            send(&mut sink, register_command).await?;
+
+            let second_packet = stream.next().await.unwrap()?;
+            let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
+            if let InternalServiceResponse::RegisterSuccess { id } = response_packet {
+                // now, connect to the server
+                let command = InternalServicePayload::Connect {
+                    username: String::from("john_doe"),
+                    password: "test12345".into(),
+                    connect_mode: Default::default(),
+                    udp_mode: Default::default(),
+                    keep_alive_timeout: None,
+                    uuid: id,
+                    session_security_settings: Default::default(),
+                };
+
+                send(&mut sink, command).await?;
+
+                let next_packet = stream.next().await.unwrap()?;
+                let response_packet: InternalServiceResponse =
+                    bincode2::deserialize(&*next_packet)?;
+                if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
+
+                    // Peer Register
+                    let peer_register_command = InternalServicePayload::PeerRegister {
+                        uuid: id,
+                        cid,
+                        username: String::from("john_doe"),
+                        peer_username: String::from("peer_test"),
+                    };
+
+                    send(&mut sink, peer_register_command).await?;
+                    let peer_register_response = stream.next().await.unwrap()?;
+                    let peer_response_packet: InternalServiceResponse = bincode2::deserialize(&*next_packet)?;
+                    if let InternalServiceResponse::PeerRegisterSuccess { cid, peer_cid, username } = peer_response_packet {
+
+                        info!(target:"citadel", "User {cid} Registered Peer {peer_cid}");
+
+                        // Peer Connect
+                        let peer_connect_command = InternalServicePayload::PeerConnect {
+                            uuid: id,
+                            cid,
+                            username,
+                            peer_cid,
+                            peer_username: String::from("peer_test"),
+                            udp_mode: Default::default(),
+                            session_security_settings: Default::default(),
+                        };
+
+                        send(&mut sink, peer_connect_command).await?;
+                        let peer_connect_response = stream.next().await.unwrap()?;
+                        let peer_response_packet: InternalServiceResponse = bincode2::deserialize(&*next_packet)?;
+                        if let InternalServiceResponse::PeerConnectSuccess { cid} = peer_response_packet {
+
+                            info!(target:"citadel", "User {cid} Connected to Peer {peer_cid}");
+
+                            // Disconnect
+                            let disconnect_command = InternalServicePayload::Disconnect { uuid: id, cid };
+
+                            send(&mut sink, disconnect_command).await?;
+                            let next_packet = stream.next().await.unwrap()?;
+                            let response_disconnect_packet: InternalServiceResponse =
+                                bincode2::deserialize(&*next_packet)?;
+
+                            if let InternalServiceResponse::DisconnectSuccess { cid } =
+                                response_disconnect_packet
+                            {
+                                info!(target:"citadel", "Disconnected {cid}");
+                                Ok(())
+                            } else {
+                                panic!("Disconnection failed");
+                            }
+                        }
+                        else {
+                            panic!("Peer Connect Failed!");
+                        }
+                    }
+                    else {
+                        panic!("Peer Register Failed!");
+                    }
+                } else {
+                    panic!("Connection to server was not a success")
+                }
+            } else {
+                panic!("Registration to server was not a success")
+            }
+        } else {
+            panic!("Wrong packet type");
+        }
+
+
     }
 }

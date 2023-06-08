@@ -60,6 +60,14 @@ pub enum InternalServiceResponse {
         cid: u64,
         message: String,
     },
+    PeerDisconnectSuccess {
+        cid: u64,
+        ticket: u128
+    },
+    PeerDisconnectFailure {
+        cid: u64,
+        message: String,
+    },
     PeerRegisterSuccess {
         cid: u64,
         peer_cid: u64,
@@ -129,12 +137,16 @@ pub enum InternalServicePayload {
         udp_mode: UdpMode,
         session_security_settings: SessionSecuritySettings,
     },
+    PeerDisconnect {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: u64
+    },
     PeerRegister {
         uuid: Uuid,
         cid: u64,
         username: String,
         //interserver_cid: u64,
-        peer_cid: u64,
         peer_username: String,
     },
 }
