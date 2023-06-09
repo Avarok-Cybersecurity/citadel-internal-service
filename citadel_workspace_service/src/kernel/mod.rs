@@ -378,8 +378,7 @@ async fn payload_handler(
         InternalServicePayload::PeerRegister {
             uuid,
             cid,
-            username,
-            peer_username,
+            peer_id: peer_username,
         } => {
             let mut client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
@@ -388,13 +387,13 @@ async fn payload_handler(
                 remote.clone(),
             );
             match client_to_server_remote
-                .propose_target(username.clone(), peer_username.clone())
+                .propose_target(cid, peer_username.clone())
                 .await
             {
                 // username or cid?
                 Ok(mut symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.register_to_peer().await {
-                        Ok(peer_register_success) => {
+                        Ok(_peer_register_success) => {
                             match symmetric_identifier_handle_ref.account_manager().find_target_information(cid, peer_username).await {
                                 Ok(target_information) => {
                                     let (peer_cid, mutual_peer) = target_information.unwrap();
@@ -663,6 +662,7 @@ mod tests {
     use std::error::Error;
     use std::time::Duration;
     use tokio::net::TcpStream;
+    use tokio::sync::mpsc::UnboundedReceiver;
 
     async fn send(
         sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
@@ -674,7 +674,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service() -> Result<(), Box<dyn Error>> {
+    async fn test_citadel_workspace_service_register_connect() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
@@ -701,8 +701,22 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        // begin mocking the GUI/CLI access
-        let conn = TcpStream::connect(bind_address_internal_service).await?;
+        let (to_service, mut from_service, uuid, cid) = register_and_connect_to_server(bind_address_internal_service, server_bind_address, "John Doe", "john.doe", "secret").await.unwrap();
+        let disconnect_command = InternalServicePayload::Disconnect { uuid, cid };
+        to_service.send(disconnect_command).unwrap();
+        let disconnect_response = from_service.recv().await.unwrap();
+
+        assert!(matches!(
+                disconnect_response,
+                InternalServiceResponse::DisconnectSuccess { .. }
+            )
+        );
+
+        Ok(())
+    }
+
+    async fn register_and_connect_to_server<T: Into<String>, R: Into<String>, S: Into<SecBuffer>>(internal_service_addr: SocketAddr, server_addr: SocketAddr, full_name: T, username: R, password: S) -> Result<(UnboundedSender<InternalServicePayload>, UnboundedReceiver<InternalServiceResponse>, Uuid, u64), Box<dyn Error>> {
+        let conn = TcpStream::connect(internal_service_addr).await?;
         info!(target: "citadel", "connected to the TCP stream");
         let framed = wrap_tcp_conn(conn);
         info!(target: "citadel", "wrapped tcp connection");
@@ -715,13 +729,17 @@ mod tests {
 
         info!(target: "citadel", "Greeter packet {greeter_packet:?}");
 
+        let username = username.into();
+        let full_name = full_name.into();
+        let password = password.into();
+
         if let InternalServiceResponse::ServiceConnectionAccepted { id } = greeter_packet {
             let register_command = InternalServicePayload::Register {
                 uuid: id,
-                server_addr: server_bind_address,
-                full_name: String::from("John"),
-                username: String::from("john_doe"),
-                proposed_password: "test12345".into(),
+                server_addr,
+                full_name,
+                username: username.clone(),
+                proposed_password: password.clone(),
                 default_security_settings: Default::default(),
             };
             send(&mut sink, register_command).await?;
@@ -731,8 +749,8 @@ mod tests {
             if let InternalServiceResponse::RegisterSuccess { id } = response_packet {
                 // now, connect to the server
                 let command = InternalServicePayload::Connect {
-                    username: String::from("john_doe"),
-                    password: "test12345".into(),
+                    username,
+                    password,
                     connect_mode: Default::default(),
                     udp_mode: Default::default(),
                     keep_alive_timeout: None,
@@ -746,34 +764,48 @@ mod tests {
                 let response_packet: InternalServiceResponse =
                     bincode2::deserialize(&*next_packet)?;
                 if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
-                    let disconnect_command = InternalServicePayload::Disconnect { uuid: id, cid };
+                    let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();
+                    let service_to_test = async move {
+                        // take messages from the service and send them to from_service
+                        while let Some(msg) = stream.next().await {
+                            let msg = msg.unwrap();
+                            let msg_deserialized: InternalServiceResponse =
+                                bincode2::deserialize(&*msg).unwrap();
+                            to_service.send(msg_deserialized).unwrap();
+                        }
+                    };
 
-                    send(&mut sink, disconnect_command).await?;
-                    let next_packet = stream.next().await.unwrap()?;
-                    let response_disconnect_packet: InternalServiceResponse =
-                        bincode2::deserialize(&*next_packet)?;
+                    let (to_service_sender, mut from_test) = tokio::sync::mpsc::unbounded_channel();
+                    let test_to_service = async move {
+                        while let Some(msg) = from_test.recv().await {
+                            send(&mut sink, msg).await.unwrap();
+                        }
+                    };
 
-                    if let InternalServiceResponse::DisconnectSuccess { cid } =
-                        response_disconnect_packet
-                    {
-                        info!(target:"citadel", "Disconnected {cid}");
-                        Ok(())
-                    } else {
-                        panic!("Disconnection failed");
-                    }
+                    // TODO: SELECT
+                    tokio::task::spawn(service_to_test);
+                    tokio::task::spawn(test_to_service);
+
+                    return Ok((to_service_sender, from_service, id, cid))
                 } else {
-                    panic!("Connection to server was not a success")
+                    Err(generic_error("Connection to server was not a success"))
                 }
             } else {
-                panic!("Registration to server was not a success")
+                Err(generic_error("Registration to server was not a success"))
             }
         } else {
-            panic!("Wrong packet type");
+            Err(generic_error("Wrong packet type"))
         }
     }
+
+    fn generic_error<T: ToString>(msg: T) -> Box<dyn Error> {
+        Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg.to_string()))
+    }
+
     // test
     #[tokio::test]
     async fn message_test() -> Result<(), Box<dyn Error>> {
+        // TODO: refactor using the new register_then_connect_to_server function
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
@@ -908,33 +940,65 @@ mod tests {
             panic!("Wrong packet type");
         }
     }
+
     #[tokio::test]
     async fn test_citadel_workspace_service_peer_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+        // internal service for peer A
+        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+        // internal service for peer B
+        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55557".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = citadel_sdk::test_common::server_info();
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel = CitadelWorkspaceService {
+        let internal_service_kernel_a = CitadelWorkspaceService {
             remote: None,
-            bind_address: bind_address_internal_service,
+            bind_address: bind_address_internal_service_a,
         };
-        let internal_service = NodeBuilder::default()
+        let internal_service_a = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
-            .build(internal_service_kernel)?;
+            .build(internal_service_kernel_a)?;
 
-        tokio::task::spawn(internal_service);
+        let internal_service_kernel_b = CitadelWorkspaceService {
+            remote: None,
+            bind_address: bind_address_internal_service_b,
+        };
+
+        let internal_service_b = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel_b)?;
+
+        // TODO: SELECT on these futures
+        tokio::task::spawn(internal_service_a);
+        tokio::task::spawn(internal_service_b);
 
         // give time for both the server and internal service to run
-
         tokio::time::sleep(Duration::from_millis(2000)).await;
-
         info!(target: "citadel", "about to connect to internal service");
+        let (to_service_a, mut from_service_a, uuid_a, cid_a) = register_and_connect_to_server(bind_address_internal_service_a, server_bind_address, "Peer A", "peer.a", "secret_a").await?;
+        let (to_service_b, mut from_service_b, uuid_b, cid_b) = register_and_connect_to_server(bind_address_internal_service_b, server_bind_address, "Peer B", "peer.b", "secret_b").await?;
+
+        // now, both peers are connected and registered to the central server. Now, we
+        // need to have them peer-register to each other
+        to_service_a.send(InternalServicePayload::PeerRegister {
+            uuid: uuid_a,
+            cid: cid_a,
+            peer_id: cid_b.into(),
+        }).unwrap();
+
+        to_service_b.send(InternalServicePayload::PeerRegister {
+            uuid: uuid_b,
+            cid: cid_b,
+            peer_id: cid_a.into(),
+        }).unwrap();
+
+        // TODO: use the from_service_a and from_service_b to get responses. Then, assert those responses
 
         /*let peer_execute = async move {
             // begin mocking the GUI/CLI access
@@ -1064,7 +1128,7 @@ mod tests {
                         uuid: id,
                         cid,
                         username: String::from("john_doe"),
-                        peer_username: String::from("peer_test"),
+                        peer_id: String::from("peer_test"),
                     };
 
                     send(&mut sink, peer_register_command).await?;

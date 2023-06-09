@@ -72,6 +72,7 @@ pub enum InternalServiceResponse {
         cid: u64,
         peer_cid: u64,
         username: String,
+        // TODO: add access to MutualPeer
     },
     PeerRegisterFailure {
         cid: u64,
@@ -145,8 +146,6 @@ pub enum InternalServicePayload {
     PeerRegister {
         uuid: Uuid,
         cid: u64,
-        username: String,
-        //interserver_cid: u64,
-        peer_username: String,
+        peer_id: UserIdentifier,
     },
 }
