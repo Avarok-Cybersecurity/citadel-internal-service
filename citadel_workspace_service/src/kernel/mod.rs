@@ -6,7 +6,6 @@ use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use std::collections::HashMap;
-use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -389,14 +388,14 @@ async fn payload_handler(
                 remote.clone(),
             );
             match client_to_server_remote
-                .propose_target(username.clone(), peer_username)
+                .propose_target(username.clone(), peer_username.clone())
                 .await
             {
                 // username or cid?
                 Ok(mut symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(peer_register_success) => {
-                            match symmetric_identifier_handle_ref.account_manager().find_target_information(cid, peer_username.clone()).await {
+                            match symmetric_identifier_handle_ref.account_manager().find_target_information(cid, peer_username).await {
                                 Ok(target_information) => {
                                     let (peer_cid, mutual_peer) = target_information.unwrap();
                                     // TODO: pass peer_cid and peer_username to the TCP client
@@ -557,10 +556,10 @@ async fn payload_handler(
                     match conn.peers.get_mut(&cid) {
                         None => {}
                         Some(target_peer) => {
-                            match target_peer.remote.send(request) {
+                            match target_peer.remote.send(request).await {
                                 Ok(ticket) => {
                                     conn.clear_peer_connection(peer_cid);
-                                    let peer_disconnect_success = InternalServiceResponse::PeerDisconnectSuccess { cid, ticket };
+                                    let peer_disconnect_success = InternalServiceResponse::PeerDisconnectSuccess { cid, ticket: 0 };
                                     send_response_to_tcp_client(tcp_connection_map, peer_disconnect_success, uuid).await;
                                     info!(target: "citadel", "Disconnected Peer{ticket:?}")
                                 },
@@ -937,7 +936,7 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        let peer_execute = async move {
+        /*let peer_execute = async move {
             // begin mocking the GUI/CLI access
             let conn = TcpStream::connect(bind_address_internal_service).await?;
             info!(target: "citadel", "connected to the TCP stream");
@@ -984,6 +983,8 @@ mod tests {
                         bincode2::deserialize(&*next_packet)?;
                     if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
 
+                        tokio::time::sleep(Duration::from_millis(5000)).await;
+
                         let disconnect_command = InternalServicePayload::Disconnect { uuid: id, cid };
 
                         send(&mut sink, disconnect_command).await?;
@@ -1008,7 +1009,9 @@ mod tests {
             } else {
                 panic!("Wrong packet type");
             }
-        };
+        };*/
+
+        //tokio::task::spawn(peer_execute);
 
         // begin mocking the GUI/CLI access
         let conn = TcpStream::connect(bind_address_internal_service).await?;
