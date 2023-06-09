@@ -62,7 +62,7 @@ pub enum InternalServiceResponse {
     },
     PeerDisconnectSuccess {
         cid: u64,
-        ticket: u128
+        ticket: u128,
     },
     PeerDisconnectFailure {
         cid: u64,
@@ -141,7 +141,7 @@ pub enum InternalServicePayload {
     PeerDisconnect {
         uuid: Uuid,
         cid: u64,
-        peer_cid: u64
+        peer_cid: u64,
     },
     PeerRegister {
         uuid: Uuid,
