@@ -1,3 +1,4 @@
+use async_recursion::async_recursion;
 use bytes::Bytes;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
@@ -125,6 +126,7 @@ async fn send_response_to_tcp_client(
         .unwrap()
 }
 
+#[async_recursion]
 async fn payload_handler(
     command: InternalServicePayload,
     server_connection_map: &mut HashMap<u64, Connection>,
@@ -203,6 +205,7 @@ async fn payload_handler(
             full_name,
             username,
             proposed_password,
+            connect_after_register,
             default_security_settings,
         } => {
             info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
@@ -210,16 +213,39 @@ async fn payload_handler(
                 .register(
                     server_addr,
                     full_name,
-                    username,
-                    proposed_password,
+                    username.clone(),
+                    proposed_password.clone(),
                     default_security_settings,
                 )
                 .await
             {
                 Ok(_res) => {
-                    // TODO: add trace ID to ensure uniqueness of request
-                    let response = InternalServiceResponse::RegisterSuccess { id: uuid };
-                    send_response_to_tcp_client(tcp_connection_map, response, uuid).await
+                    match connect_after_register {
+                        false => {
+                            // TODO: add trace ID to ensure uniqueness of request
+                            let response = InternalServiceResponse::RegisterSuccess { id: uuid };
+                            send_response_to_tcp_client(tcp_connection_map, response, uuid).await
+                        }
+                        true => {
+                            let connect_command = InternalServicePayload::Connect {
+                                uuid,
+                                username,
+                                password: proposed_password,
+                                keep_alive_timeout: None,
+                                udp_mode: Default::default(),
+                                connect_mode: Default::default(),
+                                session_security_settings: default_security_settings,
+                            };
+
+                            payload_handler(
+                                connect_command,
+                                server_connection_map,
+                                remote,
+                                tcp_connection_map,
+                            )
+                            .await
+                        }
+                    }
                 }
                 Err(err) => {
                     let response = InternalServiceResponse::RegisterFailure {
@@ -780,6 +806,7 @@ mod tests {
                 username: username.clone(),
                 proposed_password: password.clone(),
                 default_security_settings: Default::default(),
+                connect_after_register: false,
             };
             send(&mut sink, register_command).await?;
 
@@ -852,7 +879,7 @@ mod tests {
         // TODO: refactor using the new register_then_connect_to_server function
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = citadel_sdk::test_common::server_info_reactive(
@@ -910,6 +937,7 @@ mod tests {
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
                 proposed_password: String::from("test12345").into_bytes().into(),
+                connect_after_register: false,
                 default_security_settings: Default::default(),
             };
             send(&mut sink, register_command).await?;
@@ -986,6 +1014,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connect_after_register_true() -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        info!(target: "citadel", "above server spawn");
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
+
+        // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
+        let (server, server_bind_address) = citadel_sdk::test_common::server_info_reactive(
+            |conn, _remote| async move {
+                let (sink, mut stream) = conn.channel.split();
+
+                while let Some(_message) = stream.next().await {
+                    let send_message = "pong".into();
+                    sink.send_message(send_message).await.unwrap();
+                    info!("MessageSent");
+                    ()
+                }
+                Ok(())
+            },
+            |_| (),
+        );
+
+        tokio::task::spawn(server);
+        info!(target: "citadel", "sub server spawn");
+        let internal_service_kernel = CitadelWorkspaceService {
+            remote: None,
+            bind_address: bind_address_internal_service,
+        };
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel)?;
+
+        tokio::task::spawn(internal_service);
+
+        // give time for both the server and internal service to run
+
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        info!(target: "citadel", "about to connect to internal service");
+
+        // begin mocking the GUI/CLI access
+        let conn = TcpStream::connect(bind_address_internal_service).await?;
+        info!(target: "citadel", "connected to the TCP stream");
+        let framed = wrap_tcp_conn(conn);
+        info!(target: "citadel", "wrapped tcp connection");
+
+        let (mut sink, mut stream) = framed.split();
+
+        let first_packet = stream.next().await.unwrap()?;
+        info!(target: "citadel", "First packet");
+        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&*first_packet)?;
+
+        info!(target: "citadel", "Greeter packet {greeter_packet:?}");
+
+        if let InternalServiceResponse::ServiceConnectionAccepted { id } = greeter_packet {
+            let register_command = InternalServicePayload::Register {
+                uuid: id,
+                server_addr: server_bind_address,
+                full_name: String::from("John"),
+                username: String::from("john_doe"),
+                proposed_password: String::from("test12345").into_bytes().into(),
+                default_security_settings: Default::default(),
+                connect_after_register: true,
+            };
+            send(&mut sink, register_command).await?;
+
+            let second_packet = stream.next().await.unwrap()?;
+            let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
+
+            if let InternalServiceResponse::ConnectSuccess { cid: _ } = response_packet {
+                Ok(())
+            } else {
+                panic!("Registration to server was not a success")
+            }
+        } else {
+            panic!("Wrong packet type");
+        }
+    }
+
     async fn test_citadel_workspace_service_peer_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");

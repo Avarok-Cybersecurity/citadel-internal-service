@@ -97,6 +97,7 @@ pub enum InternalServicePayload {
         full_name: String,
         username: String,
         proposed_password: SecBuffer,
+        connect_after_register: bool,
         default_security_settings: SessionSecuritySettings,
     },
     Message {
