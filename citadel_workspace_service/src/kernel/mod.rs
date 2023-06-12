@@ -15,7 +15,6 @@ use uuid::Uuid;
 
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
-    // 127.0.0.1:55555
     pub bind_address: SocketAddr,
 }
 
@@ -65,8 +64,7 @@ impl NetKernel for CitadelWorkspaceService {
     async fn on_start(&self) -> Result<(), NetworkError> {
         let mut remote = self.remote.clone().unwrap();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
-        //from TCP to command handler
-        //read task
+
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
 
         let tcp_connection_map: &Arc<
@@ -74,7 +72,6 @@ impl NetKernel for CitadelWorkspaceService {
         > = &Arc::new(tokio::sync::Mutex::new(HashMap::new()));
         let listener_task = async move {
             while let Ok((conn, _addr)) = listener.accept().await {
-                //from command handler to the TCP write tak in handle_connection
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
                 let id = Uuid::new_v4();
                 tcp_connection_map.lock().await.insert(id, tx1);
@@ -386,7 +383,6 @@ async fn payload_handler(
                 .propose_target(cid, peer_username.clone())
                 .await
             {
-                // username or cid?
                 Ok(symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(_peer_register_success) => {
@@ -396,7 +392,6 @@ async fn payload_handler(
                                 .await
                             {
                                 let (peer_cid, mutual_peer) = target_information.unwrap();
-                                // TODO: pass peer_cid and peer_username to the TCP client
                                 send_response_to_tcp_client(
                                     tcp_connection_map,
                                     InternalServiceResponse::PeerRegisterSuccess {
@@ -1032,7 +1027,7 @@ mod tests {
         // give time for both the server and internal service to run
         tokio::time::sleep(Duration::from_millis(2000)).await;
         info!(target: "citadel", "about to connect to internal service");
-        let (to_service_a, _from_service_a, uuid_a, cid_a) = register_and_connect_to_server(
+        let (to_service_a, mut from_service_a, uuid_a, cid_a) = register_and_connect_to_server(
             bind_address_internal_service_a,
             server_bind_address,
             "Peer A",
@@ -1069,47 +1064,85 @@ mod tests {
             })
             .unwrap();
 
-        if let Some(item) = from_service_b.recv().await {
-            match item {
-                InternalServiceResponse::PeerRegisterSuccess {
-                    cid,
-                    peer_cid,
-                    username,
-                } => {
-                    assert_eq!(cid, cid_b);
-                    assert_eq!(peer_cid, cid_b);
-                    assert_eq!(username, "peer.a");
-                }
-                _ => {
-                    panic!("Didn't get the PeerRegisterSuccess");
-                }
+        let item = from_service_b.recv().await.unwrap();
+
+        match item {
+            InternalServiceResponse::PeerRegisterSuccess {
+                cid,
+                peer_cid,
+                username,
+            } => {
+                assert_eq!(cid, cid_b);
+                assert_eq!(peer_cid, cid_b);
+                assert_eq!(username, "peer.a");
+            }
+            _ => {
+                panic!("Didn't get the PeerRegisterSuccess");
             }
         }
+
+        let item = from_service_a.recv().await.unwrap();
+        match item {
+            InternalServiceResponse::PeerRegisterSuccess {
+                cid,
+                peer_cid,
+                username,
+            } => {
+                assert_eq!(cid, cid_a);
+                assert_eq!(peer_cid, cid_a);
+                assert_eq!(username, "peer.b");
+            }
+            _ => {
+                panic!("Didn't get the PeerRegisterSuccess");
+            }
+        }
+
+        to_service_a
+            .send(InternalServicePayload::PeerConnect {
+                uuid: uuid_a,
+                cid: cid_a,
+                username: String::from("peer.a"),
+                peer_cid: cid_b,
+                peer_username: String::from("peer.b"),
+                udp_mode: Default::default(),
+                session_security_settings: Default::default(),
+            })
+            .unwrap();
+
+        to_service_b
+            .send(InternalServicePayload::PeerConnect {
+                uuid: uuid_b,
+                cid: cid_b,
+                username: String::from("peer.b"),
+                peer_cid: cid_a,
+                peer_username: String::from("peer.a"),
+                udp_mode: Default::default(),
+                session_security_settings: Default::default(),
+            })
+            .unwrap();
+
+        let item = from_service_b.recv().await.unwrap();
+        match item {
+            InternalServiceResponse::PeerConnectSuccess { cid } => {
+                assert_eq!(cid, cid_b);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", item);
+                panic!("Didn't get the PeerConnectSuccess");
+            }
+        }
+
+        let item = from_service_a.recv().await.unwrap();
+        match item {
+            InternalServiceResponse::PeerConnectSuccess { cid } => {
+                assert_eq!(cid, cid_a);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", item);
+                panic!("Didn't get the PeerConnectSuccess");
+            }
+        }
+
         Ok(())
-        // to_service_a
-        //     .send(InternalServicePayload::PeerConnect {
-        //         uuid: uuid_a,
-        //         cid: cid_a,
-        //         username: String::from("peer.a"),
-        //         peer_cid: cid_b,
-        //         peer_username: String::from("peer.b"),
-        //         udp_mode: Default::default(),
-        //         session_security_settings: Default::default(),
-        //     })
-        //     .unwrap();
-
-        // to_service_b
-        //     .send(InternalServicePayload::PeerConnect {
-        //         uuid: uuid_b,
-        //         cid: cid_b,
-        //         username: String::from("peer.b"),
-        //         peer_cid: cid_a,
-        //         peer_username: String::from("peer.a"),
-        //         udp_mode: Default::default(),
-        //         session_security_settings: Default::default(),
-        //     })
-        //     .unwrap();
-
-        // TODO: use the from_service_a and from_service_b to get responses. Then, assert those responses
     }
 }
