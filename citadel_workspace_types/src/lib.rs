@@ -148,5 +148,6 @@ pub enum InternalServicePayload {
         uuid: Uuid,
         cid: u64,
         peer_id: UserIdentifier,
+        connect_after_register: bool,
     },
 }

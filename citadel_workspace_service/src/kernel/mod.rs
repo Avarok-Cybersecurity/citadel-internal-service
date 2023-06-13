@@ -398,6 +398,7 @@ async fn payload_handler(
             uuid,
             cid,
             peer_id: peer_username,
+            connect_after_register,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
@@ -405,6 +406,7 @@ async fn payload_handler(
                 },
                 remote.clone(),
             );
+
             match client_to_server_remote
                 .propose_target(cid, peer_username.clone())
                 .await
@@ -412,22 +414,46 @@ async fn payload_handler(
                 Ok(symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(_peer_register_success) => {
-                            if let Ok(target_information) = symmetric_identifier_handle_ref
-                                .account_manager()
+                            let account_manager = symmetric_identifier_handle_ref.account_manager();
+                            if let Ok(target_information) = account_manager
                                 .find_target_information(cid, peer_username.clone())
                                 .await
                             {
                                 let (peer_cid, mutual_peer) = target_information.unwrap();
-                                send_response_to_tcp_client(
-                                    tcp_connection_map,
-                                    InternalServiceResponse::PeerRegisterSuccess {
-                                        cid,
-                                        peer_cid,
-                                        username: mutual_peer.username.unwrap(),
-                                    },
-                                    uuid,
-                                )
-                                .await;
+                                match connect_after_register {
+                                    true => {
+                                        let connect_command = InternalServicePayload::PeerConnect {
+                                            uuid,
+                                            cid,
+                                            username: mutual_peer.username.unwrap(),
+                                            peer_cid,
+                                            peer_username: String::from("peer.a"),
+                                            udp_mode: Default::default(),
+                                            session_security_settings: Default::default(),
+                                        };
+
+                                        payload_handler(
+                                            connect_command,
+                                            server_connection_map,
+                                            remote,
+                                            tcp_connection_map,
+                                        )
+                                        .await;
+                                    }
+                                    false => {
+                                        println!("{:?}", mutual_peer);
+                                        send_response_to_tcp_client(
+                                            tcp_connection_map,
+                                            InternalServiceResponse::PeerRegisterSuccess {
+                                                cid,
+                                                peer_cid,
+                                                username: mutual_peer.username.unwrap(),
+                                            },
+                                            uuid,
+                                        )
+                                        .await;
+                                    }
+                                }
                             }
                         }
 
@@ -1093,6 +1119,7 @@ mod tests {
         }
     }
 
+    #[tokio::test]
     async fn test_citadel_workspace_service_peer_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
@@ -1160,6 +1187,7 @@ mod tests {
                 uuid: uuid_a,
                 cid: cid_a,
                 peer_id: cid_b.into(),
+                connect_after_register: false,
             })
             .unwrap();
 
@@ -1168,6 +1196,7 @@ mod tests {
                 uuid: uuid_b,
                 cid: cid_b,
                 peer_id: cid_a.into(),
+                connect_after_register: false,
             })
             .unwrap();
 
