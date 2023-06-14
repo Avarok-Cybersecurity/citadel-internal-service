@@ -259,18 +259,40 @@ async fn payload_handler(
             uuid,
             message,
             cid,
-            user_cid: _,
+            peer_cid,
             security_level,
         } => {
             match server_connection_map.get_mut(&cid) {
                 Some(conn) => {
-                    conn.sink_to_server.set_security_level(security_level);
+                    if let Some(peer_cid) = peer_cid {
+                        // send to peer
+                        if let Some(peer_conn) = conn.peers.get_mut(&peer_cid) {
+                            peer_conn.sink.set_security_level(security_level);
+                            // TODO no unwraps on send_message. We need to handle errors properly
+                            peer_conn.sink.send_message(message.into()).await.unwrap();
+                        } else {
+                            // TODO: refactor all connection not found messages, we have too many duplicates
+                            info!(target: "citadel","connection not found");
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::MessageSendError {
+                                    cid,
+                                    message: format!("Connection for {cid} not found"),
+                                },
+                                uuid,
+                            )
+                            .await;
+                        }
+                    } else {
+                        // send to server
+                        conn.sink_to_server.set_security_level(security_level);
+                        conn.sink_to_server
+                            .send_message(message.into())
+                            .await
+                            .unwrap();
+                    }
 
-                    let response = InternalServiceResponse::MessageSent { cid };
-                    conn.sink_to_server
-                        .send_message(message.into())
-                        .await
-                        .unwrap();
+                    let response = InternalServiceResponse::MessageSent { cid, peer_cid };
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                     info!(target: "citadel", "Into the message handler command send")
                 }
@@ -322,7 +344,7 @@ async fn payload_handler(
             chunk_size,
             transfer_type,
         } => {
-            let mut client_to_server_remote = ClientServerRemote::new(
+            let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
                     implicated_cid: cid,
                 },
@@ -378,7 +400,7 @@ async fn payload_handler(
             cid,
             uuid: _uuid,
         } => {
-            let mut client_to_server_remote = ClientServerRemote::new(
+            let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
                     implicated_cid: cid,
                 },
@@ -400,7 +422,7 @@ async fn payload_handler(
             peer_id: peer_username,
             connect_after_register,
         } => {
-            let mut client_to_server_remote = ClientServerRemote::new(
+            let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
                     implicated_cid: cid,
                 },
@@ -411,7 +433,7 @@ async fn payload_handler(
                 .propose_target(cid, peer_username.clone())
                 .await
             {
-                Ok(mut symmetric_identifier_handle_ref) => {
+                Ok(symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(_peer_register_success) => {
                             let account_manager = symmetric_identifier_handle_ref.account_manager();
@@ -495,7 +517,7 @@ async fn payload_handler(
             session_security_settings,
         } => {
             // TODO: check to see if peer is already in the hashmap
-            let mut client_to_server_remote = ClientServerRemote::new(
+            let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupPeer {
                     implicated_cid: cid,
                     peer_cid,
@@ -507,7 +529,7 @@ async fn payload_handler(
                 .await
             {
                 // username or cid?
-                Ok(mut symmetric_identifier_handle_ref) => {
+                Ok(symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref
                         .connect_to_peer_custom(session_security_settings, udp_mode)
                         .await
@@ -949,22 +971,22 @@ mod tests {
             "john.doe",
             "secret",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         let serialized_message = bincode2::serialize("Message Test").unwrap();
         let message_command = InternalServicePayload::Message {
             uuid,
             message: serialized_message,
             cid,
-            user_cid: cid,
+            peer_cid: None,
             security_level: SecurityLevel::Standard,
         };
         to_service.send(message_command).unwrap();
         let deserialized_message_response = from_service.recv().await.unwrap();
         info!(target: "citadel","{deserialized_message_response:?}");
 
-        if let InternalServiceResponse::MessageSent { cid } = deserialized_message_response {
+        if let InternalServiceResponse::MessageSent { cid, .. } = deserialized_message_response {
             info!(target:"citadel", "Message {cid}");
             let deserialized_message_response = from_service.recv().await.unwrap();
             if let InternalServiceResponse::MessageReceived {
@@ -1010,7 +1032,6 @@ mod tests {
                     let send_message = "pong".into();
                     sink.send_message(send_message).await.unwrap();
                     info!("MessageSent");
-                    ()
                 }
                 Ok(())
             },
@@ -1287,8 +1308,8 @@ mod tests {
             "peer.a",
             "secret_a",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
         let (to_service_b, mut from_service_b, uuid_b, cid_b) = register_and_connect_to_server(
             bind_address_internal_service_b,
             server_bind_address,
@@ -1296,8 +1317,8 @@ mod tests {
             "peer.b",
             "secret_b",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         // now, both peers are connected and registered to the central server. Now, we
         // need to have them peer-register to each other
@@ -1398,19 +1419,21 @@ mod tests {
             }
         }
 
-        let service_a_message = bincode2::serialize("Message to B from A").unwrap();
+        let service_a_message = Vec::from("Hello World");
         let service_a_message_payload = InternalServicePayload::Message {
             uuid: uuid_a,
-            message: service_a_message,
+            message: service_a_message.clone(),
             cid: cid_a,
-            user_cid: cid_b,
+            peer_cid: Some(cid_b),
             security_level: Default::default(),
         };
-        to_service_b.send(service_a_message_payload).unwrap();
-        let deserialized_service_a_message_response = from_service_b.recv().await.unwrap();
+        to_service_a.send(service_a_message_payload).unwrap();
+        let deserialized_service_a_message_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_message_response:?}");
 
-        if let InternalServiceResponse::MessageSent { cid: cid_b } = deserialized_service_a_message_response {
+        if let InternalServiceResponse::MessageSent { cid: cid_b, .. } =
+            &deserialized_service_a_message_response
+        {
             info!(target:"citadel", "Message {cid_b}");
             let deserialized_service_a_message_response = from_service_b.recv().await.unwrap();
             if let InternalServiceResponse::MessageReceived {
@@ -1419,14 +1442,13 @@ mod tests {
                 peer_cid: _cid_b,
             } = deserialized_service_a_message_response
             {
-                println!("{message:?}");
-                assert_eq!(SecBuffer::from("pong"), message);
+                assert_eq!(&*service_a_message, &*message);
                 info!(target:"citadel", "Message sending success {cid_a}");
             } else {
                 panic!("Message sending is not right");
             }
         } else {
-            panic!("Message sending failed");
+            panic!("Message sending failed: {deserialized_service_a_message_response:?}");
         }
 
         Ok(())

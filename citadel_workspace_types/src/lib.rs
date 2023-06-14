@@ -28,7 +28,7 @@ pub enum InternalServiceResponse {
     },
     MessageSent {
         cid: u64,
-        // TODO: investigate passing a message hash or a trace id
+        peer_cid: Option<u64>, // TODO: investigate passing a message hash or a trace id
     },
     MessageSendError {
         cid: u64,
@@ -104,7 +104,8 @@ pub enum InternalServicePayload {
         uuid: Uuid,
         message: Vec<u8>,
         cid: u64,
-        user_cid: u64,
+        // if None, send to server, otherwise, send to p2p
+        peer_cid: Option<u64>,
         security_level: SecurityLevel,
     },
     Disconnect {
