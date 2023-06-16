@@ -1,4 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 
 pub mod kernel;
 
@@ -11,5 +12,6 @@ async fn main() {
     let _kernel = kernel::CitadelWorkspaceService {
         remote: None,
         bind_address: socket,
+        server_connection_map: Arc::new(parking_lot::Mutex::new(Default::default())),
     };
 }
