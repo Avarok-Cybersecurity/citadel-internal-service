@@ -1,6 +1,5 @@
-use async_recursion::async_recursion;
 use bytes::Bytes;
-use citadel_logging::{error, info};
+use citadel_logging::info;
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
@@ -135,7 +134,7 @@ impl NetKernel for CitadelWorkspaceService {
                     match conn {
                         VirtualTargetType::LocalGroupServer { implicated_cid } => {
                             let mut server_connection_map = self.server_connection_map.lock();
-                            server_connection_map.remove(implicated_cid);
+                            server_connection_map.remove(&implicated_cid);
                             // TODO: send disconnect signal to the TCP connection
                             // interested in this c2s connection
                         }
@@ -148,31 +147,33 @@ impl NetKernel for CitadelWorkspaceService {
                                 .is_some();
                             // TODO: send disconnect signal to the TCP connection
                         }
+                        _ => {}
                     }
                 }
             }
 
-            NodeRequest::PeerCommand(command) => {
-                match command.command {
-                    PeerSignal::Disconnect(peer_conn_type, _) => {
-                        match peer_conn_type {
-                            PeerConnectionType::LocalGroupPeer {
-                                implicated_cid,
-                                peer_cid,
-                            } => {
-                                let did_remove = self
-                                    .clear_peer_connection(implicated_cid, peer_cid)
-                                    .is_some();
-                                // TODO: send disconnect signal to the TCP connection
-                            }
+            // NodeRequest::PeerCommand(command) => {
+            //     match command.command {
+            //         PeerSignal::Disconnect(peer_conn_type, _) => {
+            //             match peer_conn_type {
+            //                 PeerConnectionType::LocalGroupPeer {
+            //                     implicated_cid,
+            //                     peer_cid,
+            //                 } => {
+            //                     let did_remove = self
+            //                         .clear_peer_connection(implicated_cid, peer_cid)
+            //                         .is_some();
+            //                     // TODO: send disconnect signal to the TCP connection
+            //                 }
 
-                            _ => {}
-                        }
-                    }
+            //                 _ => {}
+            //             }
+            //         }
 
-                    _ => {}
-                }
-            }
+            //         _ => {}
+            //     }
+            // }
+            _ => {}
         }
         // TODO: handle disconnect properly by removing entries from the hashmap
         Ok(())
