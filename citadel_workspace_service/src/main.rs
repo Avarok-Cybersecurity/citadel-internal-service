@@ -1,6 +1,8 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use tokio::sync::Mutex;
+
 pub mod kernel;
 
 #[tokio::main]
@@ -12,6 +14,6 @@ async fn main() {
     let _kernel = kernel::CitadelWorkspaceService {
         remote: None,
         bind_address: socket,
-        server_connection_map: Arc::new(parking_lot::Mutex::new(Default::default())),
+        server_connection_map: Arc::new(Mutex::new(Default::default())),
     };
 }

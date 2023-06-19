@@ -6,13 +6,13 @@ use citadel_sdk::prelude::*;
 use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
-use parking_lot::Mutex;
 use payload_handler::payload_handler;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::Mutex;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use uuid::Uuid;
 
@@ -25,7 +25,7 @@ pub struct CitadelWorkspaceService {
 }
 
 #[allow(dead_code)]
-struct Connection {
+pub struct Connection {
     sink_to_server: PeerChannelSendHalf,
     client_server_remote: ClientServerRemote,
     peers: HashMap<u64, PeerConnection>,
@@ -67,9 +67,14 @@ impl Connection {
 }
 
 impl CitadelWorkspaceService {
-    fn clear_peer_connection(&self, implicated_cid: u64, peer_cid: u64) -> Option<PeerConnection> {
+    async fn clear_peer_connection(
+        &self,
+        implicated_cid: u64,
+        peer_cid: u64,
+    ) -> Option<PeerConnection> {
         self.server_connection_map
             .lock()
+            .await
             .get_mut(&implicated_cid)?
             .clear_peer_connection(peer_cid)
     }
@@ -133,8 +138,8 @@ impl NetKernel for CitadelWorkspaceService {
                 if let Some(conn) = disconnect.v_conn_type {
                     match conn {
                         VirtualTargetType::LocalGroupServer { implicated_cid } => {
-                            let mut server_connection_map = self.server_connection_map.lock();
-                            server_connection_map.remove(&implicated_cid);
+                            let server_connection_map = self.server_connection_map.lock();
+                            server_connection_map.await.remove(&implicated_cid);
                             // TODO: send disconnect signal to the TCP connection
                             // interested in this c2s connection
                         }
@@ -142,9 +147,11 @@ impl NetKernel for CitadelWorkspaceService {
                             implicated_cid,
                             peer_cid,
                         } => {
-                            let did_remove = self
+                            let _did_remove = self
                                 .clear_peer_connection(implicated_cid, peer_cid)
+                                .await
                                 .is_some();
+
                             // TODO: send disconnect signal to the TCP connection
                         }
                         _ => {}
@@ -295,7 +302,7 @@ mod tests {
             tokio::select! {
                 _res0 = internal_service_a => (),
                 _res1 = internal_service_b => (),
-            }
+            };
 
             citadel_logging::error!(target: "citadel", "Internal service error: vital service ended");
             std::process::exit(1);
@@ -327,7 +334,7 @@ mod tests {
         let internal_service_kernel = CitadelWorkspaceService {
             remote: None,
             bind_address: bind_address_internal_service,
-            server_connection_map: Arc::new(parking_lot::Mutex::new(Default::default())),
+            server_connection_map: Arc::new(Mutex::new(Default::default())),
         };
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -500,7 +507,7 @@ mod tests {
         let internal_service_kernel = CitadelWorkspaceService {
             remote: None,
             bind_address: bind_address_internal_service,
-            server_connection_map: Arc::new(parking_lot::Mutex::new(Default::default())),
+            server_connection_map: Arc::new(Mutex::new(Default::default())),
         };
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -594,7 +601,7 @@ mod tests {
         let internal_service_kernel = CitadelWorkspaceService {
             remote: None,
             bind_address: bind_address_internal_service,
-            server_connection_map: Arc::new(parking_lot::Mutex::new(Default::default())),
+            server_connection_map: Arc::new(Mutex::new(Default::default())),
         };
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -665,7 +672,7 @@ mod tests {
         let internal_service_kernel_a = CitadelWorkspaceService {
             remote: None,
             bind_address: bind_address_internal_service_a,
-            server_connection_map: Arc::new(parking_lot::Mutex::new(Default::default())),
+            server_connection_map: Arc::new(Mutex::new(Default::default())),
         };
         let internal_service_a = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -676,7 +683,7 @@ mod tests {
         let internal_service_kernel_b = CitadelWorkspaceService {
             remote: None,
             bind_address: bind_address_internal_service_b,
-            server_connection_map: Arc::new(parking_lot::Mutex::new(Default::default())),
+            server_connection_map: Arc::new(Mutex::new(Default::default())),
         };
 
         let internal_service_b = NodeBuilder::default()
@@ -828,7 +835,7 @@ mod tests {
         let internal_service_kernel_a = CitadelWorkspaceService {
             remote: None,
             bind_address: bind_address_internal_service_a,
-            server_connection_map: Arc::new(parking_lot::Mutex::new(Default::default())),
+            server_connection_map: Arc::new(Mutex::new(Default::default())),
         };
         let internal_service_a = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -839,7 +846,7 @@ mod tests {
         let internal_service_kernel_b = CitadelWorkspaceService {
             remote: None,
             bind_address: bind_address_internal_service_b,
-            server_connection_map: Arc::new(parking_lot::Mutex::new(Default::default())),
+            server_connection_map: Arc::new(Mutex::new(Default::default())),
         };
 
         let internal_service_b = NodeBuilder::default()
@@ -851,7 +858,7 @@ mod tests {
         spawn_services(internal_service_a, internal_service_b);
 
         // give time for both the server and internal service to run
-        tokio::time::sleep(Duration::from_millis(2000)).await;
+        // tokio::time::sleep(Duration::from_millis(10000)).await;
         info!(target: "citadel", "about to connect to internal service");
         let (to_service_a, mut from_service_a, uuid_a, cid_a) = register_and_connect_to_server(
             bind_address_internal_service_a,
@@ -1009,5 +1016,5 @@ mod tests {
     // TODO: make this function register+connect to the server
     // Then, peer register and peer connect to each peer, returning
     // the handles at the end of this function
-    async fn connect_and_register_peers() {}
+    // async fn connect_and_register_peers() {}
 }

@@ -5,12 +5,12 @@ use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
 use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
 use futures::StreamExt;
-use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
-use uuid::Uuid;
+use tokio::sync::Mutex;
 
+use uuid::Uuid;
 #[async_recursion]
 pub async fn payload_handler(
     command: InternalServicePayload,
@@ -47,7 +47,10 @@ pub async fn payload_handler(
                     let client_server_remote =
                         create_client_server_remote(stream.vconn_type, remote.clone());
                     let connection_struct = Connection::new(sink, client_server_remote, uuid);
-                    server_connection_map.lock().insert(cid, connection_struct);
+                    server_connection_map
+                        .lock()
+                        .await
+                        .insert(cid, connection_struct);
 
                     let hm_for_conn = tcp_connection_map.clone();
 
@@ -147,7 +150,7 @@ pub async fn payload_handler(
             peer_cid,
             security_level,
         } => {
-            match server_connection_map.lock().get_mut(&cid) {
+            match server_connection_map.lock().await.get_mut(&cid) {
                 Some(conn) => {
                     if let Some(peer_cid) = peer_cid {
                         // send to peer
@@ -203,7 +206,7 @@ pub async fn payload_handler(
                     implicated_cid: cid,
                 },
             });
-            server_connection_map.lock().remove(&cid);
+            server_connection_map.lock().await.remove(&cid);
             match remote.send(request).await {
                 Ok(res) => {
                     let disconnect_success = InternalServiceResponse::DisconnectSuccess { cid };
@@ -424,6 +427,7 @@ pub async fn payload_handler(
                             let (sink, mut stream) = peer_connect_success.channel.split();
                             server_connection_map
                                 .lock()
+                                .await
                                 .get_mut(&cid)
                                 .unwrap()
                                 .add_peer_connection(
@@ -508,7 +512,7 @@ pub async fn payload_handler(
                 ),
             });
 
-            match server_connection_map.lock().get_mut(&cid) {
+            match server_connection_map.lock().await.get_mut(&cid) {
                 None => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
