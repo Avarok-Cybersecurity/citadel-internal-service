@@ -167,10 +167,26 @@ impl NetKernel for CitadelWorkspaceService {
                     _,
                 ) = event.event
                 {
-                    let _did_remove = self
+                    let did_remove = self
                         .clear_peer_connection(implicated_cid, peer_cid)
                         .await
                         .is_some();
+
+                    let server_conn_map = self.server_connection_map.clone();
+                    let my_uuid = server_conn_map
+                        .lock()
+                        .await
+                        .get(&implicated_cid)
+                        .unwrap()
+                        .associated_tcp_connection;
+
+                    let response = InternalServiceResponse::DisconnectSuccess {
+                        cid: implicated_cid,
+                    };
+
+                    if did_remove {
+                        // send_response_to_tcp_client(, response, my_uuid);
+                    }
                     // TODO: send disconnect signal to the TCP connection
                 }
             }
