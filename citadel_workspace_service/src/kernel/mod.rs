@@ -158,28 +158,23 @@ impl NetKernel for CitadelWorkspaceService {
                     }
                 }
             }
+            NodeResult::PeerEvent(event) => {
+                if let PeerSignal::Disconnect(
+                    PeerConnectionType::LocalGroupPeer {
+                        implicated_cid,
+                        peer_cid,
+                    },
+                    _,
+                ) = event.event
+                {
+                    let _did_remove = self
+                        .clear_peer_connection(implicated_cid, peer_cid)
+                        .await
+                        .is_some();
+                    // TODO: send disconnect signal to the TCP connection
+                }
+            }
 
-            // NodeRequest::PeerCommand(command) => {
-            //     match command.command {
-            //         PeerSignal::Disconnect(peer_conn_type, _) => {
-            //             match peer_conn_type {
-            //                 PeerConnectionType::LocalGroupPeer {
-            //                     implicated_cid,
-            //                     peer_cid,
-            //                 } => {
-            //                     let did_remove = self
-            //                         .clear_peer_connection(implicated_cid, peer_cid)
-            //                         .is_some();
-            //                     // TODO: send disconnect signal to the TCP connection
-            //                 }
-
-            //                 _ => {}
-            //             }
-            //         }
-
-            //         _ => {}
-            //     }
-            // }
             _ => {}
         }
         // TODO: handle disconnect properly by removing entries from the hashmap
@@ -302,10 +297,10 @@ mod tests {
             tokio::select! {
                 _res0 = internal_service_a => (),
                 _res1 = internal_service_b => (),
-            };
+            }
 
-            citadel_logging::error!(target: "citadel", "Internal service error: vital service ended");
-            std::process::exit(1);
+            // citadel_logging::error!(target: "citadel", "Internal service error: vital service ended");
+            // std::process::exit(1);
         };
 
         tokio::task::spawn(internal_services);
@@ -823,9 +818,9 @@ mod tests {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55526".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55547".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = citadel_sdk::test_common::server_info();
@@ -858,7 +853,7 @@ mod tests {
         spawn_services(internal_service_a, internal_service_b);
 
         // give time for both the server and internal service to run
-        // tokio::time::sleep(Duration::from_millis(10000)).await;
+        tokio::time::sleep(Duration::from_millis(2000)).await;
         info!(target: "citadel", "about to connect to internal service");
         let (to_service_a, mut from_service_a, uuid_a, cid_a) = register_and_connect_to_server(
             bind_address_internal_service_a,
