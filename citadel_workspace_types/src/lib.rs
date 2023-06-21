@@ -39,8 +39,9 @@ pub enum InternalServiceResponse {
         cid: u64,
         peer_cid: u64,
     },
-    DisconnectSuccess {
+    Disconnected {
         cid: u64,
+        peer_cid: Option<u64>,
     },
     DisconnectFailure {
         cid: u64,

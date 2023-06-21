@@ -24,6 +24,7 @@ anyhow = {workspace = true}
 citadel_logging = {workspace = true}
 bytes = {workspace = true}
 async-recursion = {workspace = true}
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }
