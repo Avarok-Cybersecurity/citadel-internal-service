@@ -121,6 +121,7 @@ impl NetKernel for CitadelWorkspaceService {
 
         let inbound_command_task = async move {
             while let Some(command) = rx.recv().await {
+                // TODO: handle error once payload_handler is fallible
                 payload_handler(
                     command,
                     &server_connection_map,
