@@ -209,7 +209,10 @@ pub async fn payload_handler(
             server_connection_map.lock().await.remove(&cid);
             match remote.send(request).await {
                 Ok(res) => {
-                    let disconnect_success = InternalServiceResponse::DisconnectSuccess { cid };
+                    let disconnect_success = InternalServiceResponse::Disconnected {
+                        cid,
+                        peer_cid: None,
+                    };
                     send_response_to_tcp_client(tcp_connection_map, disconnect_success, uuid).await;
                     info!(target: "citadel", "Disconnected {res:?}")
                 }

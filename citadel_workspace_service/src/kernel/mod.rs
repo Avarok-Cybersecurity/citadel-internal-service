@@ -22,6 +22,18 @@ pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
     pub bind_address: SocketAddr,
     pub server_connection_map: Arc<Mutex<HashMap<u64, Connection>>>,
+    pub tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+}
+
+impl CitadelWorkspaceService {
+    pub fn new(bind_address: SocketAddr) -> Self {
+        Self {
+            remote: None,
+            bind_address,
+            server_connection_map: Arc::new(Mutex::new(Default::default())),
+            tcp_connection_map: Arc::new(Mutex::new(Default::default())),
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -94,9 +106,7 @@ impl NetKernel for CitadelWorkspaceService {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
 
-        let tcp_connection_map: &Arc<
-            tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>,
-        > = &Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        let tcp_connection_map = &self.tcp_connection_map.clone();
         let listener_task = async move {
             while let Ok((conn, _addr)) = listener.accept().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
@@ -138,8 +148,8 @@ impl NetKernel for CitadelWorkspaceService {
                 if let Some(conn) = disconnect.v_conn_type {
                     match conn {
                         VirtualTargetType::LocalGroupServer { implicated_cid } => {
-                            let server_connection_map = self.server_connection_map.lock();
-                            server_connection_map.await.remove(&implicated_cid);
+                            let mut server_connection_map = self.server_connection_map.lock().await;
+                            server_connection_map.remove(&implicated_cid);
                             // TODO: send disconnect signal to the TCP connection
                             // interested in this c2s connection
                         }
@@ -167,27 +177,21 @@ impl NetKernel for CitadelWorkspaceService {
                     _,
                 ) = event.event
                 {
-                    let did_remove = self
+                    let _did_remove = self
                         .clear_peer_connection(implicated_cid, peer_cid)
                         .await
                         .is_some();
 
                     let server_conn_map = self.server_connection_map.clone();
-                    let my_uuid = server_conn_map
-                        .lock()
-                        .await
-                        .get(&implicated_cid)
-                        .unwrap()
-                        .associated_tcp_connection;
-
-                    let response = InternalServiceResponse::DisconnectSuccess {
-                        cid: implicated_cid,
-                    };
-
-                    if did_remove {
-                        // send_response_to_tcp_client(, response, my_uuid);
+                    let lock = server_conn_map.lock().await;
+                    if let Some(my_uuid) = lock.get(&implicated_cid) {
+                        let uuid = my_uuid.associated_tcp_connection;
+                        let response = InternalServiceResponse::Disconnected {
+                            cid: implicated_cid,
+                            peer_cid: Some(peer_cid),
+                        };
+                        send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;
                     }
-                    // TODO: send disconnect signal to the TCP connection
                 }
             }
 
@@ -342,11 +346,8 @@ mod tests {
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel = CitadelWorkspaceService {
-            remote: None,
-            bind_address: bind_address_internal_service,
-            server_connection_map: Arc::new(Mutex::new(Default::default())),
-        };
+
+        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -375,7 +376,7 @@ mod tests {
 
         assert!(matches!(
             disconnect_response,
-            InternalServiceResponse::DisconnectSuccess { .. }
+            InternalServiceResponse::Disconnected { .. }
         ));
 
         Ok(())
@@ -515,11 +516,7 @@ mod tests {
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel = CitadelWorkspaceService {
-            remote: None,
-            bind_address: bind_address_internal_service,
-            server_connection_map: Arc::new(Mutex::new(Default::default())),
-        };
+        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -580,7 +577,7 @@ mod tests {
 
         assert!(matches!(
             disconnect_response,
-            InternalServiceResponse::DisconnectSuccess { .. }
+            InternalServiceResponse::Disconnected { .. }
         ));
 
         Ok(())
@@ -609,11 +606,7 @@ mod tests {
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel = CitadelWorkspaceService {
-            remote: None,
-            bind_address: bind_address_internal_service,
-            server_connection_map: Arc::new(Mutex::new(Default::default())),
-        };
+        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -680,22 +673,16 @@ mod tests {
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel_a = CitadelWorkspaceService {
-            remote: None,
-            bind_address: bind_address_internal_service_a,
-            server_connection_map: Arc::new(Mutex::new(Default::default())),
-        };
+        let internal_service_kernel_a =
+            CitadelWorkspaceService::new(bind_address_internal_service_a);
         let internal_service_a = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .build(internal_service_kernel_a)
             .unwrap();
 
-        let internal_service_kernel_b = CitadelWorkspaceService {
-            remote: None,
-            bind_address: bind_address_internal_service_b,
-            server_connection_map: Arc::new(Mutex::new(Default::default())),
-        };
+        let internal_service_kernel_b =
+            CitadelWorkspaceService::new(bind_address_internal_service_b);
 
         let internal_service_b = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -843,22 +830,16 @@ mod tests {
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel_a = CitadelWorkspaceService {
-            remote: None,
-            bind_address: bind_address_internal_service_a,
-            server_connection_map: Arc::new(Mutex::new(Default::default())),
-        };
+        let internal_service_kernel_a =
+            CitadelWorkspaceService::new(bind_address_internal_service_a);
         let internal_service_a = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .build(internal_service_kernel_a)
             .unwrap();
 
-        let internal_service_kernel_b = CitadelWorkspaceService {
-            remote: None,
-            bind_address: bind_address_internal_service_b,
-            server_connection_map: Arc::new(Mutex::new(Default::default())),
-        };
+        let internal_service_kernel_b =
+            CitadelWorkspaceService::new(bind_address_internal_service_b);
 
         let internal_service_b = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
