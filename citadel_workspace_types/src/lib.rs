@@ -248,12 +248,12 @@ pub enum InternalServicePayload {
         uuid: Uuid,
         cid: u64,
     },
-    SendFile {
+    SendFileStandard {
         uuid: Uuid,
         source: PathBuf,
         cid: u64,
-        chunk_size: usize,
-        transfer_type: TransferType,
+        peer_cid: Option<u64>,
+        chunk_size: Option<usize>,
     },
     DownloadFile {
         virtual_path: PathBuf,

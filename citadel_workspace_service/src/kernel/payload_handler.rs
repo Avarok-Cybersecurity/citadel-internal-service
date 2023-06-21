@@ -19,6 +19,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
 
 use uuid::Uuid;
+
+// TODO: wrap all matched error below inside a function that takes f(NetworkError, InternalServicePayload) -> PayloadHandlerError
+pub struct PayloadHandlerError {
+    pub error: NetworkError,
+    pub response_payload: InternalServicePayload
+}
+
 #[async_recursion]
 pub async fn payload_handler(
     command: InternalServicePayload,
@@ -245,12 +252,12 @@ pub async fn payload_handler(
             };
         }
 
-        InternalServicePayload::SendFile {
+        InternalServicePayload::SendFileStandard {
             uuid,
             source,
             cid,
+            peer_cid,
             chunk_size,
-            transfer_type,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
@@ -258,9 +265,24 @@ pub async fn payload_handler(
                 },
                 remote.clone(),
             );
-            match client_to_server_remote
-                .send_file_with_custom_opts(source, chunk_size, transfer_type)
-                .await
+
+            let chunk_size = chunk_size.unwrap_or_default();
+
+            let result = if let Some(peer_cid) = peer_cid {
+                match client_to_server_remote.find_target(cid, peer_cid).await {
+                    Ok(peer_remote) => {
+                        peer_remote.send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer).await
+                    },
+                    Err(err) => {
+                        // TODO: handle the error properly
+                        return;
+                    }
+                }
+            } else {
+                client_to_server_remote.send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer).await
+            };
+
+            match result
             {
                 Ok(_) => {
                     send_response_to_tcp_client(
