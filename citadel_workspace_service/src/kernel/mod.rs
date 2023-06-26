@@ -3,6 +3,7 @@ use citadel_logging::info;
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
+use citadel_workspace_lib::{deserialize, serialize_payload, wrap_tcp_conn};
 use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
@@ -227,19 +228,6 @@ fn create_client_server_remote(
     ClientServerRemote::new(conn_type, remote)
 }
 
-pub fn wrap_tcp_conn(conn: TcpStream) -> Framed<TcpStream, LengthDelimitedCodec> {
-    LengthDelimitedCodec::builder()
-        .length_field_offset(0) // default value
-        .max_frame_length(1024 * 1024 * 64) // 64 MB
-        .length_field_type::<u32>()
-        .length_adjustment(0) // default value
-        .new_framed(conn)
-}
-
-fn serialize_payload(payload: &InternalServiceResponse) -> Vec<u8> {
-    bincode2::serialize(&payload).unwrap()
-}
-
 async fn sink_send_payload(
     payload: &InternalServiceResponse,
     sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
@@ -249,10 +237,6 @@ async fn sink_send_payload(
         Ok(_) => (),
         Err(_) => info!(target: "citadel", "w task: sink send err"),
     }
-}
-
-fn deserialize(message: &[u8]) -> InternalServicePayload {
-    bincode2::deserialize(message).unwrap()
 }
 
 fn send_to_kernel(payload_to_send: &[u8], sender: &UnboundedSender<InternalServicePayload>) {
