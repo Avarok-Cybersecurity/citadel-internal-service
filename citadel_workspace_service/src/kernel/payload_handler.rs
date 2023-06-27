@@ -23,7 +23,7 @@ use uuid::Uuid;
 // TODO: wrap all matched error below inside a function that takes f(NetworkError, InternalServicePayload) -> PayloadHandlerError
 pub struct PayloadHandlerError {
     pub error: NetworkError,
-    pub response_payload: InternalServicePayload
+    pub response_payload: InternalServicePayload,
 }
 
 #[async_recursion]
@@ -31,9 +31,7 @@ pub async fn payload_handler(
     command: InternalServicePayload,
     server_connection_map: &Arc<Mutex<HashMap<u64, Connection>>>,
     remote: &mut NodeRemote,
-    tcp_connection_map: &Arc<
-        tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>,
-    >,
+    tcp_connection_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
     match command {
         InternalServicePayload::Connect {
@@ -271,19 +269,26 @@ pub async fn payload_handler(
             let result = if let Some(peer_cid) = peer_cid {
                 match client_to_server_remote.find_target(cid, peer_cid).await {
                     Ok(peer_remote) => {
-                        peer_remote.send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer).await
-                    },
-                    Err(err) => {
+                        peer_remote
+                            .send_file_with_custom_opts(
+                                source,
+                                chunk_size,
+                                TransferType::FileTransfer,
+                            )
+                            .await
+                    }
+                    Err(_err) => {
                         // TODO: handle the error properly
                         return;
                     }
                 }
             } else {
-                client_to_server_remote.send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer).await
+                client_to_server_remote
+                    .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
+                    .await
             };
 
-            match result
-            {
+            match result {
                 Ok(_) => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
@@ -303,6 +308,96 @@ pub async fn payload_handler(
                         uuid,
                     )
                     .await;
+                }
+            }
+        }
+
+        InternalServicePayload::AcceptFileTransferStandard {
+            uuid,
+            cid,
+            peer_cid,
+            object_id,
+        } => {
+            if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
+                if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
+                    if let Some(handler) = peer_connection.handler_map.get_mut(&object_id) {
+                        match handler.accept() {
+                            Ok(_) => {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::FileTransferStatus {
+                                        cid,
+                                        object_id,
+                                        success: true,
+                                        response: true,
+                                        message: None,
+                                    },
+                                    uuid,
+                                )
+                                .await;
+                            }
+
+                            Err(err) => {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::FileTransferStatus {
+                                        cid,
+                                        object_id,
+                                        success: false,
+                                        response: true,
+                                        message: Option::from(err.into_string()),
+                                    },
+                                    uuid,
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        InternalServicePayload::DeclineFileTransferStandard {
+            uuid,
+            cid,
+            peer_cid,
+            object_id,
+        } => {
+            if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
+                if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
+                    if let Some(handler) = peer_connection.handler_map.get_mut(&object_id) {
+                        match handler.decline() {
+                            Ok(_) => {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::FileTransferStatus {
+                                        cid,
+                                        object_id,
+                                        success: true,
+                                        response: false,
+                                        message: None,
+                                    },
+                                    uuid,
+                                )
+                                .await;
+                            }
+
+                            Err(err) => {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::FileTransferStatus {
+                                        cid,
+                                        object_id,
+                                        success: false,
+                                        response: false,
+                                        message: Option::from(err.into_string()),
+                                    },
+                                    uuid,
+                                )
+                                .await;
+                            }
+                        }
+                    }
                 }
             }
         }
