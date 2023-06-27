@@ -48,6 +48,16 @@ pub struct Connection {
 struct PeerConnection {
     sink: PeerChannelSendHalf,
     remote: SymmetricIdentifierHandle,
+    handler_map: HashMap<u32, ObjectTransferHandler>,
+}
+
+impl PeerConnection {
+    fn add_handler(&mut self, key: u32, handler: ObjectTransferHandler) {
+        self.handler_map.insert(key, handler);
+    }
+    fn remove_handler(&mut self, key: u32) {
+        self.handler_map.remove(&key);
+    }
 }
 
 impl Connection {
@@ -70,11 +80,35 @@ impl Connection {
         sink: PeerChannelSendHalf,
         remote: SymmetricIdentifierHandle,
     ) {
-        self.peers.insert(peer_cid, PeerConnection { sink, remote });
+        self.peers.insert(
+            peer_cid,
+            PeerConnection {
+                sink,
+                remote,
+                handler_map: HashMap::new(),
+            },
+        );
     }
 
     fn clear_peer_connection(&mut self, peer_cid: u64) -> Option<PeerConnection> {
         self.peers.remove(&peer_cid)
+    }
+
+    fn add_object_transfer_handler(
+        &mut self,
+        peer_cid: u64,
+        object_id: u32,
+        handler: ObjectTransferHandler,
+    ) {
+        if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
+            peer_connection.add_handler(object_id, handler);
+        }
+    }
+
+    fn remove_object_transfer_handler(&mut self, peer_cid: u64, object_id: u32) {
+        if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
+            peer_connection.remove_handler(object_id);
+        }
     }
 }
 
@@ -169,6 +203,29 @@ impl NetKernel for CitadelWorkspaceService {
                     }
                 }
             }
+            NodeResult::ObjectTransferHandle(object_transfer_handle) => {
+                let object_transfer_handler = object_transfer_handle.handle;
+                let implicated_cid = object_transfer_handler.receiver;
+                let peer_cid = object_transfer_handler.source;
+
+                // TODO: Utilize metadata to store handler by object id
+                let object_id: u32 = object_transfer_handler.source as u32;
+
+                let mut server_connection_map = self.server_connection_map.lock().await;
+                if let Some(connection) = server_connection_map.get_mut(&peer_cid) {
+                    connection.add_object_transfer_handler(
+                        peer_cid,
+                        object_id,
+                        object_transfer_handler,
+                    );
+                    let uuid = connection.associated_tcp_connection;
+                    let response = InternalServiceResponse::FileTransferRequest {
+                        cid: implicated_cid,
+                        peer_cid,
+                    };
+                    send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;
+                }
+            }
             NodeResult::PeerEvent(event) => {
                 if let PeerSignal::Disconnect(
                     PeerConnectionType::LocalGroupPeer {
@@ -208,7 +265,7 @@ impl NetKernel for CitadelWorkspaceService {
 }
 
 async fn send_response_to_tcp_client(
-    hash_map: &Arc<tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    hash_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
     response: InternalServiceResponse,
     uuid: Uuid,
 ) {
