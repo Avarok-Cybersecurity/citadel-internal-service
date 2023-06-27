@@ -1,7 +1,6 @@
 use bytes::BytesMut;
 use citadel_sdk::prelude::{
-    ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, TransferType, UdpMode,
-    UserIdentifier,
+    ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode, UserIdentifier,
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -53,6 +52,18 @@ pub enum InternalServiceResponse {
     SendFileFailure {
         cid: u64,
         message: String,
+    },
+    FileTransferRequest {
+        cid: u64,
+        peer_cid: u64,
+        // TODO: metadata: VirtualObjectMetadata
+    },
+    FileTransferStatus {
+        cid: u64,
+        object_id: u32,
+        success: bool,
+        response: bool,
+        message: Option<String>,
     },
     PeerConnectSuccess {
         cid: u64,
@@ -119,6 +130,18 @@ pub enum InternalServicePayload {
         cid: u64,
         peer_cid: Option<u64>,
         chunk_size: Option<usize>,
+    },
+    AcceptFileTransferStandard {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: u64,
+        object_id: u32,
+    },
+    DeclineFileTransferStandard {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: u64,
+        object_id: u32,
     },
     DownloadFile {
         virtual_path: PathBuf,
