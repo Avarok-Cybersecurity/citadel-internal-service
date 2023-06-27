@@ -1,7 +1,6 @@
 use bytes::BytesMut;
 use citadel_sdk::prelude::{
-    ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, TransferType, UdpMode,
-    UserIdentifier,
+    ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode, UserIdentifier,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
