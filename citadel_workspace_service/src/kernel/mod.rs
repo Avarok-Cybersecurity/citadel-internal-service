@@ -42,6 +42,7 @@ pub struct Connection {
     client_server_remote: ClientServerRemote,
     peers: HashMap<u64, PeerConnection>,
     associated_tcp_connection: Uuid,
+    c2s_file_transfer_handlers: HashMap<u32, ObjectTransferHandler>,
 }
 
 #[allow(dead_code)]
@@ -71,6 +72,7 @@ impl Connection {
             sink_to_server: sink,
             client_server_remote,
             associated_tcp_connection,
+            c2s_file_transfer_handlers: HashMap::new(),
         }
     }
 
@@ -100,15 +102,43 @@ impl Connection {
         object_id: u32,
         handler: ObjectTransferHandler,
     ) {
-        if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
-            peer_connection.add_handler(object_id, handler);
+        if self.implicated_cid() == peer_cid {
+            // C2S
+            self.c2s_file_transfer_handlers.insert(object_id, handler);
+        } else {
+            // P2P
+            if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
+                peer_connection.add_handler(object_id, handler);
+            }
         }
     }
 
     fn remove_object_transfer_handler(&mut self, peer_cid: u64, object_id: u32) {
-        if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
-            peer_connection.remove_handler(object_id);
+        if self.implicated_cid() == peer_cid {
+            // C2S
+            self.c2s_file_transfer_handlers.remove(&object_id);
+        } else {
+            // P2P
+            if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
+                peer_connection.remove_handler(object_id);
+            }
         }
+    }
+
+    fn get_file_transfer_handle(&mut self, peer_cid: u64 , object_id: u32) -> Option<&mut ObjectTransferHandler> {
+        if self.implicated_cid() == peer_cid {
+            // C2S
+            self.c2s_file_transfer_handlers.get_mut(&object_id)
+        } else {
+            // P2P
+            let peer_connection = self.peers.get_mut(&peer_cid)?;
+            peer_connection.handler_map.get_mut(&object_id)
+        }
+    }
+
+    /// Returns the CID of this C2S connection
+    fn implicated_cid(&self) -> u64 {
+        self.client_server_remote.user().get_implicated_cid()
     }
 }
 
@@ -207,18 +237,18 @@ impl NetKernel for CitadelWorkspaceService {
                 let object_transfer_handler = object_transfer_handle.handle;
                 let implicated_cid = object_transfer_handler.receiver;
                 let peer_cid = object_transfer_handler.source;
-
                 // TODO: Utilize metadata to store handler by object id
                 let object_id: u32 = object_transfer_handler.source as u32;
 
                 let mut server_connection_map = self.server_connection_map.lock().await;
-                if let Some(connection) = server_connection_map.get_mut(&peer_cid) {
+                if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
                     connection.add_object_transfer_handler(
                         peer_cid,
                         object_id,
                         object_transfer_handler,
                     );
                     let uuid = connection.associated_tcp_connection;
+                    // TODO: add metadata to the request we send to TCP client
                     let response = InternalServiceResponse::FileTransferRequest {
                         cid: implicated_cid,
                         peer_cid,

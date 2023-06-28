@@ -300,85 +300,40 @@ pub async fn payload_handler(
             cid,
             peer_cid,
             object_id,
+            accept
         } => {
             if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
-                if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
-                    if let Some(handler) = peer_connection.handler_map.get_mut(&object_id) {
-                        match handler.accept() {
-                            Ok(_) => {
-                                send_response_to_tcp_client(
-                                    tcp_connection_map,
-                                    InternalServiceResponse::FileTransferStatus {
-                                        cid,
-                                        object_id,
-                                        success: true,
-                                        response: true,
-                                        message: None,
-                                    },
-                                    uuid,
-                                )
+                if let Some(handler) = connection.get_file_transfer_handle(peer_cid, object_id) {
+                    let result = if accept { handler.accept() } else { handler.decline() };
+                    match result {
+                        Ok(_) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::FileTransferStatus {
+                                    cid,
+                                    object_id,
+                                    success: true,
+                                    response: true,
+                                    message: None,
+                                },
+                                uuid,
+                            )
                                 .await;
-                            }
-
-                            Err(err) => {
-                                send_response_to_tcp_client(
-                                    tcp_connection_map,
-                                    InternalServiceResponse::FileTransferStatus {
-                                        cid,
-                                        object_id,
-                                        success: false,
-                                        response: true,
-                                        message: Option::from(err.into_string()),
-                                    },
-                                    uuid,
-                                )
-                                .await;
-                            }
                         }
-                    }
-                }
-            }
-        }
 
-        InternalServicePayload::DeclineFileTransferStandard {
-            uuid,
-            cid,
-            peer_cid,
-            object_id,
-        } => {
-            if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
-                if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
-                    if let Some(handler) = peer_connection.handler_map.get_mut(&object_id) {
-                        match handler.decline() {
-                            Ok(_) => {
-                                send_response_to_tcp_client(
-                                    tcp_connection_map,
-                                    InternalServiceResponse::FileTransferStatus {
-                                        cid,
-                                        object_id,
-                                        success: true,
-                                        response: false,
-                                        message: None,
-                                    },
-                                    uuid,
-                                )
+                        Err(err) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::FileTransferStatus {
+                                    cid,
+                                    object_id,
+                                    success: false,
+                                    response: true,
+                                    message: Option::from(err.into_string()),
+                                },
+                                uuid,
+                            )
                                 .await;
-                            }
-
-                            Err(err) => {
-                                send_response_to_tcp_client(
-                                    tcp_connection_map,
-                                    InternalServiceResponse::FileTransferStatus {
-                                        cid,
-                                        object_id,
-                                        success: false,
-                                        response: false,
-                                        message: Option::from(err.into_string()),
-                                    },
-                                    uuid,
-                                )
-                                .await;
-                            }
                         }
                     }
                 }
