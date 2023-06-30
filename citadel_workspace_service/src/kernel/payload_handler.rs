@@ -3,7 +3,12 @@ use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
+use citadel_workspace_types::{
+    ConnectionFailure, DisconnectFailure, Disconnected, InternalServicePayload,
+    InternalServiceResponse, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure,
+    PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure,
+    PeerRegisterSuccess, SendFileFailure, SendFileSuccess,
+};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -54,17 +59,20 @@ pub async fn payload_handler(
 
                     let hm_for_conn = tcp_connection_map.clone();
 
-                    let response = InternalServiceResponse::ConnectSuccess { cid };
+                    let response = InternalServiceResponse::ConnectSuccess(
+                        citadel_workspace_types::ConnectSuccess { cid },
+                    );
 
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
 
                     let connection_read_stream = async move {
                         while let Some(message) = stream.next().await {
-                            let message = InternalServiceResponse::MessageReceived {
-                                message: message.into_buffer(),
-                                cid,
-                                peer_cid: 0,
-                            };
+                            let message =
+                                InternalServiceResponse::MessageReceived(MessageReceived {
+                                    message: message.into_buffer(),
+                                    cid,
+                                    peer_cid: 0,
+                                });
                             match hm_for_conn.lock().await.get(&uuid) {
                                 Some(entry) => match entry.send(message) {
                                     Ok(res) => res,
@@ -80,9 +88,9 @@ pub async fn payload_handler(
                 }
 
                 Err(err) => {
-                    let response = InternalServiceResponse::ConnectionFailure {
+                    let response = InternalServiceResponse::ConnectionFailure(ConnectionFailure {
                         message: err.into_string(),
-                    };
+                    });
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                 }
             };
@@ -111,7 +119,9 @@ pub async fn payload_handler(
                     match connect_after_register {
                         false => {
                             // TODO: add trace ID to ensure uniqueness of request
-                            let response = InternalServiceResponse::RegisterSuccess { id: uuid };
+                            let response = InternalServiceResponse::RegisterSuccess(
+                                citadel_workspace_types::RegisterSuccess { id: uuid },
+                            );
                             send_response_to_tcp_client(tcp_connection_map, response, uuid).await
                         }
                         true => {
@@ -136,9 +146,11 @@ pub async fn payload_handler(
                     }
                 }
                 Err(err) => {
-                    let response = InternalServiceResponse::RegisterFailure {
-                        message: err.into_string(),
-                    };
+                    let response = InternalServiceResponse::RegisterFailure(
+                        citadel_workspace_types::RegisterFailure {
+                            message: err.into_string(),
+                        },
+                    );
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await
                 }
             };
@@ -163,10 +175,10 @@ pub async fn payload_handler(
                             info!(target: "citadel","connection not found");
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::MessageSendError {
+                                InternalServiceResponse::MessageSendError(MessageSendError {
                                     cid,
                                     message: format!("Connection for {cid} not found"),
-                                },
+                                }),
                                 uuid,
                             )
                             .await;
@@ -180,7 +192,8 @@ pub async fn payload_handler(
                             .unwrap();
                     }
 
-                    let response = InternalServiceResponse::MessageSent { cid, peer_cid };
+                    let response =
+                        InternalServiceResponse::MessageSent(MessageSent { cid, peer_cid });
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                     info!(target: "citadel", "Into the message handler command send")
                 }
@@ -188,10 +201,10 @@ pub async fn payload_handler(
                     info!(target: "citadel","connection not found");
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::MessageSendError {
+                        InternalServiceResponse::MessageSendError(MessageSendError {
                             cid,
                             message: format!("Connection for {cid} not found"),
-                        },
+                        }),
                         uuid,
                     )
                     .await;
@@ -209,20 +222,21 @@ pub async fn payload_handler(
             server_connection_map.lock().await.remove(&cid);
             match remote.send(request).await {
                 Ok(res) => {
-                    let disconnect_success = InternalServiceResponse::Disconnected {
+                    let disconnect_success = InternalServiceResponse::Disconnected(Disconnected {
                         cid,
                         peer_cid: None,
-                    };
+                    });
                     send_response_to_tcp_client(tcp_connection_map, disconnect_success, uuid).await;
                     info!(target: "citadel", "Disconnected {res:?}")
                 }
                 Err(err) => {
                     let error_message = format!("Failed to disconnect {err:?}");
                     info!(target: "citadel", "{error_message}");
-                    let disconnect_failure = InternalServiceResponse::DisconnectFailure {
-                        cid,
-                        message: error_message,
-                    };
+                    let disconnect_failure =
+                        InternalServiceResponse::DisconnectFailure(DisconnectFailure {
+                            cid,
+                            message: error_message,
+                        });
                     send_response_to_tcp_client(tcp_connection_map, disconnect_failure, uuid).await;
                 }
             };
@@ -248,7 +262,7 @@ pub async fn payload_handler(
                 Ok(_) => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::SendFileSuccess { cid },
+                        InternalServiceResponse::SendFileSuccess(SendFileSuccess { cid }),
                         uuid,
                     )
                     .await;
@@ -257,10 +271,10 @@ pub async fn payload_handler(
                 Err(err) => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::SendFileFailure {
+                        InternalServiceResponse::SendFileFailure(SendFileFailure {
                             cid,
                             message: err.into_string(),
-                        },
+                        }),
                         uuid,
                     )
                     .await;
@@ -357,11 +371,13 @@ pub async fn payload_handler(
                                         println!("{:?}", mutual_peer);
                                         send_response_to_tcp_client(
                                             tcp_connection_map,
-                                            InternalServiceResponse::PeerRegisterSuccess {
-                                                cid,
-                                                peer_cid,
-                                                username: mutual_peer.username.unwrap(),
-                                            },
+                                            InternalServiceResponse::PeerRegisterSuccess(
+                                                PeerRegisterSuccess {
+                                                    cid,
+                                                    peer_cid,
+                                                    username: mutual_peer.username.unwrap(),
+                                                },
+                                            ),
                                             uuid,
                                         )
                                         .await;
@@ -373,10 +389,10 @@ pub async fn payload_handler(
                         Err(err) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::PeerRegisterFailure {
+                                InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
                                     cid,
                                     message: err.into_string(),
-                                },
+                                }),
                                 uuid,
                             )
                             .await;
@@ -387,10 +403,10 @@ pub async fn payload_handler(
                 Err(err) => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::PeerRegisterFailure {
+                        InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
                             cid,
                             message: err.into_string(),
-                        },
+                        }),
                         uuid,
                     )
                     .await;
@@ -443,17 +459,20 @@ pub async fn payload_handler(
 
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::PeerConnectSuccess { cid },
+                                InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+                                    cid,
+                                }),
                                 uuid,
                             )
                             .await;
                             let connection_read_stream = async move {
                                 while let Some(message) = stream.next().await {
-                                    let message = InternalServiceResponse::MessageReceived {
-                                        message: message.into_buffer(),
-                                        cid: connection_cid,
-                                        peer_cid,
-                                    };
+                                    let message =
+                                        InternalServiceResponse::MessageReceived(MessageReceived {
+                                            message: message.into_buffer(),
+                                            cid: connection_cid,
+                                            peer_cid,
+                                        });
                                     match hm_for_conn.lock().await.get(&uuid) {
                                         Some(entry) => match entry.send(message) {
                                             Ok(res) => res,
@@ -475,10 +494,10 @@ pub async fn payload_handler(
                         Err(err) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::PeerConnectFailure {
+                                InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                                     cid,
                                     message: err.into_string(),
-                                },
+                                }),
                                 uuid,
                             )
                             .await;
@@ -489,10 +508,10 @@ pub async fn payload_handler(
                 Err(err) => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::PeerConnectFailure {
+                        InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                             cid,
                             message: err.into_string(),
-                        },
+                        }),
                         uuid,
                     )
                     .await;
@@ -519,10 +538,10 @@ pub async fn payload_handler(
                 None => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::PeerDisconnectFailure {
+                        InternalServiceResponse::PeerDisconnectFailure(PeerDisconnectFailure {
                             cid,
                             message: "Server connection not found".to_string(),
-                        },
+                        }),
                         uuid,
                     )
                     .await;
@@ -533,7 +552,9 @@ pub async fn payload_handler(
                         Ok(ticket) => {
                             conn.clear_peer_connection(peer_cid);
                             let peer_disconnect_success =
-                                InternalServiceResponse::PeerDisconnectSuccess { cid, ticket: 0 };
+                                InternalServiceResponse::PeerDisconnectSuccess(
+                                    PeerDisconnectSuccess { cid, ticket: 0 },
+                                );
                             send_response_to_tcp_client(
                                 tcp_connection_map,
                                 peer_disconnect_success,
@@ -546,10 +567,12 @@ pub async fn payload_handler(
                             let error_message = format!("Failed to disconnect {network_error:?}");
                             info!(target: "citadel", "{error_message}");
                             let peer_disconnect_failure =
-                                InternalServiceResponse::PeerDisconnectFailure {
-                                    cid,
-                                    message: error_message,
-                                };
+                                InternalServiceResponse::PeerDisconnectFailure(
+                                    PeerDisconnectFailure {
+                                        cid,
+                                        message: error_message,
+                                    },
+                                );
                             send_response_to_tcp_client(
                                 tcp_connection_map,
                                 peer_disconnect_failure,
