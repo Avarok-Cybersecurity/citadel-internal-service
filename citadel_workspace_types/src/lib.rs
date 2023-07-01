@@ -254,6 +254,13 @@ pub enum InternalServicePayload {
         peer_cid: Option<u64>,
         chunk_size: Option<usize>,
     },
+    RespondFileTransferStandard {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: u64,
+        object_id: u32,
+        accept: bool,
+    },
     DownloadFile {
         virtual_path: PathBuf,
         transfer_security_level: SecurityLevel,

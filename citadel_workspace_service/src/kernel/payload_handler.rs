@@ -312,7 +312,7 @@ pub async fn payload_handler(
             }
         }
 
-        InternalServicePayload::AcceptFileTransferStandard {
+        InternalServicePayload::RespondFileTransferStandard {
             uuid,
             cid,
             peer_cid,
@@ -330,7 +330,7 @@ pub async fn payload_handler(
                                     cid,
                                     object_id,
                                     success: true,
-                                    response: true,
+                                    response: accept,
                                     message: None,
                                 },
                                 uuid,
@@ -345,7 +345,7 @@ pub async fn payload_handler(
                                     cid,
                                     object_id,
                                     success: false,
-                                    response: true,
+                                    response: accept,
                                     message: Option::from(err.into_string()),
                                 },
                                 uuid,
