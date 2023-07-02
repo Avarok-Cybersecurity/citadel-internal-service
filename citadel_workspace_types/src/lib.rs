@@ -1,10 +1,10 @@
-use std::collections::HashMap;
 use bytes::BytesMut;
 use citadel_sdk::prelude::{
     ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, TransferType, UdpMode,
     UserIdentifier,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -161,11 +161,24 @@ pub struct LocalDBDeleteKVFailure {
 pub struct LocalDBGetAllKVSuccess {
     pub cid: u64,
     pub peer_cid: Option<u64>,
-    pub map: HashMap<String, Vec<u8>>
+    pub map: HashMap<String, Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalDBGetAllKVFailure {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBClearAllKVSuccess {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBClearAllKVFailure {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub message: String,
@@ -199,6 +212,8 @@ pub enum InternalServiceResponse {
     LocalDBDeleteKVFailure(LocalDBDeleteKVFailure),
     LocalDBGetAllKVSuccess(LocalDBGetAllKVSuccess),
     LocalDBGetAllKVFailure(LocalDBGetAllKVFailure),
+    LocalDBClearAllKVSuccess(LocalDBClearAllKVSuccess),
+    LocalDBClearAllKVFailure(LocalDBClearAllKVFailure),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -292,6 +307,11 @@ pub enum InternalServicePayload {
         key: String,
     },
     LocalDBGetAllKV {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: Option<u64>,
+    },
+    LocalDBClearAllKV {
         uuid: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
