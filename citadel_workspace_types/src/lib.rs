@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use bytes::BytesMut;
 use citadel_sdk::prelude::{
     ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, TransferType, UdpMode,
@@ -114,6 +115,63 @@ pub struct PeerRegisterFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBGetKVSuccess {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+    pub key: String,
+    pub value: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBGetKVFailure {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBSetKVSuccess {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+    pub key: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBSetKVFailure {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBDeleteKVSuccess {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+    pub key: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBDeleteKVFailure {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBGetAllKVSuccess {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+    pub map: HashMap<String, Vec<u8>>
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LocalDBGetAllKVFailure {
+    pub cid: u64,
+    pub peer_cid: Option<u64>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectionFailure(ConnectionFailure),
@@ -133,6 +191,14 @@ pub enum InternalServiceResponse {
     PeerDisconnectFailure(PeerDisconnectFailure),
     PeerRegisterSuccess(PeerRegisterSuccess),
     PeerRegisterFailure(PeerRegisterFailure),
+    LocalDBGetKVSuccess(LocalDBGetKVSuccess),
+    LocalDBGetKVFailure(LocalDBGetKVFailure),
+    LocalDBSetKVSuccess(LocalDBSetKVSuccess),
+    LocalDBSetKVFailure(LocalDBSetKVFailure),
+    LocalDBDeleteKVSuccess(LocalDBDeleteKVSuccess),
+    LocalDBDeleteKVFailure(LocalDBDeleteKVFailure),
+    LocalDBGetAllKVSuccess(LocalDBGetAllKVSuccess),
+    LocalDBGetAllKVFailure(LocalDBGetAllKVFailure),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -205,5 +271,29 @@ pub enum InternalServicePayload {
         cid: u64,
         peer_id: UserIdentifier,
         connect_after_register: bool,
+    },
+    LocalDBGetKV {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: Option<u64>,
+        key: String,
+    },
+    LocalDBSetKV {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: Option<u64>,
+        key: String,
+        value: Vec<u8>,
+    },
+    LocalDBDeleteKV {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: Option<u64>,
+        key: String,
+    },
+    LocalDBGetAllKV {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: Option<u64>,
     },
 }

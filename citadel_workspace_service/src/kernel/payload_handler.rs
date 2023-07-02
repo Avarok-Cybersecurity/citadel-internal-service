@@ -3,12 +3,7 @@ use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{
-    ConnectionFailure, DisconnectFailure, Disconnected, InternalServicePayload,
-    InternalServiceResponse, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure,
-    PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure,
-    PeerRegisterSuccess, SendFileFailure, SendFileSuccess,
-};
+use citadel_workspace_types::{ConnectionFailure, DisconnectFailure, Disconnected, InternalServicePayload, InternalServiceResponse, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess, SendFileFailure, SendFileSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -547,7 +542,9 @@ pub async fn payload_handler(
                     .await;
                 }
                 Some(conn) => match conn.peers.get_mut(&cid) {
-                    None => {}
+                    None => {
+                        // TODO: handle none case
+                    }
                     Some(target_peer) => match target_peer.remote.send(request).await {
                         Ok(ticket) => {
                             conn.clear_peer_connection(peer_cid);
@@ -583,6 +580,86 @@ pub async fn payload_handler(
                     },
                 },
             }
+        },
+        InternalServicePayload::LocalDBGetKV { uuid, cid, peer_cid, key } => {
+            match server_connection_map.lock().await.get_mut(&cid) {
+                None => {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
+                            cid,
+                            peer_cid,
+                            message: "Server connection not found".to_string(),
+                        }),
+                        uuid,
+                    )
+                        .await;
+                }
+                Some(conn) => {
+                    if let Some(peer_cid) = peer_cid {
+                        if let Some(peer) = conn.peers.get_mut(&peer_cid) {
+                            backend_handler_get(&peer.remote, uuid, cid, Some(peer_cid), key).await;
+                        } else {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
+                                    cid,
+                                    peer_cid: Some(peer_cid),
+                                    message: "Peer connection not found".to_string(),
+                                }),
+                                uuid,
+                            )
+                                .await;
+                            return;
+                        }
+                    } else {
+                        backend_handler_get(&conn.client_server_remote, uuid, cid, peer_cid, key).await;
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn backend_handler_get(remote: &dyn BackendHandler, uuid: Uuid, cid: u64, peer_cid: Option<u64>, key: String) {
+    match remote.get(&key).await {
+        Ok(value) => {
+            if let Some(value) = value {
+                send_response_to_tcp_client(
+                    tcp_connection_map,
+                    InternalServiceResponse::LocalDBGetKVSuccess(LocalDBGetKVSuccess {
+                        cid,
+                        peer_cid,
+                        key,
+                        value,
+                    }),
+                    uuid,
+                )
+                    .await;
+            } else {
+                send_response_to_tcp_client(
+                    tcp_connection_map,
+                    InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
+                        cid,
+                        peer_cid,
+                        message: "Key not found".to_string(),
+                    }),
+                    uuid,
+                )
+                    .await;
+            }
+        }
+        Err(err) => {
+            send_response_to_tcp_client(
+                tcp_connection_map,
+                InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
+                    cid,
+                    peer_cid,
+                    message: err.into_string(),
+                }),
+                uuid,
+            )
+                .await;
         }
     }
 }
