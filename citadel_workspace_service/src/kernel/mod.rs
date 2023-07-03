@@ -874,7 +874,6 @@ mod tests {
     #[tokio::test]
     async fn test_citadel_workspace_service_peer_message_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
-        info!(target: "citadel", "above server spawn");
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
@@ -957,6 +956,48 @@ mod tests {
         .await?;
 
         test_kv_for_service(&to_service_a, &mut from_service_a, uuid, cid, None).await
+    }
+
+    #[tokio::test]
+    async fn test_p2p_kv() -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        // internal service for peer A
+        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        // internal service for peer B
+        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+
+        let (
+            to_service_a,
+            mut from_service_a,
+            to_service_b,
+            mut from_service_b,
+            uuid_a,
+            uuid_b,
+            cid_a,
+            cid_b,
+        ) = register_and_connect_to_server_then_peers(
+            bind_address_internal_service_a,
+            bind_address_internal_service_b,
+        )
+        .await?;
+
+        test_kv_for_service(
+            &to_service_a,
+            &mut from_service_a,
+            uuid_a,
+            cid_a,
+            Some(cid_b),
+        )
+        .await?;
+        test_kv_for_service(
+            &to_service_b,
+            &mut from_service_b,
+            uuid_b,
+            cid_b,
+            Some(cid_a),
+        )
+        .await?;
+        Ok(())
     }
 
     async fn test_kv_for_service(
