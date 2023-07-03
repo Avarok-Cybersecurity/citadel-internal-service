@@ -684,14 +684,25 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_citadel_workspace_service_peer_test() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
-        info!(target: "citadel", "above server spawn");
+    type PeerReturnHandle = (
+        UnboundedSender<InternalServicePayload>,
+        UnboundedReceiver<InternalServiceResponse>,
+        UnboundedSender<InternalServicePayload>,
+        UnboundedReceiver<InternalServiceResponse>,
+        Uuid,
+        Uuid,
+        u64,
+        u64,
+    );
+
+    async fn register_and_connect_to_server_then_peers(
+        a_int_svc_addr: SocketAddr,
+        b_int_svc_addr: SocketAddr,
+    ) -> Result<PeerReturnHandle, Box<dyn Error>> {
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55526".parse().unwrap();
+        let bind_address_internal_service_a = a_int_svc_addr;
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55547".parse().unwrap();
+        let bind_address_internal_service_b = b_int_svc_addr;
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = citadel_sdk::test_common::server_info();
@@ -831,13 +842,32 @@ mod tests {
         match item {
             InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
                 assert_eq!(cid, cid_a);
+                return Ok((
+                    to_service_a,
+                    from_service_a,
+                    to_service_b,
+                    from_service_b,
+                    uuid_a,
+                    uuid_b,
+                    cid_a,
+                    cid_b,
+                ));
             }
             _ => {
                 info!(target = "citadel", "{:?}", item);
                 panic!("Didn't get the PeerConnectSuccess");
             }
         }
+    }
 
+    #[tokio::test]
+    async fn test_citadel_workspace_service_peer_test() -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        let _ = register_and_connect_to_server_then_peers(
+            "127.0.0.1:55526".parse().unwrap(),
+            "127.0.0.1:55527".parse().unwrap(),
+        )
+        .await?;
         Ok(())
     }
 
@@ -850,150 +880,20 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
-
-        tokio::task::spawn(server);
-        info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel_a =
-            CitadelWorkspaceService::new(bind_address_internal_service_a);
-        let internal_service_a = NodeBuilder::default()
-            .with_node_type(NodeType::Peer)
-            .with_backend(BackendType::InMemory)
-            .build(internal_service_kernel_a)
-            .unwrap();
-
-        let internal_service_kernel_b =
-            CitadelWorkspaceService::new(bind_address_internal_service_b);
-
-        let internal_service_b = NodeBuilder::default()
-            .with_node_type(NodeType::Peer)
-            .with_backend(BackendType::InMemory)
-            .build(internal_service_kernel_b)
-            .unwrap();
-
-        spawn_services(internal_service_a, internal_service_b);
-
-        // give time for both the server and internal service to run
-        tokio::time::sleep(Duration::from_millis(2000)).await;
-        info!(target: "citadel", "about to connect to internal service");
-        let (to_service_a, mut from_service_a, uuid_a, cid_a) = register_and_connect_to_server(
+        let (
+            to_service_a,
+            mut from_service_a,
+            _to_service_b,
+            mut from_service_b,
+            uuid_a,
+            _uuid_b,
+            cid_a,
+            cid_b,
+        ) = register_and_connect_to_server_then_peers(
             bind_address_internal_service_a,
-            server_bind_address,
-            "Peer A",
-            "peer.a",
-            "secret_a",
-        )
-        .await
-        .unwrap();
-        let (to_service_b, mut from_service_b, uuid_b, cid_b) = register_and_connect_to_server(
             bind_address_internal_service_b,
-            server_bind_address,
-            "Peer B",
-            "peer.b",
-            "secret_b",
         )
-        .await
-        .unwrap();
-
-        // now, both peers are connected and registered to the central server. Now, we
-        // need to have them peer-register to each other
-        to_service_a
-            .send(InternalServicePayload::PeerRegister {
-                uuid: uuid_a,
-                cid: cid_a,
-                peer_id: cid_b.into(),
-                connect_after_register: false,
-            })
-            .unwrap();
-
-        to_service_b
-            .send(InternalServicePayload::PeerRegister {
-                uuid: uuid_b,
-                cid: cid_b,
-                peer_id: cid_a.into(),
-                connect_after_register: false,
-            })
-            .unwrap();
-
-        let item = from_service_b.recv().await.unwrap();
-
-        match item {
-            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            }) => {
-                assert_eq!(cid, cid_b);
-                assert_eq!(peer_cid, cid_b);
-                assert_eq!(username, "peer.a");
-            }
-            _ => {
-                panic!("Didn't get the PeerRegisterSuccess");
-            }
-        }
-
-        let item = from_service_a.recv().await.unwrap();
-        match item {
-            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            }) => {
-                assert_eq!(cid, cid_a);
-                assert_eq!(peer_cid, cid_a);
-                assert_eq!(username, "peer.b");
-            }
-            _ => {
-                panic!("Didn't get the PeerRegisterSuccess");
-            }
-        }
-
-        to_service_a
-            .send(InternalServicePayload::PeerConnect {
-                uuid: uuid_a,
-                cid: cid_a,
-                username: String::from("peer.a"),
-                peer_cid: cid_b,
-                peer_username: String::from("peer.b"),
-                udp_mode: Default::default(),
-                session_security_settings: Default::default(),
-            })
-            .unwrap();
-
-        to_service_b
-            .send(InternalServicePayload::PeerConnect {
-                uuid: uuid_b,
-                cid: cid_b,
-                username: String::from("peer.b"),
-                peer_cid: cid_a,
-                peer_username: String::from("peer.a"),
-                udp_mode: Default::default(),
-                session_security_settings: Default::default(),
-            })
-            .unwrap();
-
-        let item = from_service_b.recv().await.unwrap();
-        match item {
-            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
-                assert_eq!(cid, cid_b);
-            }
-            _ => {
-                info!(target = "citadel", "{:?}", item);
-                panic!("Didn't get the PeerConnectSuccess");
-            }
-        }
-
-        let item = from_service_a.recv().await.unwrap();
-        match item {
-            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
-                assert_eq!(cid, cid_a);
-            }
-            _ => {
-                info!(target = "citadel", "{:?}", item);
-                panic!("Didn't get the PeerConnectSuccess");
-            }
-        }
+        .await?;
 
         let service_a_message = Vec::from("Hello World");
         let service_a_message_payload = InternalServicePayload::Message {
@@ -1030,8 +930,137 @@ mod tests {
         Ok(())
     }
 
-    // TODO: make this function register+connect to the server
-    // Then, peer register and peer connect to each peer, returning
-    // the handles at the end of this function
-    // async fn connect_and_register_peers() {}
+    #[tokio::test]
+    async fn test_c2s_kv() -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+
+        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(CitadelWorkspaceService::new(
+                bind_address_internal_service_a,
+            ))
+            .unwrap();
+
+        spawn_services(internal_service, server);
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        let (to_service_a, mut from_service_a, uuid, cid) = register_and_connect_to_server(
+            bind_address_internal_service_a,
+            server_bind_address,
+            "peer a",
+            "peer.a",
+            "password",
+        )
+        .await?;
+
+        test_kv_for_service(&to_service_a, &mut from_service_a, uuid, cid, None).await
+    }
+
+    async fn test_kv_for_service(
+        to_service: &UnboundedSender<InternalServicePayload>,
+        from_service: &mut UnboundedReceiver<InternalServiceResponse>,
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: Option<u64>,
+    ) -> Result<(), Box<dyn Error>> {
+        // test get_all_kv
+        to_service.send(InternalServicePayload::LocalDBGetAllKV {
+            uuid,
+            cid,
+            peer_cid,
+        })?;
+
+        if let InternalServiceResponse::LocalDBGetAllKVSuccess(resp) =
+            from_service.recv().await.unwrap()
+        {
+            assert_eq!(resp.cid, cid);
+            assert_eq!(resp.map.len(), 0);
+            assert_eq!(peer_cid, resp.peer_cid);
+        } else {
+            panic!("Didn't get the LocalDBGetAllKVSuccess");
+        }
+
+        // test set_kv
+        let value = Vec::from("Hello, World!");
+        to_service.send(InternalServicePayload::LocalDBSetKV {
+            uuid,
+            cid,
+            peer_cid,
+            key: "tmp".to_string(),
+            value: value.clone(),
+        })?;
+
+        if let InternalServiceResponse::LocalDBSetKVSuccess(resp) =
+            from_service.recv().await.unwrap()
+        {
+            assert_eq!(resp.cid, cid);
+            assert_eq!(peer_cid, resp.peer_cid);
+            assert_eq!(resp.key, "tmp");
+        } else {
+            panic!("Didn't get the LocalDBSetKVSuccess");
+        }
+
+        // test get_kv
+        to_service.send(InternalServicePayload::LocalDBGetKV {
+            uuid,
+            cid,
+            peer_cid,
+            key: "tmp".to_string(),
+        })?;
+
+        if let InternalServiceResponse::LocalDBGetKVSuccess(resp) =
+            from_service.recv().await.unwrap()
+        {
+            assert_eq!(resp.cid, cid);
+            assert_eq!(peer_cid, resp.peer_cid);
+            assert_eq!(resp.key, "tmp");
+            assert_eq!(&resp.value, &value);
+        } else {
+            panic!("Didn't get the LocalDBGetKVSuccess");
+        }
+
+        // test get_all_kv
+        to_service.send(InternalServicePayload::LocalDBGetAllKV {
+            uuid,
+            cid,
+            peer_cid,
+        })?;
+
+        if let InternalServiceResponse::LocalDBGetAllKVSuccess(resp) =
+            from_service.recv().await.unwrap()
+        {
+            assert_eq!(resp.cid, cid);
+            assert_eq!(resp.map.len(), 1);
+            assert_eq!(peer_cid, resp.peer_cid);
+            assert_eq!(
+                resp.map,
+                HashMap::from([("tmp".to_string(), value.clone())])
+            );
+        } else {
+            panic!("Didn't get the LocalDBGetAllKVSuccess");
+        }
+
+        // test delete_kv
+        to_service.send(InternalServicePayload::LocalDBDeleteKV {
+            uuid,
+            cid,
+            peer_cid,
+            key: "tmp".to_string(),
+        })?;
+
+        if let InternalServiceResponse::LocalDBDeleteKVSuccess(resp) =
+            from_service.recv().await.unwrap()
+        {
+            assert_eq!(resp.cid, cid);
+            assert_eq!(peer_cid, resp.peer_cid);
+            assert_eq!(resp.key, "tmp");
+        } else {
+            panic!("Didn't get the LocalDBDeleteKVSuccess");
+        }
+
+        Ok(())
+    }
 }
