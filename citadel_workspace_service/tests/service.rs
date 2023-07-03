@@ -3,6 +3,7 @@ mod tests {
     use bytes::Bytes;
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
+    use citadel_workspace_service::kernel::{wrap_tcp_conn, CitadelWorkspaceService};
     use citadel_workspace_types::{
         InternalServicePayload, InternalServiceResponse, MessageReceived, MessageSent,
         PeerConnectSuccess, PeerRegisterSuccess, ServiceConnectionAccepted,
@@ -19,7 +20,6 @@ mod tests {
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use uuid::Uuid;
-    use citadel_workspace_service::kernel::{CitadelWorkspaceService, wrap_tcp_conn};
 
     fn spawn_services<F1, F2>(internal_service_a: F1, internal_service_b: F2)
     where
@@ -125,7 +125,7 @@ mod tests {
 
         let first_packet = stream.next().await.unwrap()?;
         info!(target: "citadel", "First packet");
-        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&*first_packet)?;
+        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&first_packet)?;
 
         info!(target: "citadel", "Greeter packet {greeter_packet:?}");
 
@@ -149,7 +149,7 @@ mod tests {
             send(&mut sink, register_command).await?;
 
             let second_packet = stream.next().await.unwrap()?;
-            let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
+            let response_packet: InternalServiceResponse = bincode2::deserialize(&second_packet)?;
             if let InternalServiceResponse::RegisterSuccess(
                 citadel_workspace_types::RegisterSuccess { id },
             ) = response_packet
@@ -168,8 +168,7 @@ mod tests {
                 send(&mut sink, command).await?;
 
                 let next_packet = stream.next().await.unwrap()?;
-                let response_packet: InternalServiceResponse =
-                    bincode2::deserialize(&*next_packet)?;
+                let response_packet: InternalServiceResponse = bincode2::deserialize(&next_packet)?;
                 if let InternalServiceResponse::ConnectSuccess(
                     citadel_workspace_types::ConnectSuccess { cid },
                 ) = response_packet
@@ -180,7 +179,7 @@ mod tests {
                         while let Some(msg) = stream.next().await {
                             let msg = msg.unwrap();
                             let msg_deserialized: InternalServiceResponse =
-                                bincode2::deserialize(&*msg).unwrap();
+                                bincode2::deserialize(&msg).unwrap();
                             info!(target = "citadel", "Service to test {:?}", msg_deserialized);
                             to_service.send(msg_deserialized).unwrap();
                         }
@@ -196,7 +195,7 @@ mod tests {
 
                     spawn_services(service_to_test, test_to_service);
 
-                    return Ok((to_service_sender, from_service, id, cid));
+                    Ok((to_service_sender, from_service, id, cid))
                 } else {
                     Err(generic_error("Connection to server was not a success"))
                 }
@@ -354,7 +353,7 @@ mod tests {
 
         let first_packet = stream.next().await.unwrap()?;
         info!(target: "citadel", "First packet");
-        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&*first_packet)?;
+        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&first_packet)?;
 
         info!(target: "citadel", "Greeter packet {greeter_packet:?}");
 
@@ -374,7 +373,7 @@ mod tests {
             send(&mut sink, register_command).await?;
 
             let second_packet = stream.next().await.unwrap()?;
-            let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
+            let response_packet: InternalServiceResponse = bincode2::deserialize(&second_packet)?;
 
             if let InternalServiceResponse::ConnectSuccess(
                 citadel_workspace_types::ConnectSuccess { cid: _ },
@@ -547,7 +546,7 @@ mod tests {
         match item {
             InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
                 assert_eq!(cid, cid_a);
-                return Ok((
+                Ok((
                     to_service_a,
                     from_service_a,
                     to_service_b,
@@ -556,7 +555,7 @@ mod tests {
                     uuid_b,
                     cid_a,
                     cid_b,
-                ));
+                ))
             }
             _ => {
                 info!(target = "citadel", "{:?}", item);
