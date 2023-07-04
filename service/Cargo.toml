@@ -1,0 +1,17 @@
+[package]
+name = "citadel_service_bin"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+localhost-testing = ["citadel_sdk/localhost-testing"]
+vendored = ["citadel_workspace_service/vendored"]
+
+[dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+citadel_workspace_service = { workspace = true }
+citadel_sdk = { workspace = true }
+structopt = { version = "0.3", default-features = false }
+citadel_logging = { workspace = true }
