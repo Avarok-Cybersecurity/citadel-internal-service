@@ -9,9 +9,13 @@ edition = "2021"
 localhost-testing = ["citadel_sdk/localhost-testing"]
 vendored = ["citadel_workspace_service/vendored"]
 
+[[bin]]
+name = "citadel_service_bin"
+path = "src/main.rs"
+
 [dependencies]
+structopt = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 citadel_workspace_service = { workspace = true }
 citadel_sdk = { workspace = true }
-structopt = { version = "0.3", default-features = false }
 citadel_logging = { workspace = true }
