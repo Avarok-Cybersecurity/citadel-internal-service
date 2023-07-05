@@ -266,6 +266,7 @@ pub async fn payload_handler(
                     }
                 }
             } else {
+                // TODO: move the TransferType to the enum in the TCP client request
                 client_to_server_remote
                     .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
                     .await
@@ -305,6 +306,13 @@ pub async fn payload_handler(
             if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
                 if let Some(handler) = connection.get_file_transfer_handle(peer_cid, object_id) {
                     let result = if accept {
+                        // TODO: find a way to alert the user that the file transfer is complete
+                        // TODO: get handle (DO NOT HOLD LOCK)
+                        let tcp_client_metadata_updater = async move {
+                            // TODO: run logic in here, send updates to TCP client
+                        };
+
+                        tokio::task::spawn(tcp_client_metadata_updater);
                         handler.accept()
                     } else {
                         handler.decline()
