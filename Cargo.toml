@@ -3,7 +3,8 @@
 members = [
     "citadel_workspace_types",
     "citadel_workspace_service",
-    "citadel_workspace_cli"
+    "citadel_workspace_cli",
+    "service"
 ]
 
 exclude = [
@@ -33,3 +34,4 @@ anyhow = "1.0.71"
 citadel_logging = { version = "0.5.0", default-features = false }
 async-recursion = {version = "1.0.4" }
 parking_lot = { version = "0.12.1" }
+structopt = { version = "0.3.26" }
