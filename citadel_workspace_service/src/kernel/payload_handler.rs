@@ -21,10 +21,10 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 // TODO: wrap all matched error below inside a function that takes f(NetworkError, InternalServicePayload) -> PayloadHandlerError
-pub struct PayloadHandlerError {
+/*pub struct PayloadHandlerError {
     pub error: NetworkError,
     pub response_payload: InternalServicePayload,
-}
+}*/
 
 #[async_recursion]
 pub async fn payload_handler(
