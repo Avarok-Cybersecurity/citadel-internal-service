@@ -300,11 +300,15 @@ pub async fn payload_handler(
             cid,
             peer_cid,
             object_id,
-            accept
+            accept,
         } => {
             if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
                 if let Some(handler) = connection.get_file_transfer_handle(peer_cid, object_id) {
-                    let result = if accept { handler.accept() } else { handler.decline() };
+                    let result = if accept {
+                        handler.accept()
+                    } else {
+                        handler.decline()
+                    };
                     match result {
                         Ok(_) => {
                             send_response_to_tcp_client(
@@ -318,7 +322,7 @@ pub async fn payload_handler(
                                 },
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
 
                         Err(err) => {
@@ -333,7 +337,7 @@ pub async fn payload_handler(
                                 },
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 }

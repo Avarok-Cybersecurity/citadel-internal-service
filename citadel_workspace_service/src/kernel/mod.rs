@@ -125,7 +125,11 @@ impl Connection {
         }
     }
 
-    fn get_file_transfer_handle(&mut self, peer_cid: u64 , object_id: u32) -> Option<&mut ObjectTransferHandler> {
+    fn get_file_transfer_handle(
+        &mut self,
+        peer_cid: u64,
+        object_id: u32,
+    ) -> Option<&mut ObjectTransferHandler> {
         if self.implicated_cid() == peer_cid {
             // C2S
             self.c2s_file_transfer_handlers.get_mut(&object_id)
@@ -386,10 +390,14 @@ fn handle_connection(
 mod tests {
     use super::*;
     use bytes::Bytes;
+    use citadel_sdk::test_common::server_info;
     use core::panic;
     use futures::stream::SplitSink;
     use std::error::Error;
     use std::future::Future;
+    use std::path::PathBuf;
+    use std::str::FromStr;
+    use std::sync::atomic::AtomicBool;
     use std::time::Duration;
     use tokio::net::TcpStream;
     use tokio::sync::mpsc::UnboundedReceiver;
@@ -1097,4 +1105,367 @@ mod tests {
     // Then, peer register and peer connect to each peer, returning
     // the handles at the end of this function
     // async fn connect_and_register_peers() {}
+
+    pub struct ReceiverFileTransferKernel(pub Option<NodeRemote>, pub Arc<AtomicBool>);
+
+    #[async_trait]
+    impl NetKernel for ReceiverFileTransferKernel {
+        fn load_remote(&mut self, node_remote: NodeRemote) -> Result<(), NetworkError> {
+            self.0 = Some(node_remote);
+            Ok(())
+        }
+
+        async fn on_start(&self) -> Result<(), NetworkError> {
+            Ok(())
+        }
+
+        async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
+            log::trace!(target: "citadel", "SERVER received {:?}", message);
+            if let NodeResult::ObjectTransferHandle(ObjectTransferHandle {
+                ticket: _,
+                mut handle,
+            }) = map_errors(message)?
+            {
+                let mut path = None;
+                // accept the transfer
+                handle
+                    .accept()
+                    .map_err(|err| NetworkError::msg(err.into_string()))?;
+
+                use futures::StreamExt;
+                while let Some(status) = handle.next().await {
+                    match status {
+                        ObjectTransferStatus::ReceptionComplete => {
+                            log::trace!(target: "citadel", "Server has finished receiving the file!");
+                            let cmp = include_bytes!("resources/test.txt");
+                            let streamed_data =
+                                tokio::fs::read(path.clone().unwrap()).await.unwrap();
+                            assert_eq!(
+                                cmp,
+                                streamed_data.as_slice(),
+                                "Original data and streamed data does not match"
+                            );
+
+                            self.1.store(true, std::sync::atomic::Ordering::Relaxed);
+                            self.0.clone().unwrap().shutdown().await?;
+                        }
+
+                        ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                            path = Some(file_path);
+                            assert_eq!(vfm.get_target_name(), "test.txt")
+                        }
+
+                        _ => {}
+                    }
+                }
+            }
+
+            Ok(())
+        }
+
+        async fn on_stop(&mut self) -> Result<(), NetworkError> {
+            Ok(())
+        }
+    }
+
+    pub fn server_info_file_transfer<'a>(
+        switch: Arc<AtomicBool>,
+    ) -> (NodeFuture<'a, ReceiverFileTransferKernel>, SocketAddr) {
+        let port = crate::test_common::get_unused_tcp_port();
+        let bind_addr = SocketAddr::from_str(&format!("127.0.0.1:{port}")).unwrap();
+        let server = crate::test_common::server_test_node(
+            bind_addr,
+            ReceiverFileTransferKernel(None, switch),
+            |_| {},
+        );
+        (server, bind_addr)
+    }
+
+    #[tokio::test]
+    async fn standard_file_transfer_c2s_test() -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        info!(target: "citadel", "above server spawn");
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
+
+        // TCP client (GUI, CLI) -> Internal Service -> Receiver File Transfer Kernel server
+        let server_success = &Arc::new(AtomicBool::new(false));
+        let (server, server_bind_address) = server_info_file_transfer(server_success.clone());
+
+        tokio::task::spawn(server);
+
+        info!(target: "citadel", "sub server spawn");
+        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel)?;
+
+        tokio::task::spawn(internal_service);
+
+        // give time for both the server and internal service to run
+
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        info!(target: "citadel", "about to connect to internal service");
+
+        let (to_service, mut from_service, uuid, cid) = register_and_connect_to_server(
+            bind_address_internal_service,
+            server_bind_address,
+            "John Doe",
+            "john.doe",
+            "secret",
+        )
+        .await
+        .unwrap();
+
+        let file_to_send = PathBuf::from("resources/test.txt");
+        let file_transfer_command = InternalServicePayload::SendFileStandard {
+            uuid,
+            source: file_to_send,
+            cid,
+            peer_cid: None,
+            chunk_size: None,
+        };
+        to_service.send(file_transfer_command).unwrap();
+        let file_transfer_response = from_service.recv().await.unwrap();
+        info!(target: "citadel","{file_transfer_response:?}");
+
+        let disconnect_command = InternalServicePayload::Disconnect { uuid, cid };
+        to_service.send(disconnect_command).unwrap();
+        let disconnect_response = from_service.recv().await.unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_citadel_workspace_service_peer_standard_file_transfer(
+    ) -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        info!(target: "citadel", "above server spawn");
+        // internal service for peer A
+        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        // internal service for peer B
+        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+
+        // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
+        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+
+        tokio::task::spawn(server);
+        info!(target: "citadel", "sub server spawn");
+        let internal_service_kernel_a =
+            CitadelWorkspaceService::new(bind_address_internal_service_a);
+        let internal_service_a = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel_a)
+            .unwrap();
+
+        let internal_service_kernel_b =
+            CitadelWorkspaceService::new(bind_address_internal_service_b);
+
+        let internal_service_b = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel_b)
+            .unwrap();
+
+        spawn_services(internal_service_a, internal_service_b);
+
+        // give time for both the server and internal service to run
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+        info!(target: "citadel", "about to connect to internal service");
+        let (to_service_a, mut from_service_a, uuid_a, cid_a) = register_and_connect_to_server(
+            bind_address_internal_service_a,
+            server_bind_address,
+            "Peer A",
+            "peer.a",
+            "secret_a",
+        )
+        .await
+        .unwrap();
+        let (to_service_b, mut from_service_b, uuid_b, cid_b) = register_and_connect_to_server(
+            bind_address_internal_service_b,
+            server_bind_address,
+            "Peer B",
+            "peer.b",
+            "secret_b",
+        )
+        .await
+        .unwrap();
+
+        // now, both peers are connected and registered to the central server. Now, we
+        // need to have them peer-register to each other
+        to_service_a
+            .send(InternalServicePayload::PeerRegister {
+                uuid: uuid_a,
+                cid: cid_a,
+                peer_id: cid_b.into(),
+                connect_after_register: false,
+            })
+            .unwrap();
+
+        to_service_b
+            .send(InternalServicePayload::PeerRegister {
+                uuid: uuid_b,
+                cid: cid_b,
+                peer_id: cid_a.into(),
+                connect_after_register: false,
+            })
+            .unwrap();
+
+        let item = from_service_b.recv().await.unwrap();
+
+        match item {
+            InternalServiceResponse::PeerRegisterSuccess {
+                cid,
+                peer_cid,
+                username,
+            } => {
+                assert_eq!(cid, cid_b);
+                assert_eq!(peer_cid, cid_b);
+                assert_eq!(username, "peer.a");
+            }
+            _ => {
+                panic!("Didn't get the PeerRegisterSuccess");
+            }
+        }
+
+        let item = from_service_a.recv().await.unwrap();
+        match item {
+            InternalServiceResponse::PeerRegisterSuccess {
+                cid,
+                peer_cid,
+                username,
+            } => {
+                assert_eq!(cid, cid_a);
+                assert_eq!(peer_cid, cid_a);
+                assert_eq!(username, "peer.b");
+            }
+            _ => {
+                panic!("Didn't get the PeerRegisterSuccess");
+            }
+        }
+
+        to_service_a
+            .send(InternalServicePayload::PeerConnect {
+                uuid: uuid_a,
+                cid: cid_a,
+                username: String::from("peer.a"),
+                peer_cid: cid_b,
+                peer_username: String::from("peer.b"),
+                udp_mode: Default::default(),
+                session_security_settings: Default::default(),
+            })
+            .unwrap();
+
+        to_service_b
+            .send(InternalServicePayload::PeerConnect {
+                uuid: uuid_b,
+                cid: cid_b,
+                username: String::from("peer.b"),
+                peer_cid: cid_a,
+                peer_username: String::from("peer.a"),
+                udp_mode: Default::default(),
+                session_security_settings: Default::default(),
+            })
+            .unwrap();
+
+        let item = from_service_b.recv().await.unwrap();
+        match item {
+            InternalServiceResponse::PeerConnectSuccess { cid } => {
+                assert_eq!(cid, cid_b);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", item);
+                panic!("Didn't get the PeerConnectSuccess");
+            }
+        }
+
+        let item = from_service_a.recv().await.unwrap();
+        match item {
+            InternalServiceResponse::PeerConnectSuccess { cid } => {
+                assert_eq!(cid, cid_a);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", item);
+                panic!("Didn't get the PeerConnectSuccess");
+            }
+        }
+
+        let file_to_send = PathBuf::from("resources/test.txt");
+        let send_file_to_service_b_payload = InternalServicePayload::SendFileStandard {
+            uuid: uuid_a,
+            source: file_to_send,
+            cid: cid_a,
+            peer_cid: Some(cid_b),
+            chunk_size: None,
+        };
+        to_service_a.send(send_file_to_service_b_payload).unwrap();
+        let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
+        info!(target: "citadel","{deserialized_service_a_payload_response:?}");
+
+        if let InternalServiceResponse::FileTransferStatus {
+            cid,
+            object_id,
+            success,
+            response,
+            message,
+        } = &deserialized_service_a_payload_response
+        {
+            info!(target:"citadel", "File Transfer Request {cid_b}");
+            let deserialized_service_a_payload_response = from_service_b.recv().await.unwrap();
+            if let InternalServiceResponse::FileTransferRequest { cid, peer_cid } =
+                deserialized_service_a_payload_response
+            {
+                let file_transfer_accept_payload =
+                    InternalServicePayload::RespondFileTransferStandard {
+                        uuid: uuid_b,
+                        cid: cid_b,
+                        peer_cid: cid_a,
+                        object_id: cid_a as u32,
+                        accept: true,
+                    };
+                to_service_b.send(file_transfer_accept_payload).unwrap();
+                let mut service_b_lock =
+                    internal_service_kernel_b.server_connection_map.lock().await;
+                let mut service_b_connection = service_b_lock.get_mut(&cid_b).unwrap();
+                if let Some(mut service_b_handle) =
+                    service_b_connection.get_file_transfer_handle(cid_a, cid_a as u32)
+                {
+                    while let Some(status) = service_b_handle.next().await {
+                        match status {
+                            ObjectTransferStatus::ReceptionComplete => {
+                                log::trace!(target: "citadel", "Server has finished receiving the file!");
+                                let cmp = include_bytes!("resources/test.txt");
+                                let streamed_data =
+                                    tokio::fs::read(path.clone().unwrap()).await.unwrap();
+                                assert_eq!(
+                                    cmp,
+                                    streamed_data.as_slice(),
+                                    "Original data and streamed data does not match"
+                                );
+                            }
+
+                            ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                                path = Some(file_path);
+                                assert_eq!(vfm.get_target_name(), "test.txt")
+                            }
+
+                            _ => {}
+                        }
+                    }
+                } else {
+                    panic!("File Transfer Failed on data stream");
+                }
+
+                info!(target:"citadel", "Accepted File Transfer {cid_b}");
+            } else {
+                panic!("File Transfer P2P Failure");
+            }
+        } else {
+            panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
+        }
+
+        Ok(())
+    }
 }
