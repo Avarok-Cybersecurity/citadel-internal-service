@@ -3,7 +3,8 @@ mod tests {
     use bytes::Bytes;
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
-    use citadel_workspace_service::kernel::{wrap_tcp_conn, CitadelWorkspaceService};
+    use citadel_workspace_lib::wrap_tcp_conn;
+    use citadel_workspace_service::kernel::CitadelWorkspaceService;
     use citadel_workspace_types::{
         InternalServicePayload, InternalServiceResponse, MessageReceived, MessageSent,
         PeerConnectSuccess, PeerRegisterSuccess, ServiceConnectionAccepted,
