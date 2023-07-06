@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_sdk::prelude::{
+pub use citadel_sdk::prelude::{
     ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, TransferType, UdpMode,
     UserIdentifier,
 };
