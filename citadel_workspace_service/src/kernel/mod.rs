@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use citadel_logging::info;
+use citadel_logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
@@ -241,9 +241,17 @@ async fn sink_send_payload(
     }
 }
 
-fn send_to_kernel(payload_to_send: &[u8], sender: &UnboundedSender<InternalServicePayload>) {
-    let payload = deserialize(payload_to_send);
-    sender.send(payload).unwrap();
+fn send_to_kernel(
+    payload_to_send: &[u8],
+    sender: &UnboundedSender<InternalServicePayload>,
+) -> Result<(), NetworkError> {
+    if let Some(payload) = deserialize(payload_to_send) {
+        sender.send(payload)?;
+        Ok(())
+    } else {
+        error!(target: "citadel", "w task: failed to deserialize payload");
+        Ok(())
+    }
 }
 
 fn handle_connection(
@@ -271,7 +279,18 @@ fn handle_connection(
 
         let read_task = async move {
             while let Some(message) = stream.next().await {
-                send_to_kernel(&message.unwrap(), &to_kernel);
+                match message {
+                    Ok(message) => {
+                        if let Err(err) = send_to_kernel(&message, &to_kernel) {
+                            error!(target: "citadel", "Failed to send to kernel: {:?}", err);
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        warn!(target: "citadel", "Bad message from client");
+                        break;
+                    }
+                }
             }
             info!(target: "citadel", "Disconnected");
         };
