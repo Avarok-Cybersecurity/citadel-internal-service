@@ -288,7 +288,6 @@ fn handle_connection(
                     }
                     Err(_) => {
                         warn!(target: "citadel", "Bad message from client");
-                        break;
                     }
                 }
             }
