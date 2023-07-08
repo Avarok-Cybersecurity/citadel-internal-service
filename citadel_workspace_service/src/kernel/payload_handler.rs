@@ -4,7 +4,7 @@ use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
 use citadel_workspace_types::{
-    ConnectionFailure, DisconnectFailure, Disconnected, InternalServicePayload,
+    ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload,
     InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
     LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
     LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
@@ -338,13 +338,13 @@ pub async fn payload_handler(
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::FileTransferStatus {
+                                InternalServiceResponse::FileTransferStatus(FileTransferStatus {
                                     cid,
                                     object_id,
                                     success: true,
                                     response: accept,
                                     message: None,
-                                },
+                                }),
                                 uuid,
                             )
                             .await;
@@ -353,13 +353,13 @@ pub async fn payload_handler(
                         Err(err) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::FileTransferStatus {
+                                InternalServiceResponse::FileTransferStatus(FileTransferStatus {
                                     cid,
                                     object_id,
                                     success: false,
                                     response: accept,
                                     message: Option::from(err.into_string()),
-                                },
+                                }),
                                 uuid,
                             )
                             .await;

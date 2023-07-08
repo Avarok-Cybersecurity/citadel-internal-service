@@ -5,7 +5,8 @@ use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
 use citadel_workspace_lib::{deserialize, serialize_payload, wrap_tcp_conn};
 use citadel_workspace_types::{
-    Disconnected, InternalServicePayload, InternalServiceResponse, ServiceConnectionAccepted,
+    Disconnected, FileTransferRequest, InternalServicePayload, InternalServiceResponse,
+    ServiceConnectionAccepted,
 };
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
@@ -256,10 +257,11 @@ impl NetKernel for CitadelWorkspaceService {
                     );
                     let uuid = connection.associated_tcp_connection;
                     // TODO: add metadata to the request we send to TCP client
-                    let response = InternalServiceResponse::FileTransferRequest {
-                        cid: implicated_cid,
-                        peer_cid,
-                    };
+                    let response =
+                        InternalServiceResponse::FileTransferRequest(FileTransferRequest {
+                            cid: implicated_cid,
+                            peer_cid,
+                        });
                     send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;
                 }
             }

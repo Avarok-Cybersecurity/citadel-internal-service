@@ -1,6 +1,8 @@
 use bytes::BytesMut;
-use citadel_sdk::prelude::{
-    ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode, UserIdentifier,
+use citadel_sdk::prelude::VirtualObjectMetadata;
+pub use citadel_sdk::prelude::{
+    ConnectMode, ObjectTransferStatus, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode,
+    UserIdentifier,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -184,6 +186,30 @@ pub struct LocalDBClearAllKVFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileTransferRequest {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub metadata: VirtualObjectMetadata, // TODO: metadata: VirtualObjectMetadata
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileTransferStatus {
+    pub cid: u64,
+    pub object_id: u32,
+    pub success: bool,
+    pub response: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileTransferTick {
+    pub uuid: Uuid,
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub status: ObjectTransferStatus,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectionFailure(ConnectionFailure),
@@ -197,6 +223,9 @@ pub enum InternalServiceResponse {
     DisconnectFailure(DisconnectFailure),
     SendFileSuccess(SendFileSuccess),
     SendFileFailure(SendFileFailure),
+    FileTransferRequest(FileTransferRequest),
+    FileTransferStatus(FileTransferStatus),
+    FileTransferTick(FileTransferTick),
     PeerConnectSuccess(PeerConnectSuccess),
     PeerConnectFailure(PeerConnectFailure),
     PeerDisconnectSuccess(PeerDisconnectSuccess),
