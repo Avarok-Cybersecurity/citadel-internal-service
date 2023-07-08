@@ -6,8 +6,9 @@ mod tests {
     use citadel_workspace_lib::wrap_tcp_conn;
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
     use citadel_workspace_types::{
-        InternalServicePayload, InternalServiceResponse, MessageReceived, MessageSent,
-        PeerConnectSuccess, PeerRegisterSuccess, ServiceConnectionAccepted,
+        FileTransferRequest, FileTransferStatus, InternalServicePayload, InternalServiceResponse,
+        MessageReceived, MessageSent, PeerConnectSuccess, PeerRegisterSuccess,
+        ServiceConnectionAccepted,
     };
     use core::panic;
     use futures::stream::SplitSink;
@@ -721,9 +722,9 @@ mod tests {
         async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
             citadel_logging::trace!(target: "citadel", "SERVER received {:?}", message);
             if let NodeResult::ObjectTransferHandle(ObjectTransferHandle {
-                                                        ticket: _,
-                                                        mut handle,
-                                                    }) = map_errors(message)?
+                ticket: _,
+                mut handle,
+            }) = map_errors(message)?
             {
                 let mut path = None;
                 // accept the transfer
@@ -814,8 +815,8 @@ mod tests {
             "john.doe",
             "secret",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         let file_to_send = PathBuf::from("resources/test.txt");
         let file_transfer_command = InternalServicePayload::SendFileStandard {
@@ -880,8 +881,8 @@ mod tests {
             "peer.a",
             "secret_a",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
         let (to_service_b, mut from_service_b, uuid_b, cid_b) = register_and_connect_to_server(
             bind_address_internal_service_b,
             server_bind_address,
@@ -889,8 +890,8 @@ mod tests {
             "peer.b",
             "secret_b",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         // now, both peers are connected and registered to the central server. Now, we
         // need to have them peer-register to each other
@@ -1003,11 +1004,12 @@ mod tests {
         let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_payload_response:?}");
 
-        if let InternalServiceResponse::FileTransferStatus { .. } = &deserialized_service_a_payload_response
+        if let InternalServiceResponse::FileTransferStatus(FileTransferStatus { .. }) =
+            &deserialized_service_a_payload_response
         {
             info!(target:"citadel", "File Transfer Request {cid_b}");
             let deserialized_service_a_payload_response = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::FileTransferRequest { .. } =
+            if let InternalServiceResponse::FileTransferRequest(FileTransferRequest { .. }) =
                 deserialized_service_a_payload_response
             {
                 let file_transfer_accept_payload =
@@ -1052,7 +1054,6 @@ mod tests {
                 } else {
                     panic!("File Transfer Failed on data stream");
                 }*/
-
             } else {
                 panic!("File Transfer P2P Failure");
             }
