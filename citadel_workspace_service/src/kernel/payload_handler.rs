@@ -325,8 +325,26 @@ pub async fn payload_handler(
                     let result = if accept {
                         // TODO: find a way to alert the user that the file transfer is complete
                         // TODO: get handle (DO NOT HOLD LOCK)
+
                         let tcp_client_metadata_updater = async move {
                             // TODO: run logic in here, send updates to TCP client
+                            while let Some(status) = handler.next().await {
+                                match status {
+                                    ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                                        
+                                    }
+
+                                    ObjectTransferStatus::ReceptionComplete => {
+
+                                    }
+
+                                    ObjectTransferStatus::ReceptionTick( current_group, total_groups, transfer_rate ) => {
+
+                                    }
+
+                                    _ => {}
+                                }
+                            }
                         };
 
                         tokio::task::spawn(tcp_client_metadata_updater);

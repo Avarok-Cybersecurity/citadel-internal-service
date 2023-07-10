@@ -261,6 +261,16 @@ impl NetKernel for CitadelWorkspaceService {
                         InternalServiceResponse::FileTransferRequest(FileTransferRequest {
                             cid: implicated_cid,
                             peer_cid,
+                            metadata: VirtualObjectMetadata {
+                                name: "".to_string(),
+                                date_created: "".to_string(),
+                                author: "".to_string(),
+                                plaintext_length: 0,
+                                group_count: 0,
+                                object_id,
+                                cid: 0,
+                                transfer_type: TransferType::FileTransfer,
+                            },
                         });
                     send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;
                 }
