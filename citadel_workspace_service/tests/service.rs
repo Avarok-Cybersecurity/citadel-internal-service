@@ -17,6 +17,10 @@ mod tests {
     use std::error::Error;
     use std::future::Future;
     use std::net::SocketAddr;
+    use std::path::PathBuf;
+    use std::str::FromStr;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
     use std::time::Duration;
     use tokio::net::TcpStream;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -773,8 +777,7 @@ mod tests {
     ) -> (NodeFuture<'a, ReceiverFileTransferKernel>, SocketAddr) {
         let port = citadel_sdk::test_common::get_unused_tcp_port();
         let bind_addr = SocketAddr::from_str(&format!("127.0.0.1:{port}")).unwrap();
-        let server = citadel_sdk::test_common::server_test_node(
-            bind_addr,
+        let (server, _) = citadel_sdk::test_common::server_test_node(
             ReceiverFileTransferKernel(None, switch),
             |_| {},
         );
@@ -916,11 +919,7 @@ mod tests {
         let item = from_service_b.recv().await.unwrap();
 
         match item {
-            InternalServiceResponse::PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            } => {
+            InternalServiceResponse::PeerRegisterSuccess ( PeerRegisterSuccess{cid, peer_cid, username}) => {
                 assert_eq!(cid, cid_b);
                 assert_eq!(peer_cid, cid_b);
                 assert_eq!(username, "peer.a");
@@ -932,11 +931,7 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            } => {
+            InternalServiceResponse::PeerRegisterSuccess ( PeerRegisterSuccess{cid, peer_cid, username}) => {
                 assert_eq!(cid, cid_a);
                 assert_eq!(peer_cid, cid_a);
                 assert_eq!(username, "peer.b");
@@ -972,7 +967,7 @@ mod tests {
 
         let item = from_service_b.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess { cid } => {
+            InternalServiceResponse::PeerConnectSuccess ( PeerConnectSuccess { cid } ) => {
                 assert_eq!(cid, cid_b);
             }
             _ => {
@@ -983,7 +978,7 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess { cid } => {
+            InternalServiceResponse::PeerConnectSuccess ( PeerConnectSuccess { cid } ) => {
                 assert_eq!(cid, cid_a);
             }
             _ => {
