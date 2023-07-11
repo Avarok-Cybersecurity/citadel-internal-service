@@ -60,9 +60,9 @@ impl PeerConnection {
     fn add_handler(&mut self, key: u32, handler: ObjectTransferHandler) {
         self.handler_map.insert(key, handler);
     }
-    /*fn remove_handler(&mut self, key: u32) {
-        self.handler_map.remove(&key);
-    }*/
+    fn remove_handler(&mut self, key: u32) -> Option<ObjectTransferHandler> {
+        self.handler_map.remove(&key)
+    }
 }
 
 impl Connection {
@@ -117,17 +117,18 @@ impl Connection {
         }
     }
 
-    /*fn remove_object_transfer_handler(&mut self, peer_cid: u64, object_id: u32) {
+    fn remove_object_transfer_handler(&mut self, peer_cid: u64, object_id: u32) -> Option<ObjectTransferHandler> {
         if self.implicated_cid() == peer_cid {
             // C2S
-            self.c2s_file_transfer_handlers.remove(&object_id);
+            self.c2s_file_transfer_handlers.remove(&object_id)
         } else {
             // P2P
             if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
-                peer_connection.remove_handler(object_id);
+                peer_connection.remove_handler(object_id)
             }
+            else{None}
         }
-    }*/
+    }
 
     fn get_file_transfer_handle(
         &mut self,
