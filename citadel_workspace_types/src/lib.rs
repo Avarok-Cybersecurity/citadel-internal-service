@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_sdk::prelude::VirtualObjectMetadata;
+use citadel_sdk::prelude::{ObjectTransferOrientation, VirtualObjectMetadata};
 pub use citadel_sdk::prelude::{
     ConnectMode, ObjectTransferStatus, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode,
     UserIdentifier,
