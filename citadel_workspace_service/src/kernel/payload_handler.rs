@@ -3,7 +3,7 @@ use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload, InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess, SendFileFailure, SendFileSuccess, FileTransferTick};
+use citadel_workspace_types::{ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload, InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess, SendFileFailure, SendFileSuccess};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::mem::replace;
@@ -247,7 +247,7 @@ pub async fn payload_handler(
             uuid,
             source,
             cid,
-            is_refvs,
+            is_refvs: _,
             peer_cid,
             chunk_size,
         } => {

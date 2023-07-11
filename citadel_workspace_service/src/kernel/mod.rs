@@ -4,10 +4,7 @@ use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
 use citadel_workspace_lib::{deserialize, serialize_payload, wrap_tcp_conn};
-use citadel_workspace_types::{
-    Disconnected, FileTransferRequest, InternalServicePayload, InternalServiceResponse,
-    ServiceConnectionAccepted,
-};
+use citadel_workspace_types::*;
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use payload_handler::payload_handler;
@@ -60,9 +57,9 @@ impl PeerConnection {
     fn add_handler(&mut self, key: u32, handler: ObjectTransferHandler) {
         self.handler_map.insert(key, handler);
     }
-    fn remove_handler(&mut self, key: u32) -> Option<ObjectTransferHandler> {
-        self.handler_map.remove(&key)
-    }
+    // fn remove_handler(&mut self, key: u32) -> Option<ObjectTransferHandler> {
+    //     self.handler_map.remove(&key)
+    // }
 }
 
 impl Connection {
@@ -117,18 +114,18 @@ impl Connection {
         }
     }
 
-    fn remove_object_transfer_handler(&mut self, peer_cid: u64, object_id: u32) -> Option<ObjectTransferHandler> {
-        if self.implicated_cid() == peer_cid {
-            // C2S
-            self.c2s_file_transfer_handlers.remove(&object_id)
-        } else {
-            // P2P
-            if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
-                peer_connection.remove_handler(object_id)
-            }
-            else{None}
-        }
-    }
+    // fn remove_object_transfer_handler(&mut self, peer_cid: u64, object_id: u32) -> Option<ObjectTransferHandler> {
+    //     if self.implicated_cid() == peer_cid {
+    //         // C2S
+    //         self.c2s_file_transfer_handlers.remove(&object_id)
+    //     } else {
+    //         // P2P
+    //         if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
+    //             peer_connection.remove_handler(object_id)
+    //         }
+    //         else{None}
+    //     }
+    // }
 
     fn get_file_transfer_handle(
         &mut self,
@@ -211,7 +208,7 @@ impl NetKernel for CitadelWorkspaceService {
             res1 = inbound_command_task => res1,
         };
 
-        citadel_logging::warn!(target: "citadel", "Shutting down service because a critical task finished. {res:?}");
+        warn!(target: "citadel", "Shutting down service because a critical task finished. {res:?}");
         remote_for_closure.shutdown().await?;
         res
     }
@@ -333,19 +330,6 @@ fn create_client_server_remote(
     remote: NodeRemote,
 ) -> ClientServerRemote {
     ClientServerRemote::new(conn_type, remote)
-}
-
-pub fn wrap_tcp_conn(conn: TcpStream) -> Framed<TcpStream, LengthDelimitedCodec> {
-    LengthDelimitedCodec::builder()
-        .length_field_offset(0) // default value
-        .max_frame_length(1024 * 1024 * 64) // 64 MB
-        .length_field_type::<u32>()
-        .length_adjustment(0) // default value
-        .new_framed(conn)
-}
-
-fn serialize_payload(payload: &InternalServiceResponse) -> Vec<u8> {
-    bincode2::serialize(&payload).unwrap()
 }
 
 async fn sink_send_payload(
@@ -546,7 +530,7 @@ mod tests {
         let full_name = full_name.into();
         let password = password.into();
 
-        if let InternalServiceResponse::ServiceConnectionAccepted { id } = greeter_packet {
+        if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted{ id }) = greeter_packet {
             let register_command = InternalServicePayload::Register {
                 uuid: id,
                 server_addr,
@@ -560,7 +544,7 @@ mod tests {
 
             let second_packet = stream.next().await.unwrap()?;
             let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
-            if let InternalServiceResponse::RegisterSuccess { id } = response_packet {
+            if let InternalServiceResponse::RegisterSuccess(RegisterSuccess{ id }) = response_packet {
                 // now, connect to the server
                 let command = InternalServicePayload::Connect {
                     username,
@@ -577,7 +561,7 @@ mod tests {
                 let next_packet = stream.next().await.unwrap()?;
                 let response_packet: InternalServiceResponse =
                     bincode2::deserialize(&*next_packet)?;
-                if let InternalServiceResponse::ConnectSuccess { cid } = response_packet {
+                if let InternalServiceResponse::ConnectSuccess(ConnectSuccess{ cid }) = response_packet {
                     let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();
                     let service_to_test = async move {
                         // take messages from the service and send them to from_service
@@ -680,14 +664,10 @@ mod tests {
         let deserialized_message_response = from_service.recv().await.unwrap();
         info!(target: "citadel","{deserialized_message_response:?}");
 
-        if let InternalServiceResponse::MessageSent { cid, .. } = deserialized_message_response {
+        if let InternalServiceResponse::MessageSent(MessageSent{ cid, .. }) = deserialized_message_response {
             info!(target:"citadel", "Message {cid}");
             let deserialized_message_response = from_service.recv().await.unwrap();
-            if let InternalServiceResponse::MessageReceived {
-                message,
-                cid,
-                peer_cid: _,
-            } = deserialized_message_response
+            if let InternalServiceResponse::MessageReceived(MessageReceived{ message, cid, peer_cid: _ }) = deserialized_message_response
             {
                 println!("{message:?}");
                 assert_eq!(SecBuffer::from("pong"), message);
@@ -705,7 +685,7 @@ mod tests {
 
         assert!(matches!(
             disconnect_response,
-            InternalServiceResponse::Disconnected { .. }
+            InternalServiceResponse::Disconnected(Disconnected { .. })
         ));
 
         Ok(())
@@ -762,7 +742,7 @@ mod tests {
 
         info!(target: "citadel", "Greeter packet {greeter_packet:?}");
 
-        if let InternalServiceResponse::ServiceConnectionAccepted { id } = greeter_packet {
+        if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted{ id }) = greeter_packet {
             let register_command = InternalServicePayload::Register {
                 uuid: id,
                 server_addr: server_bind_address,
@@ -777,7 +757,7 @@ mod tests {
             let second_packet = stream.next().await.unwrap()?;
             let response_packet: InternalServiceResponse = bincode2::deserialize(&*second_packet)?;
 
-            if let InternalServiceResponse::ConnectSuccess { cid: _ } = response_packet {
+            if let InternalServiceResponse::ConnectSuccess(ConnectSuccess{ .. }) = response_packet {
                 Ok(())
             } else {
                 panic!("Registration to server was not a success")
@@ -865,11 +845,7 @@ mod tests {
         let item = from_service_b.recv().await.unwrap();
 
         match item {
-            InternalServiceResponse::PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            } => {
+            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess{ cid, peer_cid, username}) => {
                 assert_eq!(cid, cid_b);
                 assert_eq!(peer_cid, cid_b);
                 assert_eq!(username, "peer.a");
@@ -881,11 +857,7 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            } => {
+            InternalServiceResponse::PeerRegisterSuccess (PeerRegisterSuccess{ cid, peer_cid, username}) => {
                 assert_eq!(cid, cid_a);
                 assert_eq!(peer_cid, cid_a);
                 assert_eq!(username, "peer.b");
@@ -921,7 +893,7 @@ mod tests {
 
         let item = from_service_b.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess { cid } => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess{ cid }) => {
                 assert_eq!(cid, cid_b);
             }
             _ => {
@@ -932,7 +904,7 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess { cid } => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess{ cid }) => {
                 assert_eq!(cid, cid_a);
             }
             _ => {
@@ -1022,11 +994,7 @@ mod tests {
         let item = from_service_b.recv().await.unwrap();
 
         match item {
-            InternalServiceResponse::PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            } => {
+            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess{ cid, peer_cid, username}) => {
                 assert_eq!(cid, cid_b);
                 assert_eq!(peer_cid, cid_b);
                 assert_eq!(username, "peer.a");
@@ -1038,11 +1006,7 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            } => {
+            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess{ cid, peer_cid, username}) => {
                 assert_eq!(cid, cid_a);
                 assert_eq!(peer_cid, cid_a);
                 assert_eq!(username, "peer.b");
@@ -1078,7 +1042,7 @@ mod tests {
 
         let item = from_service_b.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess { cid } => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess{ cid }) => {
                 assert_eq!(cid, cid_b);
             }
             _ => {
@@ -1089,7 +1053,7 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess { cid } => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess{ cid }) => {
                 assert_eq!(cid, cid_a);
             }
             _ => {
@@ -1110,16 +1074,12 @@ mod tests {
         let deserialized_service_a_message_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_message_response:?}");
 
-        if let InternalServiceResponse::MessageSent { cid: cid_b, .. } =
+        if let InternalServiceResponse::MessageSent(MessageSent{ cid: cid_b, .. }) =
             &deserialized_service_a_message_response
         {
             info!(target:"citadel", "Message {cid_b}");
             let deserialized_service_a_message_response = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::MessageReceived {
-                message,
-                cid: cid_a,
-                peer_cid: _cid_b,
-            } = deserialized_service_a_message_response
+            if let InternalServiceResponse::MessageReceived(MessageReceived{ message, cid: cid_a, peer_cid: _cid_b, }) = deserialized_service_a_message_response
             {
                 assert_eq!(&*service_a_message, &*message);
                 info!(target:"citadel", "Message sending success {cid_a}");
@@ -1205,8 +1165,7 @@ mod tests {
     ) -> (NodeFuture<'a, ReceiverFileTransferKernel>, SocketAddr) {
         let port = citadel_sdk::test_common::get_unused_tcp_port();
         let bind_addr = SocketAddr::from_str(&format!("127.0.0.1:{port}")).unwrap();
-        let server = citadel_sdk::test_common::server_test_node(
-            bind_addr,
+        let (server, _) = citadel_sdk::test_common::server_test_node(
             ReceiverFileTransferKernel(None, switch),
             |_| {},
         );
@@ -1348,11 +1307,7 @@ mod tests {
         let item = from_service_b.recv().await.unwrap();
 
         match item {
-            InternalServiceResponse::PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            } => {
+            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess{ cid, peer_cid, username, }) => {
                 assert_eq!(cid, cid_b);
                 assert_eq!(peer_cid, cid_b);
                 assert_eq!(username, "peer.a");
@@ -1364,11 +1319,7 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerRegisterSuccess {
-                cid,
-                peer_cid,
-                username,
-            } => {
+            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess{ cid, peer_cid, username, }) => {
                 assert_eq!(cid, cid_a);
                 assert_eq!(peer_cid, cid_a);
                 assert_eq!(username, "peer.b");
@@ -1404,7 +1355,7 @@ mod tests {
 
         let item = from_service_b.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess { cid } => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess{ cid }) => {
                 assert_eq!(cid, cid_b);
             }
             _ => {
@@ -1415,7 +1366,7 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess { cid } => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess{ cid }) => {
                 assert_eq!(cid, cid_a);
             }
             _ => {
