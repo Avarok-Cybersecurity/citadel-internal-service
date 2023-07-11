@@ -3,17 +3,10 @@ use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{
-    ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload,
-    InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
-    LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
-    LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
-    MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
-    PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
-    SendFileFailure, SendFileSuccess,
-};
+use citadel_workspace_types::{ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload, InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess, SendFileFailure, SendFileSuccess, FileTransferTick};
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::mem::replace;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
@@ -250,10 +243,11 @@ pub async fn payload_handler(
             };
         }
 
-        InternalServicePayload::SendFileStandard {
+        InternalServicePayload::SendFile {
             uuid,
             source,
             cid,
+            is_refvs,
             peer_cid,
             chunk_size,
         } => {
@@ -322,35 +316,41 @@ pub async fn payload_handler(
         } => {
             if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
                 if let Some(handler) = connection.get_file_transfer_handle(peer_cid, object_id) {
+                    // TODO: Is there a better way to take ownership of the handler?
+                    let mut owned_handler = replace(handler, ObjectTransferHandler::new(0, 0, ObjectTransferOrientation::Receiver, None, false).0);
                     let result = if accept {
+
                         // TODO: find a way to alert the user that the file transfer is complete
                         // TODO: get handle (DO NOT HOLD LOCK)
 
-                        let tcp_client_metadata_updater = async move {
-                            // TODO: run logic in here, send updates to TCP client
-                            while let Some(status) = handler.next().await {
-                                match status {
-                                    ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
-                                        
-                                    }
+                        let accept_result = owned_handler.accept();
 
-                                    ObjectTransferStatus::ReceptionComplete => {
+                        // let tcp_client_metadata_updater = async move {
+                        //     while let Some(status) = owned_handler.next().await {
+                        //         let status_string = match status {
+                        //             ObjectTransferStatus::ReceptionBeginning(_, _) => {"ReceptionBeginning"}
+                        //             ObjectTransferStatus::ReceptionTick(_, _, _) => {"ReceptionTick"}
+                        //             ObjectTransferStatus::ReceptionComplete => {"ReceptionComplete"}
+                        //             _ => {"ReceptionEnded"}
+                        //         };
+                        //         send_response_to_tcp_client(
+                        //             tcp_connection_map,
+                        //             InternalServiceResponse::FileTransferTick(FileTransferTick{
+                        //                 uuid,
+                        //                 cid,
+                        //                 peer_cid,
+                        //                 status: String::from(status_string),
+                        //             }),
+                        //             uuid,
+                        //         )
+                        //             .await;
+                        //     }
+                        // };
+                        // tokio::task::spawn(tcp_client_metadata_updater);
 
-                                    }
-
-                                    ObjectTransferStatus::ReceptionTick( current_group, total_groups, transfer_rate ) => {
-
-                                    }
-
-                                    _ => {}
-                                }
-                            }
-                        };
-
-                        tokio::task::spawn(tcp_client_metadata_updater);
-                        handler.accept()
+                        accept_result
                     } else {
-                        handler.decline()
+                        owned_handler.decline()
                     };
                     match result {
                         Ok(_) => {

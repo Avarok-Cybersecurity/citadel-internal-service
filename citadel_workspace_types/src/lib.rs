@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_sdk::prelude::VirtualObjectMetadata;
+use citadel_sdk::prelude::{ObjectTransferOrientation, VirtualObjectMetadata};
 pub use citadel_sdk::prelude::{
     ConnectMode, ObjectTransferStatus, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode,
     UserIdentifier,
@@ -206,7 +206,9 @@ pub struct FileTransferTick {
     pub uuid: Uuid,
     pub cid: u64,
     pub peer_cid: u64,
-    pub status: ObjectTransferStatus,
+    pub status: String,
+    //TODO: make status ObjectTransferStatus -- Needs to serialize and deserialize
+    // or could keep as a string and modify temporary handling of status?
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -276,10 +278,11 @@ pub enum InternalServicePayload {
         uuid: Uuid,
         cid: u64,
     },
-    SendFileStandard {
+    SendFile {
         uuid: Uuid,
         source: PathBuf,
         cid: u64,
+        is_refvs: bool,
         peer_cid: Option<u64>,
         chunk_size: Option<usize>,
     },
