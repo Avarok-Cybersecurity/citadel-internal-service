@@ -3,15 +3,7 @@ use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{
-    ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload,
-    InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
-    LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
-    LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
-    MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
-    PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
-    SendFileFailure, SendFileSuccess,
-};
+use citadel_workspace_types::{ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload, InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess, SendFileFailure, SendFileSuccess, DownloadFileFailure, DownloadFileSuccess, DeleteVirtualFileFailure, DeleteVirtualFileSuccess};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::mem::replace;
@@ -255,9 +247,11 @@ pub async fn payload_handler(
             uuid,
             source,
             cid,
-            is_refvs: _,
+            is_refvs,
             peer_cid,
             chunk_size,
+            virtual_directory,
+            security_level,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
@@ -267,28 +261,56 @@ pub async fn payload_handler(
             );
 
             let chunk_size = chunk_size.unwrap_or_default();
+            let security_level = security_level.unwrap_or_default();
+            let virtual_directory = virtual_directory.unwrap_or_default();
 
             let result = if let Some(peer_cid) = peer_cid {
                 match client_to_server_remote.find_target(cid, peer_cid).await {
                     Ok(peer_remote) => {
-                        peer_remote
-                            .send_file_with_custom_opts(
-                                source,
-                                chunk_size,
-                                TransferType::FileTransfer,
-                            )
-                            .await
+                        if is_refvs {
+                            peer_remote
+                                .remote_encrypted_virtual_filesystem_push_custom_chunking(
+                                    source,
+                                    virtual_directory,
+                                    chunk_size,
+                                    security_level
+                                )
+                                .await
+                        }
+                        else {
+                            peer_remote
+                                .send_file_with_custom_opts(
+                                    source,
+                                    chunk_size,
+                                    TransferType::FileTransfer,
+                                )
+                                .await
+                        }
                     }
-                    Err(_err) => {
-                        // TODO: handle the error properly
-                        return;
+                    Err(err) => {
+                        send_response_to_tcp_client(
+                            tcp_connection_map,
+                            InternalServiceResponse::SendFileFailure(SendFileFailure {
+                                cid,
+                                message: err.into_string(),
+                            }),
+                            uuid,
+                        )
+                            .await;
                     }
                 }
             } else {
                 // TODO: move the TransferType to the enum in the TCP client request
-                client_to_server_remote
-                    .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
-                    .await
+                if is_refvs {
+                    client_to_server_remote
+                        .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
+                        .await
+                }
+                else {
+                    client_to_server_remote
+                        .remote_encrypted_virtual_filesystem_push_custom_chunking(source, virtual_directory, chunk_size, security_level)
+                        .await
+                }
             };
 
             match result {
@@ -321,10 +343,11 @@ pub async fn payload_handler(
             peer_cid,
             object_id,
             accept,
+            download_location: _,
         } => {
             if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
                 if let Some(handler) = connection.get_file_transfer_handle(peer_cid, object_id) {
-                    // TODO: Is there a better way to take ownership of the handler?
+                    // TODO: How should handler be taken from map? -> get handler (DO NOT HOLD LOCK)
                     let mut owned_handler = replace(
                         handler,
                         ObjectTransferHandler::new(
@@ -338,21 +361,30 @@ pub async fn payload_handler(
                     );
                     let result = if accept {
                         // TODO: find a way to alert the user that the file transfer is complete
-                        // TODO: get handle (DO NOT HOLD LOCK)
 
                         //let accept_result = owned_handler.accept();
 
                         // let tcp_client_metadata_updater = async move {
+                        //     let mut path = None;
                         //     while let Some(status) = owned_handler.next().await {
                         //         let status_string = match status {
-                        //             ObjectTransferStatus::ReceptionBeginning(_, _) => {"ReceptionBeginning"}
-                        //             ObjectTransferStatus::ReceptionTick(_, _, _) => {"ReceptionTick"}
-                        //             ObjectTransferStatus::ReceptionComplete => {"ReceptionComplete"}
+                        //             ObjectTransferStatus::ReceptionBeginning(file_path, _) => {
+                        //                 path = Some(file_path);
+                        //                 "ReceptionBeginning"
+                        //             }
+                        //             ObjectTransferStatus::ReceptionTick(_, _, _) => {
+                        //                 "ReceptionTick"
+                        //             }
+                        //             ObjectTransferStatus::ReceptionComplete => {
+                        //                 //TODO: For revfs, get virtual path from handler's metadata and write file there
+                        //                 // for standard, use given path?
+                        //                 "ReceptionComplete"
+                        //             }
                         //             _ => {"ReceptionEnded"}
                         //         };
                         //         send_response_to_tcp_client(
                         //             tcp_connection_map,
-                        //             InternalServiceResponse::FileTransferTick(FileTransferTick{
+                        //             InternalServiceResponse::FileTransferTick(citadel_workspace_types::FileTransferTick {
                         //                 uuid,
                         //                 cid,
                         //                 peer_cid,
@@ -405,21 +437,137 @@ pub async fn payload_handler(
         }
 
         InternalServicePayload::DownloadFile {
-            virtual_path: _,
-            transfer_security_level: _,
-            delete_on_pull: _,
-            cid: _,
-            uuid: _,
+            virtual_directory,
+            security_level,
+            delete_on_pull,
+            cid,
+            peer_cid,
+            uuid,
         } => {
-            // let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
-            // match client_to_server_remote.(virtual_path, transfer_security_level, delete_on_pull).await {
-            //     Ok(_) => {
+            let client_to_server_remote = ClientServerRemote::new(
+                VirtualTargetType::LocalGroupServer {
+                    implicated_cid: cid,
+                },
+                remote.clone(),
+            );
 
-            //     },
-            //     Err(err) => {
+            let security_level = security_level.unwrap_or_default();
 
-            //     }
-            // }
+            let result = if let Some(peer_cid) = peer_cid {
+                match client_to_server_remote.find_target(cid, peer_cid).await {
+                    Ok(peer_remote) => {
+                        peer_remote
+                            .remote_encrypted_virtual_filesystem_pull(
+                                virtual_directory,
+                                security_level,
+                                delete_on_pull,
+                            )
+                            .await
+                    }
+                    Err(err) => {
+                        send_response_to_tcp_client(
+                            tcp_connection_map,
+                            InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
+                                cid,
+                                message: err.into_string(),
+                            }),
+                            uuid,
+                        )
+                        .await
+                    }
+                }
+            } else {
+                client_to_server_remote
+                    .remote_encrypted_virtual_filesystem_pull(
+                        virtual_directory,
+                        security_level,
+                        delete_on_pull,
+                    )
+                    .await
+
+            };
+
+            match result {
+                Ok(_) => {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess { cid }),
+                        uuid,
+                    )
+                    .await;
+                }
+
+                Err(err) => {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
+                            cid,
+                            message: err.into_string(),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+            }
+        }
+
+        InternalServicePayload::DeleteVirtualFile {
+            virtual_directory,
+            cid,
+            peer_cid,
+            uuid
+        } => {
+            let client_to_server_remote = ClientServerRemote::new(
+                VirtualTargetType::LocalGroupServer {
+                    implicated_cid: cid,
+                },
+                remote.clone(),
+            );
+
+            let result = if let Some(peer_cid) = peer_cid {
+                match client_to_server_remote.find_target(cid, peer_cid).await {
+                    Ok(peer_remote) => {
+                        peer_remote.remote_encrypted_virtual_filesystem_delete(virtual_directory).await
+                    }
+                    Err(err) => {
+                        send_response_to_tcp_client(
+                            tcp_connection_map,
+                            InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
+                                cid,
+                                message: err.into_string(),
+                            }),
+                            uuid,
+                        )
+                        .await
+                    }
+                }
+            } else {
+                client_to_server_remote.remote_encrypted_virtual_filesystem_delete(virtual_directory).await
+
+            };
+
+            match result {
+                Ok(_) => {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess { cid }),
+                        uuid,
+                    )
+                    .await;
+                }
+
+                Err(err) => {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
+                            cid,
+                            message: err.into_string(),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+            }
         }
 
         InternalServicePayload::StartGroup {
