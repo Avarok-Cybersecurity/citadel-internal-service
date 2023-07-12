@@ -775,7 +775,6 @@ mod tests {
     pub fn server_info_file_transfer<'a>(
         switch: Arc<AtomicBool>,
     ) -> (NodeFuture<'a, ReceiverFileTransferKernel>, SocketAddr) {
-
         let bind_addr = SocketAddr::from_str(&format!("127.0.0.1:0")).unwrap();
         let (server, _) = citadel_sdk::test_common::server_test_node(
             ReceiverFileTransferKernel(None, switch),
