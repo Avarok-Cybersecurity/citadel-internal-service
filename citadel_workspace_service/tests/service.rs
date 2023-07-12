@@ -19,8 +19,8 @@ mod tests {
     use std::net::SocketAddr;
     use std::path::PathBuf;
     use std::str::FromStr;
-    use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::net::TcpStream;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -741,7 +741,7 @@ mod tests {
                     match status {
                         ObjectTransferStatus::ReceptionComplete => {
                             citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
-                            let cmp = include_bytes!("../../../resources/test.txt");
+                            let cmp = include_bytes!("../../resources/test.txt");
                             let streamed_data =
                                 tokio::fs::read(path.clone().unwrap()).await.unwrap();
                             assert_eq!(
@@ -775,8 +775,8 @@ mod tests {
     pub fn server_info_file_transfer<'a>(
         switch: Arc<AtomicBool>,
     ) -> (NodeFuture<'a, ReceiverFileTransferKernel>, SocketAddr) {
-        let port = citadel_sdk::test_common::get_unused_tcp_port();
-        let bind_addr = SocketAddr::from_str(&format!("127.0.0.1:{port}")).unwrap();
+
+        let bind_addr = SocketAddr::from_str(&format!("127.0.0.1:0")).unwrap();
         let (server, _) = citadel_sdk::test_common::server_test_node(
             ReceiverFileTransferKernel(None, switch),
             |_| {},
@@ -821,11 +821,12 @@ mod tests {
         .await
         .unwrap();
 
-        let file_to_send = PathBuf::from("resources/test.txt");
-        let file_transfer_command = InternalServicePayload::SendFileStandard {
+        let file_to_send = PathBuf::from("../../resources/test.txt");
+        let file_transfer_command = InternalServicePayload::SendFile {
             uuid,
             source: file_to_send,
             cid,
+            is_refvs: false,
             peer_cid: None,
             chunk_size: None,
         };
@@ -919,7 +920,11 @@ mod tests {
         let item = from_service_b.recv().await.unwrap();
 
         match item {
-            InternalServiceResponse::PeerRegisterSuccess ( PeerRegisterSuccess{cid, peer_cid, username}) => {
+            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
+                cid,
+                peer_cid,
+                username,
+            }) => {
                 assert_eq!(cid, cid_b);
                 assert_eq!(peer_cid, cid_b);
                 assert_eq!(username, "peer.a");
@@ -931,7 +936,11 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerRegisterSuccess ( PeerRegisterSuccess{cid, peer_cid, username}) => {
+            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
+                cid,
+                peer_cid,
+                username,
+            }) => {
                 assert_eq!(cid, cid_a);
                 assert_eq!(peer_cid, cid_a);
                 assert_eq!(username, "peer.b");
@@ -967,7 +976,7 @@ mod tests {
 
         let item = from_service_b.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess ( PeerConnectSuccess { cid } ) => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
                 assert_eq!(cid, cid_b);
             }
             _ => {
@@ -978,7 +987,7 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess ( PeerConnectSuccess { cid } ) => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
                 assert_eq!(cid, cid_a);
             }
             _ => {
@@ -987,11 +996,12 @@ mod tests {
             }
         }
 
-        let file_to_send = PathBuf::from("resources/test.txt");
-        let send_file_to_service_b_payload = InternalServicePayload::SendFileStandard {
+        let file_to_send = PathBuf::from("../../resources/test.txt");
+        let send_file_to_service_b_payload = InternalServicePayload::SendFile {
             uuid: uuid_a,
             source: file_to_send,
             cid: cid_a,
+            is_refvs: false,
             peer_cid: Some(cid_b),
             chunk_size: None,
         };

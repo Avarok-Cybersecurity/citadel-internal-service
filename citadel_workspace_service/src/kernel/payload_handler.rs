@@ -3,7 +3,15 @@ use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload, InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess, SendFileFailure, SendFileSuccess};
+use citadel_workspace_types::{
+    ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload,
+    InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
+    LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
+    LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
+    MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
+    PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
+    SendFileFailure, SendFileSuccess,
+};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::mem::replace;
@@ -317,13 +325,22 @@ pub async fn payload_handler(
             if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
                 if let Some(handler) = connection.get_file_transfer_handle(peer_cid, object_id) {
                     // TODO: Is there a better way to take ownership of the handler?
-                    let mut owned_handler = replace(handler, ObjectTransferHandler::new(0, 0, ObjectTransferOrientation::Receiver, None, false).0);
+                    let mut owned_handler = replace(
+                        handler,
+                        ObjectTransferHandler::new(
+                            0,
+                            0,
+                            ObjectTransferOrientation::Receiver,
+                            None,
+                            false,
+                        )
+                        .0,
+                    );
                     let result = if accept {
-
                         // TODO: find a way to alert the user that the file transfer is complete
                         // TODO: get handle (DO NOT HOLD LOCK)
 
-                        let accept_result = owned_handler.accept();
+                        //let accept_result = owned_handler.accept();
 
                         // let tcp_client_metadata_updater = async move {
                         //     while let Some(status) = owned_handler.next().await {
@@ -348,7 +365,7 @@ pub async fn payload_handler(
                         // };
                         // tokio::task::spawn(tcp_client_metadata_updater);
 
-                        accept_result
+                        owned_handler.accept()
                     } else {
                         owned_handler.decline()
                     };
