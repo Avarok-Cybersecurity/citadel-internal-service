@@ -3,7 +3,16 @@ use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{ConnectionFailure, DisconnectFailure, Disconnected, FileTransferStatus, InternalServicePayload, InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess, SendFileFailure, SendFileSuccess, DownloadFileFailure, DownloadFileSuccess, DeleteVirtualFileFailure, DeleteVirtualFileSuccess};
+use citadel_workspace_types::{
+    ConnectionFailure, DeleteVirtualFileFailure, DeleteVirtualFileSuccess, DisconnectFailure,
+    Disconnected, DownloadFileFailure, DownloadFileSuccess, FileTransferStatus,
+    InternalServicePayload, InternalServiceResponse, LocalDBClearAllKVFailure,
+    LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess,
+    LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess,
+    LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent,
+    PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess,
+    PeerRegisterFailure, PeerRegisterSuccess, SendFileFailure, SendFileSuccess,
+};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::mem::replace;
@@ -273,11 +282,10 @@ pub async fn payload_handler(
                                     source,
                                     virtual_directory,
                                     chunk_size,
-                                    security_level
+                                    security_level,
                                 )
                                 .await
-                        }
-                        else {
+                        } else {
                             peer_remote
                                 .send_file_with_custom_opts(
                                     source,
@@ -292,11 +300,12 @@ pub async fn payload_handler(
                             tcp_connection_map,
                             InternalServiceResponse::SendFileFailure(SendFileFailure {
                                 cid,
-                                message: err.into_string(),
+                                message: err.to_string(),
                             }),
                             uuid,
                         )
-                            .await;
+                        .await;
+                        Err(err)
                     }
                 }
             } else {
@@ -305,10 +314,14 @@ pub async fn payload_handler(
                     client_to_server_remote
                         .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
                         .await
-                }
-                else {
+                } else {
                     client_to_server_remote
-                        .remote_encrypted_virtual_filesystem_push_custom_chunking(source, virtual_directory, chunk_size, security_level)
+                        .remote_encrypted_virtual_filesystem_push_custom_chunking(
+                            source,
+                            virtual_directory,
+                            chunk_size,
+                            security_level,
+                        )
                         .await
                 }
             };
@@ -469,11 +482,12 @@ pub async fn payload_handler(
                             tcp_connection_map,
                             InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
                                 cid,
-                                message: err.into_string(),
+                                message: err.to_string(),
                             }),
                             uuid,
                         )
-                        .await
+                        .await;
+                        Err(err)
                     }
                 }
             } else {
@@ -484,7 +498,6 @@ pub async fn payload_handler(
                         delete_on_pull,
                     )
                     .await
-
             };
 
             match result {
@@ -515,7 +528,7 @@ pub async fn payload_handler(
             virtual_directory,
             cid,
             peer_cid,
-            uuid
+            uuid,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
@@ -527,30 +540,38 @@ pub async fn payload_handler(
             let result = if let Some(peer_cid) = peer_cid {
                 match client_to_server_remote.find_target(cid, peer_cid).await {
                     Ok(peer_remote) => {
-                        peer_remote.remote_encrypted_virtual_filesystem_delete(virtual_directory).await
+                        peer_remote
+                            .remote_encrypted_virtual_filesystem_delete(virtual_directory)
+                            .await
                     }
                     Err(err) => {
                         send_response_to_tcp_client(
                             tcp_connection_map,
-                            InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
-                                cid,
-                                message: err.into_string(),
-                            }),
+                            InternalServiceResponse::DeleteVirtualFileFailure(
+                                DeleteVirtualFileFailure {
+                                    cid,
+                                    message: err.to_string(),
+                                },
+                            ),
                             uuid,
                         )
-                        .await
+                        .await;
+                        Err(err)
                     }
                 }
             } else {
-                client_to_server_remote.remote_encrypted_virtual_filesystem_delete(virtual_directory).await
-
+                client_to_server_remote
+                    .remote_encrypted_virtual_filesystem_delete(virtual_directory)
+                    .await
             };
 
             match result {
                 Ok(_) => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess { cid }),
+                        InternalServiceResponse::DeleteVirtualFileSuccess(
+                            DeleteVirtualFileSuccess { cid },
+                        ),
                         uuid,
                     )
                     .await;
@@ -559,10 +580,12 @@ pub async fn payload_handler(
                 Err(err) => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
-                            cid,
-                            message: err.into_string(),
-                        }),
+                        InternalServiceResponse::DeleteVirtualFileFailure(
+                            DeleteVirtualFileFailure {
+                                cid,
+                                message: err.into_string(),
+                            },
+                        ),
                         uuid,
                     )
                     .await;
