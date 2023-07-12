@@ -5,11 +5,7 @@ mod tests {
     use citadel_sdk::prelude::*;
     use citadel_workspace_lib::wrap_tcp_conn;
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
-    use citadel_workspace_types::{
-        FileTransferRequest, FileTransferStatus, InternalServicePayload, InternalServiceResponse,
-        MessageReceived, MessageSent, PeerConnectSuccess, PeerRegisterSuccess,
-        ServiceConnectionAccepted,
-    };
+    use citadel_workspace_types::{DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequest, FileTransferStatus, InternalServicePayload, InternalServiceResponse, MessageReceived, MessageSent, PeerConnectSuccess, PeerRegisterSuccess, SendFileSuccess, ServiceConnectionAccepted};
     use core::panic;
     use futures::stream::SplitSink;
     use futures::{SinkExt, StreamExt};
@@ -821,6 +817,7 @@ mod tests {
         .unwrap();
 
         let file_to_send = PathBuf::from("../../resources/test.txt");
+
         let file_transfer_command = InternalServicePayload::SendFile {
             uuid,
             source: file_to_send,
@@ -828,6 +825,8 @@ mod tests {
             is_refvs: false,
             peer_cid: None,
             chunk_size: None,
+            virtual_directory: None,
+            security_level: None,
         };
         to_service.send(file_transfer_command).unwrap();
         let file_transfer_response = from_service.recv().await.unwrap();
@@ -1003,6 +1002,8 @@ mod tests {
             is_refvs: false,
             peer_cid: Some(cid_b),
             chunk_size: None,
+            virtual_directory: None,
+            security_level: None,
         };
         to_service_a.send(send_file_to_service_b_payload).unwrap();
         let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
@@ -1017,12 +1018,13 @@ mod tests {
                 deserialized_service_a_payload_response
             {
                 let file_transfer_accept_payload =
-                    InternalServicePayload::RespondFileTransferStandard {
+                    InternalServicePayload::RespondFileTransfer {
                         uuid: uuid_b,
                         cid: cid_b,
                         peer_cid: cid_a,
                         object_id: cid_a as u32,
                         accept: true,
+                        download_location: None,
                     };
                 to_service_b.send(file_transfer_accept_payload).unwrap();
                 info!(target:"citadel", "Accepted File Transfer {cid_b}");
@@ -1064,6 +1066,365 @@ mod tests {
         } else {
             panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_citadel_workspace_service_c2s_revfs() -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        info!(target: "citadel", "above server spawn");
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
+
+        // TCP client (GUI, CLI) -> Internal Service -> Receiver File Transfer Kernel server
+        let server_success = &Arc::new(AtomicBool::new(false));
+        let (server, server_bind_address) = server_info_file_transfer(server_success.clone());
+
+        tokio::task::spawn(server);
+
+        info!(target: "citadel", "sub server spawn");
+        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel)?;
+
+        tokio::task::spawn(internal_service);
+
+        // give time for both the server and internal service to run
+
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        info!(target: "citadel", "about to connect to internal service");
+
+        let (to_service, mut from_service, uuid, cid) = register_and_connect_to_server(
+            bind_address_internal_service,
+            server_bind_address,
+            "John Doe",
+            "john.doe",
+            "secret",
+        )
+            .await
+            .unwrap();
+
+        // Push file to REVFS
+        let file_to_send = PathBuf::from("../../resources/test.txt");
+        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let file_transfer_command = InternalServicePayload::SendFile {
+            uuid,
+            source: file_to_send,
+            cid,
+            is_refvs: true,
+            peer_cid: None,
+            chunk_size: None,
+            virtual_directory: Some(virtual_path),
+            security_level: None,
+        };
+        to_service.send(file_transfer_command).unwrap();
+        let file_transfer_response = from_service.recv().await.unwrap();
+        match file_transfer_response {
+            InternalServiceResponse::SendFileSuccess(SendFileSuccess { cid: response_cid }) => {
+                assert_eq!(cid, response_cid);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", file_transfer_response);
+                panic!("Didn't get the REVFS SendFileSuccess");
+            }
+        }
+        info!(target: "citadel","{file_transfer_response:?}");
+
+        // Download/Pull file from REVFS - Don't delete on pull
+        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let file_download_command = InternalServicePayload::DownloadFile {
+            virtual_directory: virtual_path,
+            security_level: None,
+            delete_on_pull: false,
+            cid,
+            peer_cid: None,
+            uuid,
+        };
+        to_service.send(file_download_command).unwrap();
+        let file_download_response = from_service.recv().await.unwrap();
+        match file_download_response {
+            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess { cid: response_cid }) => {
+                assert_eq!(cid, response_cid);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", file_download_response);
+                panic!("Didn't get the REVFS DownloadFileSuccess");
+            }
+        }
+        info!(target: "citadel","{file_download_response:?}");
+
+        // Delete file from REVFS
+        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let file_delete_command = InternalServicePayload::DeleteVirtualFile {
+            virtual_directory: virtual_path,
+            cid,
+            peer_cid: None,
+            uuid,
+        };
+        to_service.send(file_delete_command).unwrap();
+        let file_delete_command = from_service.recv().await.unwrap();
+        match file_delete_command {
+            InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess{ cid: response_cid }) => {
+                assert_eq!(cid, response_cid);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", file_delete_command);
+                panic!("Didn't get the REVFS DownloadFileSuccess");
+            }
+        }
+        info!(target: "citadel","{file_delete_command:?}");
+
+        let disconnect_command = InternalServicePayload::Disconnect { uuid, cid };
+        to_service.send(disconnect_command).unwrap();
+        let _disconnect_response = from_service.recv().await.unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_citadel_workspace_service_peer_revfs(
+    ) -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+        info!(target: "citadel", "above server spawn");
+        // internal service for peer A
+        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        // internal service for peer B
+        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+
+        // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
+        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+
+        tokio::task::spawn(server);
+        info!(target: "citadel", "sub server spawn");
+        let internal_service_kernel_a =
+            CitadelWorkspaceService::new(bind_address_internal_service_a);
+        let internal_service_a = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel_a)
+            .unwrap();
+
+        let internal_service_kernel_b =
+            CitadelWorkspaceService::new(bind_address_internal_service_b);
+
+        let internal_service_b = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .build(internal_service_kernel_b)
+            .unwrap();
+
+        spawn_services(internal_service_a, internal_service_b);
+
+        // give time for both the server and internal service to run
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+        info!(target: "citadel", "about to connect to internal service");
+        let (to_service_a, mut from_service_a, uuid_a, cid_a) = register_and_connect_to_server(
+            bind_address_internal_service_a,
+            server_bind_address,
+            "Peer A",
+            "peer.a",
+            "secret_a",
+        )
+            .await
+            .unwrap();
+        let (to_service_b, mut from_service_b, uuid_b, cid_b) = register_and_connect_to_server(
+            bind_address_internal_service_b,
+            server_bind_address,
+            "Peer B",
+            "peer.b",
+            "secret_b",
+        )
+            .await
+            .unwrap();
+
+        // now, both peers are connected and registered to the central server. Now, we
+        // need to have them peer-register to each other
+        to_service_a
+            .send(InternalServicePayload::PeerRegister {
+                uuid: uuid_a,
+                cid: cid_a,
+                peer_id: cid_b.into(),
+                connect_after_register: false,
+            })
+            .unwrap();
+
+        to_service_b
+            .send(InternalServicePayload::PeerRegister {
+                uuid: uuid_b,
+                cid: cid_b,
+                peer_id: cid_a.into(),
+                connect_after_register: false,
+            })
+            .unwrap();
+
+        let item = from_service_b.recv().await.unwrap();
+
+        match item {
+            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
+                                                             cid,
+                                                             peer_cid,
+                                                             username,
+                                                         }) => {
+                assert_eq!(cid, cid_b);
+                assert_eq!(peer_cid, cid_b);
+                assert_eq!(username, "peer.a");
+            }
+            _ => {
+                panic!("Didn't get the PeerRegisterSuccess");
+            }
+        }
+
+        let item = from_service_a.recv().await.unwrap();
+        match item {
+            InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
+                                                             cid,
+                                                             peer_cid,
+                                                             username,
+                                                         }) => {
+                assert_eq!(cid, cid_a);
+                assert_eq!(peer_cid, cid_a);
+                assert_eq!(username, "peer.b");
+            }
+            _ => {
+                panic!("Didn't get the PeerRegisterSuccess");
+            }
+        }
+
+        to_service_a
+            .send(InternalServicePayload::PeerConnect {
+                uuid: uuid_a,
+                cid: cid_a,
+                username: String::from("peer.a"),
+                peer_cid: cid_b,
+                peer_username: String::from("peer.b"),
+                udp_mode: Default::default(),
+                session_security_settings: Default::default(),
+            })
+            .unwrap();
+
+        to_service_b
+            .send(InternalServicePayload::PeerConnect {
+                uuid: uuid_b,
+                cid: cid_b,
+                username: String::from("peer.b"),
+                peer_cid: cid_a,
+                peer_username: String::from("peer.a"),
+                udp_mode: Default::default(),
+                session_security_settings: Default::default(),
+            })
+            .unwrap();
+
+        let item = from_service_b.recv().await.unwrap();
+        match item {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
+                assert_eq!(cid, cid_b);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", item);
+                panic!("Didn't get the PeerConnectSuccess");
+            }
+        }
+
+        let item = from_service_a.recv().await.unwrap();
+        match item {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
+                assert_eq!(cid, cid_a);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", item);
+                panic!("Didn't get the PeerConnectSuccess");
+            }
+        }
+
+        // Push file to REVFS on peer
+        let file_to_send = PathBuf::from("../../resources/test.txt");
+        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let send_file_to_service_b_payload = InternalServicePayload::SendFile {
+            uuid: uuid_a,
+            source: file_to_send,
+            cid: cid_a,
+            is_refvs: true,
+            peer_cid: Some(cid_b),
+            chunk_size: None,
+            virtual_directory: Some(virtual_path),
+            security_level: None,
+        };
+        to_service_a.send(send_file_to_service_b_payload).unwrap();
+        let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
+        info!(target: "citadel","{deserialized_service_a_payload_response:?}");
+
+        if let InternalServiceResponse::FileTransferStatus(FileTransferStatus { .. }) =
+            &deserialized_service_a_payload_response
+        {
+            info!(target:"citadel", "File Transfer Request {cid_b}");
+            let deserialized_service_a_payload_response = from_service_b.recv().await.unwrap();
+            if let InternalServiceResponse::FileTransferRequest(FileTransferRequest { .. }) =
+                deserialized_service_a_payload_response
+            {
+                let file_transfer_accept_payload =
+                    InternalServicePayload::RespondFileTransfer {
+                        uuid: uuid_b,
+                        cid: cid_b,
+                        peer_cid: cid_a,
+                        object_id: cid_a as u32,
+                        accept: true,
+                        download_location: None,
+                    };
+                to_service_b.send(file_transfer_accept_payload).unwrap();
+                info!(target:"citadel", "Accepted File Transfer {cid_b}");
+            } else {
+                panic!("File Transfer P2P Failure");
+            }
+        } else {
+            panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
+        }
+
+        // Download P2P REVFS file - without delete on pull
+        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let download_file_command = InternalServicePayload::DownloadFile {
+            virtual_directory: virtual_path,
+            security_level: None,
+            delete_on_pull: false,
+            cid: cid_a,
+            peer_cid: Some(cid_b),
+            uuid: uuid_a,
+        };
+        to_service_a.send(download_file_command).unwrap();
+        let download_file_response = from_service_a.recv().await.unwrap();
+        match download_file_response {
+            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess { cid: response_cid }) => {
+                assert_eq!(cid_a, response_cid);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", download_file_response);
+                panic!("Didn't get the REVFS DownloadFileSuccess");
+            }
+        }
+        info!(target: "citadel","{download_file_response:?}");
+
+        // Delete file on Peer REVFS
+        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let delete_file_command = InternalServicePayload::DeleteVirtualFile {
+            virtual_directory: virtual_path,
+            cid: cid_a,
+            peer_cid: Some(cid_b),
+            uuid: uuid_a,
+        };
+        to_service_a.send(delete_file_command).unwrap();
+        let delete_file_response = from_service_a.recv().await.unwrap();
+        match download_file_response {
+            InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess { cid: response_cid }) => {
+                assert_eq!(cid_a, response_cid);
+            }
+            _ => {
+                info!(target = "citadel", "{:?}", delete_file_response);
+                panic!("Didn't get the REVFS DownloadFileSuccess");
+            }
+        }
+        info!(target: "citadel","{delete_file_response:?}");
 
         Ok(())
     }

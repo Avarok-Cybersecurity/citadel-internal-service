@@ -350,7 +350,7 @@ pub async fn payload_handler(
             }
         }
 
-        InternalServicePayload::RespondFileTransferStandard {
+        InternalServicePayload::RespondFileTransfer {
             uuid,
             cid,
             peer_cid,

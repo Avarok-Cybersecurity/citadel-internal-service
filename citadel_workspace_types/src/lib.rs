@@ -314,7 +314,7 @@ pub enum InternalServicePayload {
         virtual_directory: Option<PathBuf>,
         security_level: Option<SecurityLevel>,
     },
-    RespondFileTransferStandard {
+    RespondFileTransfer {
         uuid: Uuid,
         cid: u64,
         peer_cid: u64,
