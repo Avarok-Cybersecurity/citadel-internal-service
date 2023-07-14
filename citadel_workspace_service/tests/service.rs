@@ -5,7 +5,11 @@ mod tests {
     use citadel_sdk::prelude::*;
     use citadel_workspace_lib::wrap_tcp_conn;
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
-    use citadel_workspace_types::{DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequest, FileTransferStatus, InternalServicePayload, InternalServiceResponse, MessageReceived, MessageSent, PeerConnectSuccess, PeerRegisterSuccess, SendFileSuccess, ServiceConnectionAccepted};
+    use citadel_workspace_types::{
+        DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequest, FileTransferStatus,
+        InternalServicePayload, InternalServiceResponse, MessageReceived, MessageSent,
+        PeerConnectSuccess, PeerRegisterSuccess, SendFileSuccess, ServiceConnectionAccepted,
+    };
     use core::panic;
     use futures::stream::SplitSink;
     use futures::{SinkExt, StreamExt};
@@ -1017,15 +1021,14 @@ mod tests {
             if let InternalServiceResponse::FileTransferRequest(FileTransferRequest { .. }) =
                 deserialized_service_a_payload_response
             {
-                let file_transfer_accept_payload =
-                    InternalServicePayload::RespondFileTransfer {
-                        uuid: uuid_b,
-                        cid: cid_b,
-                        peer_cid: cid_a,
-                        object_id: cid_a as u32,
-                        accept: true,
-                        download_location: None,
-                    };
+                let file_transfer_accept_payload = InternalServicePayload::RespondFileTransfer {
+                    uuid: uuid_b,
+                    cid: cid_b,
+                    peer_cid: cid_a,
+                    object_id: cid_a as u32,
+                    accept: true,
+                    download_location: None,
+                };
                 to_service_b.send(file_transfer_accept_payload).unwrap();
                 info!(target:"citadel", "Accepted File Transfer {cid_b}");
 
@@ -1104,8 +1107,8 @@ mod tests {
             "john.doe",
             "secret",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         // Push file to REVFS
         let file_to_send = PathBuf::from("../../resources/test.txt");
@@ -1146,7 +1149,9 @@ mod tests {
         to_service.send(file_download_command).unwrap();
         let file_download_response = from_service.recv().await.unwrap();
         match file_download_response {
-            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess { cid: response_cid }) => {
+            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
+                cid: response_cid,
+            }) => {
                 assert_eq!(cid, response_cid);
             }
             _ => {
@@ -1167,7 +1172,9 @@ mod tests {
         to_service.send(file_delete_command).unwrap();
         let file_delete_command = from_service.recv().await.unwrap();
         match file_delete_command {
-            InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess{ cid: response_cid }) => {
+            InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess {
+                cid: response_cid,
+            }) => {
                 assert_eq!(cid, response_cid);
             }
             _ => {
@@ -1185,8 +1192,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_peer_revfs(
-    ) -> Result<(), Box<dyn Error>> {
+    async fn test_citadel_workspace_service_peer_revfs() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
         // internal service for peer A
@@ -1228,8 +1234,8 @@ mod tests {
             "peer.a",
             "secret_a",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
         let (to_service_b, mut from_service_b, uuid_b, cid_b) = register_and_connect_to_server(
             bind_address_internal_service_b,
             server_bind_address,
@@ -1237,8 +1243,8 @@ mod tests {
             "peer.b",
             "secret_b",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         // now, both peers are connected and registered to the central server. Now, we
         // need to have them peer-register to each other
@@ -1264,10 +1270,10 @@ mod tests {
 
         match item {
             InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-                                                             cid,
-                                                             peer_cid,
-                                                             username,
-                                                         }) => {
+                cid,
+                peer_cid,
+                username,
+            }) => {
                 assert_eq!(cid, cid_b);
                 assert_eq!(peer_cid, cid_b);
                 assert_eq!(username, "peer.a");
@@ -1280,10 +1286,10 @@ mod tests {
         let item = from_service_a.recv().await.unwrap();
         match item {
             InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-                                                             cid,
-                                                             peer_cid,
-                                                             username,
-                                                         }) => {
+                cid,
+                peer_cid,
+                username,
+            }) => {
                 assert_eq!(cid, cid_a);
                 assert_eq!(peer_cid, cid_a);
                 assert_eq!(username, "peer.b");
@@ -1364,15 +1370,14 @@ mod tests {
             if let InternalServiceResponse::FileTransferRequest(FileTransferRequest { .. }) =
                 deserialized_service_a_payload_response
             {
-                let file_transfer_accept_payload =
-                    InternalServicePayload::RespondFileTransfer {
-                        uuid: uuid_b,
-                        cid: cid_b,
-                        peer_cid: cid_a,
-                        object_id: cid_a as u32,
-                        accept: true,
-                        download_location: None,
-                    };
+                let file_transfer_accept_payload = InternalServicePayload::RespondFileTransfer {
+                    uuid: uuid_b,
+                    cid: cid_b,
+                    peer_cid: cid_a,
+                    object_id: cid_a as u32,
+                    accept: true,
+                    download_location: None,
+                };
                 to_service_b.send(file_transfer_accept_payload).unwrap();
                 info!(target:"citadel", "Accepted File Transfer {cid_b}");
             } else {
@@ -1395,7 +1400,9 @@ mod tests {
         to_service_a.send(download_file_command).unwrap();
         let download_file_response = from_service_a.recv().await.unwrap();
         match download_file_response {
-            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess { cid: response_cid }) => {
+            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
+                cid: response_cid,
+            }) => {
                 assert_eq!(cid_a, response_cid);
             }
             _ => {
@@ -1416,7 +1423,9 @@ mod tests {
         to_service_a.send(delete_file_command).unwrap();
         let delete_file_response = from_service_a.recv().await.unwrap();
         match download_file_response {
-            InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess { cid: response_cid }) => {
+            InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess {
+                cid: response_cid,
+            }) => {
                 assert_eq!(cid_a, response_cid);
             }
             _ => {

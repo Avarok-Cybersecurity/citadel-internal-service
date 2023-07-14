@@ -15,7 +15,6 @@ use citadel_workspace_types::{
 };
 use futures::StreamExt;
 use std::collections::HashMap;
-use std::mem::replace;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
@@ -359,90 +358,90 @@ pub async fn payload_handler(
             download_location: _,
         } => {
             if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
-                if let Some(handler) = connection.get_file_transfer_handle(peer_cid, object_id) {
-                    // TODO: How should handler be taken from map? -> get handler (DO NOT HOLD LOCK)
-                    let mut owned_handler = replace(
-                        handler,
-                        ObjectTransferHandler::new(
-                            0,
-                            0,
-                            ObjectTransferOrientation::Receiver,
-                            None,
-                            false,
-                        )
-                        .0,
-                    );
-                    let result = if accept {
-                        // TODO: find a way to alert the user that the file transfer is complete
+                if let Some(mut handler) = connection.take_file_transfer_handle(peer_cid, object_id)
+                {
+                    if let Some(mut owned_handler) = handler.take() {
+                        let connection_map_clone = tcp_connection_map.clone();
+                        let result = if accept {
+                            let accept_result = owned_handler.accept();
+                            let tcp_client_metadata_updater = async move {
+                                let mut _path = None;
+                                while let Some(status) = owned_handler.next().await {
+                                    let status_string = match status {
+                                        ObjectTransferStatus::ReceptionBeginning(file_path, _) => {
+                                            _path = Some(file_path);
+                                            "ReceptionBeginning"
+                                        }
+                                        ObjectTransferStatus::ReceptionTick(_, _, _) => {
+                                            "ReceptionTick"
+                                        }
+                                        ObjectTransferStatus::ReceptionComplete => {
+                                            //TODO: Update to use metadata
+                                            "ReceptionComplete"
+                                        }
+                                        _ => "ReceptionEnded",
+                                    };
 
-                        //let accept_result = owned_handler.accept();
+                                    let message = InternalServiceResponse::FileTransferTick(
+                                        citadel_workspace_types::FileTransferTick {
+                                            uuid,
+                                            cid,
+                                            peer_cid,
+                                            status: String::from(status_string),
+                                        },
+                                    );
+                                    match connection_map_clone.lock().await.get(&uuid) {
+                                        Some(entry) => match entry.send(message) {
+                                            Ok(res) => res,
+                                            Err(_) => {
+                                                info!(target: "citadel", "File Transfer Status Tick Not Sent")
+                                            }
+                                        },
+                                        None => {
+                                            info!(target:"citadel","Connection not found during File Transfer Status Tick")
+                                        }
+                                    }
+                                }
+                            };
+                            tokio::task::spawn(tcp_client_metadata_updater);
+                            accept_result
+                        } else {
+                            owned_handler.decline()
+                        };
+                        match result {
+                            Ok(_) => {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::FileTransferStatus(
+                                        FileTransferStatus {
+                                            cid,
+                                            object_id,
+                                            success: true,
+                                            response: accept,
+                                            message: None,
+                                        },
+                                    ),
+                                    uuid,
+                                )
+                                .await;
+                            }
 
-                        // let tcp_client_metadata_updater = async move {
-                        //     let mut path = None;
-                        //     while let Some(status) = owned_handler.next().await {
-                        //         let status_string = match status {
-                        //             ObjectTransferStatus::ReceptionBeginning(file_path, _) => {
-                        //                 path = Some(file_path);
-                        //                 "ReceptionBeginning"
-                        //             }
-                        //             ObjectTransferStatus::ReceptionTick(_, _, _) => {
-                        //                 "ReceptionTick"
-                        //             }
-                        //             ObjectTransferStatus::ReceptionComplete => {
-                        //                 //TODO: For revfs, get virtual path from handler's metadata and write file there
-                        //                 // for standard, use given path?
-                        //                 "ReceptionComplete"
-                        //             }
-                        //             _ => {"ReceptionEnded"}
-                        //         };
-                        //         send_response_to_tcp_client(
-                        //             tcp_connection_map,
-                        //             InternalServiceResponse::FileTransferTick(citadel_workspace_types::FileTransferTick {
-                        //                 uuid,
-                        //                 cid,
-                        //                 peer_cid,
-                        //                 status: String::from(status_string),
-                        //             }),
-                        //             uuid,
-                        //         )
-                        //             .await;
-                        //     }
-                        // };
-                        // tokio::task::spawn(tcp_client_metadata_updater);
-
-                        owned_handler.accept()
-                    } else {
-                        owned_handler.decline()
-                    };
-                    match result {
-                        Ok(_) => {
-                            send_response_to_tcp_client(
-                                tcp_connection_map,
-                                InternalServiceResponse::FileTransferStatus(FileTransferStatus {
-                                    cid,
-                                    object_id,
-                                    success: true,
-                                    response: accept,
-                                    message: None,
-                                }),
-                                uuid,
-                            )
-                            .await;
-                        }
-
-                        Err(err) => {
-                            send_response_to_tcp_client(
-                                tcp_connection_map,
-                                InternalServiceResponse::FileTransferStatus(FileTransferStatus {
-                                    cid,
-                                    object_id,
-                                    success: false,
-                                    response: accept,
-                                    message: Option::from(err.into_string()),
-                                }),
-                                uuid,
-                            )
-                            .await;
+                            Err(err) => {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::FileTransferStatus(
+                                        FileTransferStatus {
+                                            cid,
+                                            object_id,
+                                            success: false,
+                                            response: accept,
+                                            message: Option::from(err.into_string()),
+                                        },
+                                    ),
+                                    uuid,
+                                )
+                                .await;
+                            }
                         }
                     }
                 }
