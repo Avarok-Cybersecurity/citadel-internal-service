@@ -599,7 +599,7 @@ mod tests {
         info!(target: "citadel","{file_transfer_response:?}");
 
         // Download/Pull file from REVFS - Don't delete on pull
-        let virtual_path = virtual_path.clone();
+        let virtual_path = PathBuf::from("/test.txt");
         let file_download_command = InternalServicePayload::DownloadFile {
             virtual_directory: virtual_path,
             security_level: None,
@@ -624,7 +624,7 @@ mod tests {
         info!(target: "citadel","{file_download_response:?}");
 
         // Delete file from REVFS
-        let virtual_path = virtual_path.clone();
+        let virtual_path = PathBuf::from("/test.txt");
         let file_delete_command = InternalServicePayload::DeleteVirtualFile {
             virtual_directory: virtual_path,
             cid,
