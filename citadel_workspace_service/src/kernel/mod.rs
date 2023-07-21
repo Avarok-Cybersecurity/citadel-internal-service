@@ -10,6 +10,7 @@ use futures::SinkExt;
 use payload_handler::payload_handler;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
@@ -234,8 +235,19 @@ impl NetKernel for CitadelWorkspaceService {
                 let object_transfer_handler = object_transfer_handle.handle;
                 let implicated_cid = object_transfer_handler.receiver;
                 let peer_cid = object_transfer_handler.source;
+
                 // TODO: Utilize metadata to store handler by object id
                 let object_id: u32 = object_transfer_handler.source as u32;
+
+                //TODO: Replace temporary metadata portions with actual metadata from handler
+                let mapped_transfer_type = if object_transfer_handler.is_revfs_pull {
+                    TransferType::RemoteEncryptedVirtualFilesystem {
+                        virtual_path: PathBuf::from("/test.txt"),
+                        security_level: Default::default(),
+                    }
+                } else {
+                    TransferType::FileTransfer
+                };
 
                 let mut server_connection_map = self.server_connection_map.lock().await;
                 if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
@@ -258,7 +270,7 @@ impl NetKernel for CitadelWorkspaceService {
                                 group_count: 0,
                                 object_id,
                                 cid: 0,
-                                transfer_type: TransferType::FileTransfer,
+                                transfer_type: mapped_transfer_type,
                             },
                         });
                     send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;

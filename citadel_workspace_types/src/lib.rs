@@ -228,9 +228,7 @@ pub struct FileTransferTick {
     pub uuid: Uuid,
     pub cid: u64,
     pub peer_cid: u64,
-    pub status: String,
-    //TODO: make status ObjectTransferStatus -- Needs to serialize and deserialize
-    // or could keep as a string and modify temporary handling of status?
+    pub status: ObjectTransferStatus,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

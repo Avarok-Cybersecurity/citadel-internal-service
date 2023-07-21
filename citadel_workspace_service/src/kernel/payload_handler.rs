@@ -365,29 +365,13 @@ pub async fn payload_handler(
                         let result = if accept {
                             let accept_result = owned_handler.accept();
                             let tcp_client_metadata_updater = async move {
-                                let mut _path = None;
                                 while let Some(status) = owned_handler.next().await {
-                                    let status_string = match status {
-                                        ObjectTransferStatus::ReceptionBeginning(file_path, _) => {
-                                            _path = Some(file_path);
-                                            "ReceptionBeginning"
-                                        }
-                                        ObjectTransferStatus::ReceptionTick(_, _, _) => {
-                                            "ReceptionTick"
-                                        }
-                                        ObjectTransferStatus::ReceptionComplete => {
-                                            //TODO: Update to use metadata
-                                            "ReceptionComplete"
-                                        }
-                                        _ => "ReceptionEnded",
-                                    };
-
                                     let message = InternalServiceResponse::FileTransferTick(
                                         citadel_workspace_types::FileTransferTick {
                                             uuid,
                                             cid,
                                             peer_cid,
-                                            status: String::from(status_string),
+                                            status,
                                         },
                                     );
                                     match connection_map_clone.lock().await.get(&uuid) {

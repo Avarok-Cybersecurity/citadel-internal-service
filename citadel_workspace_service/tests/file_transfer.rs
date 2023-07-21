@@ -1,10 +1,17 @@
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
+    use citadel_workspace_lib::wrap_tcp_conn;
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
-    use citadel_workspace_types::{DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequest, FileTransferStatus, InternalServicePayload, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess, SendFileSuccess, ServiceConnectionAccepted};
+    use citadel_workspace_types::{
+        DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequest, FileTransferStatus,
+        InternalServicePayload, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess,
+        SendFileSuccess, ServiceConnectionAccepted,
+    };
     use core::panic;
+    use futures::stream::SplitSink;
     use futures::{SinkExt, StreamExt};
     use std::error::Error;
     use std::future::Future;
@@ -14,20 +21,17 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::time::Duration;
-    use bytes::Bytes;
-    use futures::stream::SplitSink;
     use tokio::net::TcpStream;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use uuid::Uuid;
-    use citadel_workspace_lib::wrap_tcp_conn;
 
     fn spawn_services<F1, F2>(internal_service_a: F1, internal_service_b: F2)
-        where
-            F1: Future + Send + 'static,
-            F2: Future + Send + 'static,
-            F1::Output: Send + 'static,
-            F2::Output: Send + 'static,
+    where
+        F1: Future + Send + 'static,
+        F2: Future + Send + 'static,
+        F1::Output: Send + 'static,
+        F2::Output: Send + 'static,
     {
         let internal_services = async move {
             tokio::select! {
@@ -88,8 +92,8 @@ mod tests {
         let password = password.into();
 
         if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
-                                                                      id,
-                                                                  }) = greeter_packet
+            id,
+        }) = greeter_packet
         {
             let register_command = InternalServicePayload::Register {
                 uuid: id,
@@ -570,7 +574,7 @@ mod tests {
 
         // Push file to REVFS
         let file_to_send = PathBuf::from("../../resources/test.txt");
-        let virtual_path = PathBuf::from("vfs/");
+        let virtual_path = PathBuf::from("/test.txt");
         let file_transfer_command = InternalServicePayload::SendFile {
             uuid,
             source: file_to_send,
@@ -595,7 +599,7 @@ mod tests {
         info!(target: "citadel","{file_transfer_response:?}");
 
         // Download/Pull file from REVFS - Don't delete on pull
-        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let virtual_path = virtual_path.clone();
         let file_download_command = InternalServicePayload::DownloadFile {
             virtual_directory: virtual_path,
             security_level: None,
@@ -620,7 +624,7 @@ mod tests {
         info!(target: "citadel","{file_download_response:?}");
 
         // Delete file from REVFS
-        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let virtual_path = virtual_path.clone();
         let file_delete_command = InternalServicePayload::DeleteVirtualFile {
             virtual_directory: virtual_path,
             cid,
@@ -805,7 +809,7 @@ mod tests {
 
         // Push file to REVFS on peer
         let file_to_send = PathBuf::from("../../resources/test.txt");
-        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
         let send_file_to_service_b_payload = InternalServicePayload::SendFile {
             uuid: uuid_a,
             source: file_to_send,
@@ -846,7 +850,7 @@ mod tests {
         }
 
         // Download P2P REVFS file - without delete on pull
-        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
         let download_file_command = InternalServicePayload::DownloadFile {
             virtual_directory: virtual_path,
             security_level: None,
@@ -871,7 +875,7 @@ mod tests {
         info!(target: "citadel","{download_file_response:?}");
 
         // Delete file on Peer REVFS
-        let virtual_path = PathBuf::from("vfs/virtual_test.txt");
+        let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
         let delete_file_command = InternalServicePayload::DeleteVirtualFile {
             virtual_directory: virtual_path,
             cid: cid_a,
