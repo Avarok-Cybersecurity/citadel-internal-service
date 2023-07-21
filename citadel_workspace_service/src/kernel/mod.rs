@@ -263,13 +263,13 @@ impl NetKernel for CitadelWorkspaceService {
                             cid: implicated_cid,
                             peer_cid,
                             metadata: VirtualObjectMetadata {
-                                name: "".to_string(),
+                                name: "test.txt".to_string(),
                                 date_created: "".to_string(),
                                 author: "".to_string(),
                                 plaintext_length: 0,
                                 group_count: 0,
                                 object_id,
-                                cid: 0,
+                                cid: implicated_cid,
                                 transfer_type: mapped_transfer_type,
                             },
                         });

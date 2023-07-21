@@ -7,8 +7,8 @@ mod tests {
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
     use citadel_workspace_types::{
         DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequest, FileTransferStatus,
-        InternalServicePayload, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess,
-        SendFileSuccess, ServiceConnectionAccepted,
+        FileTransferTick, InternalServicePayload, InternalServiceResponse, PeerConnectSuccess,
+        PeerRegisterSuccess, SendFileSuccess, ServiceConnectionAccepted,
     };
     use core::panic;
     use futures::stream::SplitSink;
@@ -494,17 +494,29 @@ mod tests {
                 to_service_b.send(file_transfer_accept_payload).unwrap();
                 info!(target:"citadel", "Accepted File Transfer {cid_b}");
 
-                /*let mut service_b_lock = internal_service_kernel_b.server_connection_map.lock().await;
-                let service_b_connection = service_b_lock.get_mut(&cid_b).unwrap();
-                if let Some(service_b_handle) =
-                    service_b_connection.get_file_transfer_handle(cid_a, cid_a as u32)
+                let mut path = None;
+                while let Some(deserialized_service_a_payload_response) =
+                    from_service_a.recv().await.unwrap()
                 {
-                    let mut path = None;
-                    while let Some(status) = service_b_handle.next().await {
+                    if let InternalServiceResponse::FileTransferTick(FileTransferTick {
+                        uuid,
+                        cid,
+                        peer_cid,
+                        status,
+                    }) = deserialized_service_a_payload_response
+                    {
                         match status {
+                            ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                                path = Some(file_path);
+                                info!(target: "citadel","File Transfer Beginning");
+                                assert_eq!(vfm.name, "test.txt")
+                            }
+                            ObjectTransferStatus::ReceptionTick(_, _, _) => {
+                                info!(target: "citadel","File Transfer Tick");
+                            }
                             ObjectTransferStatus::ReceptionComplete => {
-                                citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
-                                let cmp = include_bytes!("../../../resources/test.txt");
+                                info!(target: "citadel","File Transfer Complete");
+                                let cmp = include_bytes!("../../resources/test.txt");
                                 let streamed_data =
                                     tokio::fs::read(path.clone().unwrap()).await.unwrap();
                                 assert_eq!(
@@ -513,18 +525,17 @@ mod tests {
                                     "Original data and streamed data does not match"
                                 );
                             }
-
-                            ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
-                                path = Some(file_path);
-                                assert_eq!(vfm.get_target_name(), "test.txt")
-                            }
-
                             _ => {}
                         }
                     }
-                } else {
-                    panic!("File Transfer Failed on data stream");
-                }*/
+                }
+                let cmp = include_bytes!("../../resources/test.txt");
+                let streamed_data = tokio::fs::read(path.clone().unwrap()).await.unwrap();
+                assert_eq!(
+                    cmp,
+                    streamed_data.as_slice(),
+                    "Original data and streamed data does not match"
+                );
             } else {
                 panic!("File Transfer P2P Failure");
             }
