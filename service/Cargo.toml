@@ -13,6 +13,10 @@ vendored = ["citadel_workspace_service/vendored"]
 name = "citadel_service_bin"
 path = "src/main.rs"
 
+[[bin]]
+name = "citadel_server"
+path = "src/empty_server.rs"
+
 [dependencies]
 structopt = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
