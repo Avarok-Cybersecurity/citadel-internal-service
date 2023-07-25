@@ -4,13 +4,13 @@ use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
 use citadel_workspace_types::{
-    ConnectionFailure, DisconnectFailure, Disconnected, InternalServicePayload,
+    ConnectionFailure, DisconnectFailure, Disconnected, GetSessions, InternalServiceRequest,
     InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
     LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
     LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
     MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
     PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
-    SendFileFailure, SendFileSuccess,
+    PeerSessionInformation, SendFileFailure, SendFileSuccess, SessionInformation,
 };
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -20,16 +20,48 @@ use tokio::sync::Mutex;
 
 use uuid::Uuid;
 #[async_recursion]
-pub async fn payload_handler(
-    command: InternalServicePayload,
+pub async fn handle_request(
+    command: InternalServiceRequest,
     server_connection_map: &Arc<Mutex<HashMap<u64, Connection>>>,
     remote: &mut NodeRemote,
-    tcp_connection_map: &Arc<
-        tokio::sync::Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>,
-    >,
+    tcp_connection_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
     match command {
-        InternalServicePayload::Connect {
+        // Return all the sessions for the given TCP connection
+        InternalServiceRequest::GetSessions { uuid, request_id } => {
+            let lock = server_connection_map.lock().await;
+            let mut sessions = Vec::new();
+            for (cid, connection) in lock.iter() {
+                if connection.associated_tcp_connection == uuid {
+                    let mut session = SessionInformation {
+                        cid: *cid,
+                        peer_connections: HashMap::new(),
+                    };
+                    for (peer_cid, conn) in connection.peers.iter() {
+                        session.peer_connections.insert(
+                            *peer_cid,
+                            PeerSessionInformation {
+                                cid: *cid,
+                                peer_cid: *peer_cid,
+                                peer_username: conn
+                                    .remote
+                                    .target_username()
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            },
+                        );
+                    }
+                    sessions.push(session);
+                }
+            }
+
+            let response = InternalServiceResponse::GetSessions(GetSessions {
+                sessions,
+                request_id: Some(request_id),
+            });
+            send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
+        }
+        InternalServiceRequest::Connect {
             uuid,
             username,
             password,
@@ -37,6 +69,7 @@ pub async fn payload_handler(
             udp_mode,
             keep_alive_timeout,
             session_security_settings,
+            request_id,
         } => {
             match remote
                 .connect(
@@ -63,7 +96,10 @@ pub async fn payload_handler(
                     let hm_for_conn = tcp_connection_map.clone();
 
                     let response = InternalServiceResponse::ConnectSuccess(
-                        citadel_workspace_types::ConnectSuccess { cid },
+                        citadel_workspace_types::ConnectSuccess {
+                            cid,
+                            request_id: Some(request_id),
+                        },
                     );
 
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
@@ -75,6 +111,7 @@ pub async fn payload_handler(
                                     message: message.into_buffer(),
                                     cid,
                                     peer_cid: 0,
+                                    request_id: Some(request_id),
                                 });
                             match hm_for_conn.lock().await.get(&uuid) {
                                 Some(entry) => match entry.send(message) {
@@ -93,12 +130,13 @@ pub async fn payload_handler(
                 Err(err) => {
                     let response = InternalServiceResponse::ConnectionFailure(ConnectionFailure {
                         message: err.into_string(),
+                        request_id: Some(request_id),
                     });
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                 }
             };
         }
-        InternalServicePayload::Register {
+        InternalServiceRequest::Register {
             uuid,
             server_addr,
             full_name,
@@ -106,6 +144,7 @@ pub async fn payload_handler(
             proposed_password,
             connect_after_register,
             default_security_settings,
+            request_id,
         } => {
             info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
             match remote
@@ -118,52 +157,55 @@ pub async fn payload_handler(
                 )
                 .await
             {
-                Ok(_res) => {
-                    match connect_after_register {
-                        false => {
-                            // TODO: add trace ID to ensure uniqueness of request
-                            let response = InternalServiceResponse::RegisterSuccess(
-                                citadel_workspace_types::RegisterSuccess { id: uuid },
-                            );
-                            send_response_to_tcp_client(tcp_connection_map, response, uuid).await
-                        }
-                        true => {
-                            let connect_command = InternalServicePayload::Connect {
-                                uuid,
-                                username,
-                                password: proposed_password,
-                                keep_alive_timeout: None,
-                                udp_mode: Default::default(),
-                                connect_mode: Default::default(),
-                                session_security_settings: default_security_settings,
-                            };
-
-                            payload_handler(
-                                connect_command,
-                                server_connection_map,
-                                remote,
-                                tcp_connection_map,
-                            )
-                            .await
-                        }
+                Ok(_res) => match connect_after_register {
+                    false => {
+                        let response = InternalServiceResponse::RegisterSuccess(
+                            citadel_workspace_types::RegisterSuccess {
+                                id: uuid,
+                                request_id: Some(request_id),
+                            },
+                        );
+                        send_response_to_tcp_client(tcp_connection_map, response, uuid).await
                     }
-                }
+                    true => {
+                        let connect_command = InternalServiceRequest::Connect {
+                            uuid,
+                            username,
+                            password: proposed_password,
+                            keep_alive_timeout: None,
+                            udp_mode: Default::default(),
+                            connect_mode: Default::default(),
+                            session_security_settings: default_security_settings,
+                            request_id,
+                        };
+
+                        handle_request(
+                            connect_command,
+                            server_connection_map,
+                            remote,
+                            tcp_connection_map,
+                        )
+                        .await
+                    }
+                },
                 Err(err) => {
                     let response = InternalServiceResponse::RegisterFailure(
                         citadel_workspace_types::RegisterFailure {
                             message: err.into_string(),
+                            request_id: Some(request_id),
                         },
                     );
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await
                 }
             };
         }
-        InternalServicePayload::Message {
+        InternalServiceRequest::Message {
             uuid,
             message,
             cid,
             peer_cid,
             security_level,
+            request_id,
         } => {
             match server_connection_map.lock().await.get_mut(&cid) {
                 Some(conn) => {
@@ -181,6 +223,7 @@ pub async fn payload_handler(
                                 InternalServiceResponse::MessageSendError(MessageSendError {
                                     cid,
                                     message: format!("Connection for {cid} not found"),
+                                    request_id: Some(request_id),
                                 }),
                                 uuid,
                             )
@@ -195,8 +238,11 @@ pub async fn payload_handler(
                             .unwrap();
                     }
 
-                    let response =
-                        InternalServiceResponse::MessageSent(MessageSent { cid, peer_cid });
+                    let response = InternalServiceResponse::MessageSent(MessageSent {
+                        cid,
+                        peer_cid,
+                        request_id: Some(request_id),
+                    });
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                     info!(target: "citadel", "Into the message handler command send")
                 }
@@ -207,6 +253,7 @@ pub async fn payload_handler(
                         InternalServiceResponse::MessageSendError(MessageSendError {
                             cid,
                             message: format!("Connection for {cid} not found"),
+                            request_id: Some(request_id),
                         }),
                         uuid,
                     )
@@ -215,7 +262,11 @@ pub async fn payload_handler(
             };
         }
 
-        InternalServicePayload::Disconnect { cid, uuid } => {
+        InternalServiceRequest::Disconnect {
+            cid,
+            uuid,
+            request_id,
+        } => {
             let request = NodeRequest::DisconnectFromHypernode(DisconnectFromHypernode {
                 implicated_cid: cid,
                 v_conn_type: VirtualTargetType::LocalGroupServer {
@@ -228,6 +279,7 @@ pub async fn payload_handler(
                     let disconnect_success = InternalServiceResponse::Disconnected(Disconnected {
                         cid,
                         peer_cid: None,
+                        request_id: Some(request_id),
                     });
                     send_response_to_tcp_client(tcp_connection_map, disconnect_success, uuid).await;
                     info!(target: "citadel", "Disconnected {res:?}")
@@ -239,18 +291,20 @@ pub async fn payload_handler(
                         InternalServiceResponse::DisconnectFailure(DisconnectFailure {
                             cid,
                             message: error_message,
+                            request_id: Some(request_id),
                         });
                     send_response_to_tcp_client(tcp_connection_map, disconnect_failure, uuid).await;
                 }
             };
         }
 
-        InternalServicePayload::SendFile {
+        InternalServiceRequest::SendFile {
             uuid,
             source,
             cid,
             chunk_size,
             transfer_type,
+            request_id,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
@@ -265,7 +319,10 @@ pub async fn payload_handler(
                 Ok(_) => {
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::SendFileSuccess(SendFileSuccess { cid }),
+                        InternalServiceResponse::SendFileSuccess(SendFileSuccess {
+                            cid,
+                            request_id: Some(request_id),
+                        }),
                         uuid,
                     )
                     .await;
@@ -277,6 +334,7 @@ pub async fn payload_handler(
                         InternalServiceResponse::SendFileFailure(SendFileFailure {
                             cid,
                             message: err.into_string(),
+                            request_id: Some(request_id),
                         }),
                         uuid,
                     )
@@ -285,12 +343,13 @@ pub async fn payload_handler(
             }
         }
 
-        InternalServicePayload::DownloadFile {
+        InternalServiceRequest::DownloadFile {
             virtual_path: _,
             transfer_security_level: _,
             delete_on_pull: _,
             cid: _,
             uuid: _,
+            request_id: _,
         } => {
             // let mut client_to_server_remote = ClientServerRemote::new(VirtualTargetType::LocalGroupServer { implicated_cid: cid }, remote.clone());
             // match client_to_server_remote.(virtual_path, transfer_security_level, delete_on_pull).await {
@@ -303,10 +362,11 @@ pub async fn payload_handler(
             // }
         }
 
-        InternalServicePayload::StartGroup {
+        InternalServiceRequest::StartGroup {
             initial_users_to_invite,
             cid,
             uuid: _uuid,
+            request_id: _,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
@@ -324,11 +384,12 @@ pub async fn payload_handler(
             }
         }
 
-        InternalServicePayload::PeerRegister {
+        InternalServiceRequest::PeerRegister {
             uuid,
             cid,
             peer_id: peer_username,
             connect_after_register,
+            request_id,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupServer {
@@ -345,6 +406,12 @@ pub async fn payload_handler(
                     match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(_peer_register_success) => {
                             let account_manager = symmetric_identifier_handle_ref.account_manager();
+                            let this_username = account_manager
+                                .get_username_by_cid(cid)
+                                .await
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default();
                             if let Ok(target_information) = account_manager
                                 .find_target_information(cid, peer_username.clone())
                                 .await
@@ -352,17 +419,21 @@ pub async fn payload_handler(
                                 let (peer_cid, mutual_peer) = target_information.unwrap();
                                 match connect_after_register {
                                     true => {
-                                        let connect_command = InternalServicePayload::PeerConnect {
+                                        let connect_command = InternalServiceRequest::PeerConnect {
                                             uuid,
                                             cid,
-                                            username: mutual_peer.username.unwrap(),
+                                            username: this_username.clone(),
                                             peer_cid,
-                                            peer_username: String::from("peer.a"),
+                                            peer_username: mutual_peer
+                                                .username
+                                                .clone()
+                                                .unwrap_or_default(),
                                             udp_mode: Default::default(),
                                             session_security_settings: Default::default(),
+                                            request_id,
                                         };
 
-                                        payload_handler(
+                                        handle_request(
                                             connect_command,
                                             server_connection_map,
                                             remote,
@@ -378,7 +449,11 @@ pub async fn payload_handler(
                                                 PeerRegisterSuccess {
                                                     cid,
                                                     peer_cid,
-                                                    username: mutual_peer.username.unwrap(),
+                                                    peer_username: mutual_peer
+                                                        .username
+                                                        .clone()
+                                                        .unwrap_or_default(),
+                                                    request_id: Some(request_id),
                                                 },
                                             ),
                                             uuid,
@@ -395,6 +470,7 @@ pub async fn payload_handler(
                                 InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
                                     cid,
                                     message: err.into_string(),
+                                    request_id: Some(request_id),
                                 }),
                                 uuid,
                             )
@@ -409,6 +485,7 @@ pub async fn payload_handler(
                         InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
                             cid,
                             message: err.into_string(),
+                            request_id: Some(request_id),
                         }),
                         uuid,
                     )
@@ -417,7 +494,7 @@ pub async fn payload_handler(
             }
         }
 
-        InternalServicePayload::PeerConnect {
+        InternalServiceRequest::PeerConnect {
             uuid,
             cid,
             username,
@@ -425,6 +502,7 @@ pub async fn payload_handler(
             peer_username,
             udp_mode,
             session_security_settings,
+            request_id,
         } => {
             // TODO: check to see if peer is already in the hashmap
             let client_to_server_remote = ClientServerRemote::new(
@@ -464,6 +542,7 @@ pub async fn payload_handler(
                                 tcp_connection_map,
                                 InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
                                     cid,
+                                    request_id: Some(request_id),
                                 }),
                                 uuid,
                             )
@@ -475,6 +554,7 @@ pub async fn payload_handler(
                                             message: message.into_buffer(),
                                             cid: connection_cid,
                                             peer_cid,
+                                            request_id: Some(request_id),
                                         });
                                     match hm_for_conn.lock().await.get(&uuid) {
                                         Some(entry) => match entry.send(message) {
@@ -500,6 +580,7 @@ pub async fn payload_handler(
                                 InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                                     cid,
                                     message: err.into_string(),
+                                    request_id: Some(request_id),
                                 }),
                                 uuid,
                             )
@@ -514,6 +595,7 @@ pub async fn payload_handler(
                         InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
                             cid,
                             message: err.into_string(),
+                            request_id: Some(request_id),
                         }),
                         uuid,
                     )
@@ -521,10 +603,11 @@ pub async fn payload_handler(
                 }
             }
         }
-        InternalServicePayload::PeerDisconnect {
+        InternalServiceRequest::PeerDisconnect {
             uuid,
             cid,
             peer_cid,
+            request_id,
         } => {
             let request = NodeRequest::PeerCommand(PeerCommand {
                 implicated_cid: cid,
@@ -544,6 +627,7 @@ pub async fn payload_handler(
                         InternalServiceResponse::PeerDisconnectFailure(PeerDisconnectFailure {
                             cid,
                             message: "Server connection not found".to_string(),
+                            request_id: Some(request_id),
                         }),
                         uuid,
                     )
@@ -558,7 +642,10 @@ pub async fn payload_handler(
                             conn.clear_peer_connection(peer_cid);
                             let peer_disconnect_success =
                                 InternalServiceResponse::PeerDisconnectSuccess(
-                                    PeerDisconnectSuccess { cid, ticket: 0 },
+                                    PeerDisconnectSuccess {
+                                        cid,
+                                        request_id: Some(request_id),
+                                    },
                                 );
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -576,6 +663,7 @@ pub async fn payload_handler(
                                     PeerDisconnectFailure {
                                         cid,
                                         message: error_message,
+                                        request_id: Some(request_id),
                                     },
                                 );
                             send_response_to_tcp_client(
@@ -589,11 +677,12 @@ pub async fn payload_handler(
                 },
             }
         }
-        InternalServicePayload::LocalDBGetKV {
+        InternalServiceRequest::LocalDBGetKV {
             uuid,
             cid,
             peer_cid,
             key,
+            request_id,
         } => match server_connection_map.lock().await.get_mut(&cid) {
             None => {
                 send_response_to_tcp_client(
@@ -602,6 +691,7 @@ pub async fn payload_handler(
                         cid,
                         peer_cid,
                         message: "Server connection not found".to_string(),
+                        request_id: Some(request_id),
                     }),
                     uuid,
                 )
@@ -617,6 +707,7 @@ pub async fn payload_handler(
                             cid,
                             Some(peer_cid),
                             key,
+                            Some(request_id),
                         )
                         .await;
                     } else {
@@ -626,6 +717,7 @@ pub async fn payload_handler(
                                 cid,
                                 peer_cid: Some(peer_cid),
                                 message: "Peer connection not found".to_string(),
+                                request_id: Some(request_id),
                             }),
                             uuid,
                         )
@@ -639,17 +731,19 @@ pub async fn payload_handler(
                         cid,
                         peer_cid,
                         key,
+                        Some(request_id),
                     )
                     .await;
                 }
             }
         },
-        InternalServicePayload::LocalDBSetKV {
+        InternalServiceRequest::LocalDBSetKV {
             uuid,
             cid,
             peer_cid,
             key,
             value,
+            request_id,
         } => match server_connection_map.lock().await.get_mut(&cid) {
             None => {
                 send_response_to_tcp_client(
@@ -658,6 +752,7 @@ pub async fn payload_handler(
                         cid,
                         peer_cid,
                         message: "Server connection not found".to_string(),
+                        request_id: Some(request_id),
                     }),
                     uuid,
                 )
@@ -674,6 +769,7 @@ pub async fn payload_handler(
                             Some(peer_cid),
                             key,
                             value,
+                            Some(request_id),
                         )
                         .await;
                     } else {
@@ -683,6 +779,7 @@ pub async fn payload_handler(
                                 cid,
                                 peer_cid: Some(peer_cid),
                                 message: "Peer connection not found".to_string(),
+                                request_id: Some(request_id),
                             }),
                             uuid,
                         )
@@ -697,16 +794,18 @@ pub async fn payload_handler(
                         peer_cid,
                         key,
                         value,
+                        Some(request_id),
                     )
                     .await;
                 }
             }
         },
-        InternalServicePayload::LocalDBDeleteKV {
+        InternalServiceRequest::LocalDBDeleteKV {
             uuid,
             cid,
             peer_cid,
             key,
+            request_id,
         } => match server_connection_map.lock().await.get_mut(&cid) {
             None => {
                 send_response_to_tcp_client(
@@ -715,6 +814,7 @@ pub async fn payload_handler(
                         cid,
                         peer_cid,
                         message: "Server connection not found".to_string(),
+                        request_id: Some(request_id),
                     }),
                     uuid,
                 )
@@ -730,6 +830,7 @@ pub async fn payload_handler(
                             cid,
                             Some(peer_cid),
                             key,
+                            Some(request_id),
                         )
                         .await;
                     } else {
@@ -740,6 +841,7 @@ pub async fn payload_handler(
                                     cid,
                                     peer_cid: Some(peer_cid),
                                     message: "Peer connection not found".to_string(),
+                                    request_id: Some(request_id),
                                 },
                             ),
                             uuid,
@@ -754,15 +856,17 @@ pub async fn payload_handler(
                         cid,
                         peer_cid,
                         key,
+                        Some(request_id),
                     )
                     .await;
                 }
             }
         },
-        InternalServicePayload::LocalDBGetAllKV {
+        InternalServiceRequest::LocalDBGetAllKV {
             uuid,
             cid,
             peer_cid,
+            request_id,
         } => match server_connection_map.lock().await.get_mut(&cid) {
             None => {
                 send_response_to_tcp_client(
@@ -771,6 +875,7 @@ pub async fn payload_handler(
                         cid,
                         peer_cid,
                         message: "Server connection not found".to_string(),
+                        request_id: Some(request_id),
                     }),
                     uuid,
                 )
@@ -785,6 +890,7 @@ pub async fn payload_handler(
                             uuid,
                             cid,
                             Some(peer_cid),
+                            Some(request_id),
                         )
                         .await;
                     } else {
@@ -795,6 +901,7 @@ pub async fn payload_handler(
                                     cid,
                                     peer_cid: Some(peer_cid),
                                     message: "Peer connection not found".to_string(),
+                                    request_id: Some(request_id),
                                 },
                             ),
                             uuid,
@@ -808,15 +915,17 @@ pub async fn payload_handler(
                         uuid,
                         cid,
                         peer_cid,
+                        Some(request_id),
                     )
                     .await;
                 }
             }
         },
-        InternalServicePayload::LocalDBClearAllKV {
+        InternalServiceRequest::LocalDBClearAllKV {
             uuid,
             cid,
             peer_cid,
+            request_id,
         } => match server_connection_map.lock().await.get_mut(&cid) {
             None => {
                 send_response_to_tcp_client(
@@ -825,6 +934,7 @@ pub async fn payload_handler(
                         cid,
                         peer_cid,
                         message: "Server connection not found".to_string(),
+                        request_id: Some(request_id),
                     }),
                     uuid,
                 )
@@ -839,6 +949,7 @@ pub async fn payload_handler(
                             uuid,
                             cid,
                             Some(peer_cid),
+                            Some(request_id),
                         )
                         .await;
                     } else {
@@ -849,6 +960,7 @@ pub async fn payload_handler(
                                     cid,
                                     peer_cid: Some(peer_cid),
                                     message: "Peer connection not found".to_string(),
+                                    request_id: Some(request_id),
                                 },
                             ),
                             uuid,
@@ -862,6 +974,7 @@ pub async fn payload_handler(
                         uuid,
                         cid,
                         peer_cid,
+                        Some(request_id),
                     )
                     .await;
                 }
@@ -877,6 +990,7 @@ async fn backend_handler_get(
     cid: u64,
     peer_cid: Option<u64>,
     key: String,
+    request_id: Option<Uuid>,
 ) {
     match remote.get(&key).await {
         Ok(value) => {
@@ -888,6 +1002,7 @@ async fn backend_handler_get(
                         peer_cid,
                         key,
                         value,
+                        request_id,
                     }),
                     uuid,
                 )
@@ -899,6 +1014,7 @@ async fn backend_handler_get(
                         cid,
                         peer_cid,
                         message: "Key not found".to_string(),
+                        request_id,
                     }),
                     uuid,
                 )
@@ -912,6 +1028,7 @@ async fn backend_handler_get(
                     cid,
                     peer_cid,
                     message: err.into_string(),
+                    request_id,
                 }),
                 uuid,
             )
@@ -921,6 +1038,7 @@ async fn backend_handler_get(
 }
 
 // backend_handler_set
+#[allow(clippy::too_many_arguments)]
 async fn backend_handler_set(
     remote: &impl BackendHandler,
     tcp_connection_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
@@ -929,6 +1047,7 @@ async fn backend_handler_set(
     peer_cid: Option<u64>,
     key: String,
     value: Vec<u8>,
+    request_id: Option<Uuid>,
 ) {
     match remote.set(&key, value).await {
         Ok(_) => {
@@ -938,6 +1057,7 @@ async fn backend_handler_set(
                     cid,
                     peer_cid,
                     key,
+                    request_id,
                 }),
                 uuid,
             )
@@ -950,6 +1070,7 @@ async fn backend_handler_set(
                     cid,
                     peer_cid,
                     message: err.into_string(),
+                    request_id,
                 }),
                 uuid,
             )
@@ -966,6 +1087,7 @@ async fn backend_handler_delete(
     cid: u64,
     peer_cid: Option<u64>,
     key: String,
+    request_id: Option<Uuid>,
 ) {
     match remote.remove(&key).await {
         Ok(_) => {
@@ -975,6 +1097,7 @@ async fn backend_handler_delete(
                     cid,
                     peer_cid,
                     key,
+                    request_id,
                 }),
                 uuid,
             )
@@ -987,6 +1110,7 @@ async fn backend_handler_delete(
                     cid,
                     peer_cid,
                     message: err.into_string(),
+                    request_id,
                 }),
                 uuid,
             )
@@ -1002,6 +1126,7 @@ async fn backend_handler_get_all(
     uuid: Uuid,
     cid: u64,
     peer_cid: Option<u64>,
+    request_id: Option<Uuid>,
 ) {
     match remote.get_all().await {
         Ok(map) => {
@@ -1011,6 +1136,7 @@ async fn backend_handler_get_all(
                     cid,
                     peer_cid,
                     map,
+                    request_id,
                 }),
                 uuid,
             )
@@ -1023,6 +1149,7 @@ async fn backend_handler_get_all(
                     cid,
                     peer_cid,
                     message: err.into_string(),
+                    request_id,
                 }),
                 uuid,
             )
@@ -1038,6 +1165,7 @@ async fn backend_handler_clear_all(
     uuid: Uuid,
     cid: u64,
     peer_cid: Option<u64>,
+    request_id: Option<Uuid>,
 ) {
     match remote.remove_all().await {
         Ok(_) => {
@@ -1046,6 +1174,7 @@ async fn backend_handler_clear_all(
                 InternalServiceResponse::LocalDBClearAllKVSuccess(LocalDBClearAllKVSuccess {
                     cid,
                     peer_cid,
+                    request_id,
                 }),
                 uuid,
             )
@@ -1058,6 +1187,7 @@ async fn backend_handler_clear_all(
                     cid,
                     peer_cid,
                     message: err.into_string(),
+                    request_id,
                 }),
                 uuid,
             )

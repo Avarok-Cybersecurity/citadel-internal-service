@@ -1,8 +1,8 @@
-use citadel_workspace_types::{InternalServicePayload, InternalServiceResponse};
+use citadel_workspace_types::{InternalServiceRequest, InternalServiceResponse};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-pub fn deserialize(message: &[u8]) -> Option<InternalServicePayload> {
+pub fn deserialize(message: &[u8]) -> Option<InternalServiceRequest> {
     bincode2::deserialize(message).ok()
 }
 
