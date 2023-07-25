@@ -9,7 +9,7 @@ use citadel_workspace_types::{
 };
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
-use payload_handler::payload_handler;
+use request_handler::handle_request;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use uuid::Uuid;
 
-pub(crate) mod payload_handler;
+pub(crate) mod request_handler;
 
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
@@ -124,7 +124,7 @@ impl NetKernel for CitadelWorkspaceService {
 
         let inbound_command_task = async move {
             while let Some(command) = rx.recv().await {
-                payload_handler(
+                handle_request(
                     command,
                     &server_connection_map,
                     &mut remote,

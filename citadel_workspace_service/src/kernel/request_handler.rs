@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 
 use uuid::Uuid;
 #[async_recursion]
-pub async fn payload_handler(
+pub async fn handle_request(
     command: InternalServiceRequest,
     server_connection_map: &Arc<Mutex<HashMap<u64, Connection>>>,
     remote: &mut NodeRemote,
@@ -179,7 +179,7 @@ pub async fn payload_handler(
                             request_id,
                         };
 
-                        payload_handler(
+                        handle_request(
                             connect_command,
                             server_connection_map,
                             remote,
@@ -433,7 +433,7 @@ pub async fn payload_handler(
                                             request_id,
                                         };
 
-                                        payload_handler(
+                                        handle_request(
                                             connect_command,
                                             server_connection_map,
                                             remote,
