@@ -13,38 +13,45 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectSuccess {
     pub cid: u64,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectionFailure {
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegisterSuccess {
     pub id: Uuid,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegisterFailure {
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceConnectionAccepted {
     pub id: Uuid,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MessageSent {
     pub cid: u64,
-    pub peer_cid: Option<u64>, // TODO: investigate passing a message hash or a trace id
+    pub peer_cid: Option<u64>,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MessageSendError {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -52,59 +59,68 @@ pub struct MessageReceived {
     pub message: BytesMut,
     pub cid: u64,
     pub peer_cid: u64,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Disconnected {
     pub cid: u64,
     pub peer_cid: Option<u64>,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DisconnectFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SendFileSuccess {
     pub cid: u64,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SendFileFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PeerConnectSuccess {
     pub cid: u64,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PeerConnectFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PeerDisconnectSuccess {
     pub cid: u64,
-    pub ticket: u128,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PeerDisconnectFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PeerRegisterSuccess {
     pub cid: u64,
     pub peer_cid: u64,
-    pub username: String,
+    pub peer_username: String,
+    pub request_id: Option<Uuid>,
     // TODO: add access to MutualPeer
 }
 
@@ -112,6 +128,7 @@ pub struct PeerRegisterSuccess {
 pub struct PeerRegisterFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -120,6 +137,7 @@ pub struct LocalDBGetKVSuccess {
     pub peer_cid: Option<u64>,
     pub key: String,
     pub value: Vec<u8>,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -127,6 +145,7 @@ pub struct LocalDBGetKVFailure {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -134,6 +153,7 @@ pub struct LocalDBSetKVSuccess {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub key: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -141,6 +161,7 @@ pub struct LocalDBSetKVFailure {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -148,6 +169,7 @@ pub struct LocalDBDeleteKVSuccess {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub key: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -155,6 +177,7 @@ pub struct LocalDBDeleteKVFailure {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -162,6 +185,7 @@ pub struct LocalDBGetAllKVSuccess {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub map: HashMap<String, Vec<u8>>,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -169,12 +193,14 @@ pub struct LocalDBGetAllKVFailure {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub message: String,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalDBClearAllKVSuccess {
     pub cid: u64,
     pub peer_cid: Option<u64>,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -182,6 +208,13 @@ pub struct LocalDBClearAllKVFailure {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GetSessions {
+    pub sessions: Vec<SessionInformation>,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -214,12 +247,15 @@ pub enum InternalServiceResponse {
     LocalDBGetAllKVFailure(LocalDBGetAllKVFailure),
     LocalDBClearAllKVSuccess(LocalDBClearAllKVSuccess),
     LocalDBClearAllKVFailure(LocalDBClearAllKVFailure),
+    GetSessions(GetSessions),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum InternalServicePayload {
+pub enum InternalServiceRequest {
     Connect {
         uuid: Uuid,
+        // A user-provided unique ID that will be returned in the response
+        request_id: Uuid,
         username: String,
         password: SecBuffer,
         connect_mode: ConnectMode,
@@ -229,6 +265,7 @@ pub enum InternalServicePayload {
     },
     Register {
         uuid: Uuid,
+        request_id: Uuid,
         server_addr: SocketAddr,
         full_name: String,
         username: String,
@@ -238,6 +275,7 @@ pub enum InternalServicePayload {
     },
     Message {
         uuid: Uuid,
+        request_id: Uuid,
         message: Vec<u8>,
         cid: u64,
         // if None, send to server, otherwise, send to p2p
@@ -246,10 +284,12 @@ pub enum InternalServicePayload {
     },
     Disconnect {
         uuid: Uuid,
+        request_id: Uuid,
         cid: u64,
     },
     SendFile {
         uuid: Uuid,
+        request_id: Uuid,
         source: PathBuf,
         cid: u64,
         chunk_size: usize,
@@ -261,14 +301,17 @@ pub enum InternalServicePayload {
         delete_on_pull: bool,
         cid: u64,
         uuid: Uuid,
+        request_id: Uuid,
     },
     StartGroup {
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
         cid: u64,
         uuid: Uuid,
+        request_id: Uuid,
     },
     PeerConnect {
         uuid: Uuid,
+        request_id: Uuid,
         cid: u64,
         username: String,
         peer_cid: u64,
@@ -278,23 +321,27 @@ pub enum InternalServicePayload {
     },
     PeerDisconnect {
         uuid: Uuid,
+        request_id: Uuid,
         cid: u64,
         peer_cid: u64,
     },
     PeerRegister {
         uuid: Uuid,
+        request_id: Uuid,
         cid: u64,
         peer_id: UserIdentifier,
         connect_after_register: bool,
     },
     LocalDBGetKV {
         uuid: Uuid,
+        request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
         key: String,
     },
     LocalDBSetKV {
         uuid: Uuid,
+        request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
         key: String,
@@ -302,18 +349,38 @@ pub enum InternalServicePayload {
     },
     LocalDBDeleteKV {
         uuid: Uuid,
+        request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
         key: String,
     },
     LocalDBGetAllKV {
         uuid: Uuid,
+        request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
     },
     LocalDBClearAllKV {
         uuid: Uuid,
+        request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
     },
+    GetSessions {
+        uuid: Uuid,
+        request_id: Uuid,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SessionInformation {
+    pub cid: u64,
+    pub peer_connections: HashMap<u64, PeerSessionInformation>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PeerSessionInformation {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub peer_username: String,
 }

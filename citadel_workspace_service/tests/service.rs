@@ -6,7 +6,7 @@ mod tests {
     use citadel_workspace_lib::wrap_tcp_conn;
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
     use citadel_workspace_types::{
-        InternalServicePayload, InternalServiceResponse, MessageReceived, MessageSent,
+        InternalServiceRequest, InternalServiceResponse, MessageReceived, MessageSent,
         PeerConnectSuccess, PeerRegisterSuccess, ServiceConnectionAccepted,
     };
     use core::panic;
@@ -44,7 +44,7 @@ mod tests {
 
     async fn send(
         sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
-        command: InternalServicePayload,
+        command: InternalServiceRequest,
     ) -> Result<(), Box<dyn Error>> {
         let command = bincode2::serialize(&command)?;
         sink.send(command.into()).await?;
@@ -86,7 +86,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let disconnect_command = InternalServicePayload::Disconnect { uuid, cid };
+        let disconnect_command = InternalServiceRequest::Disconnect {
+            uuid,
+            cid,
+            request_id: Uuid::new_v4(),
+        };
         to_service.send(disconnect_command).unwrap();
         let disconnect_response = from_service.recv().await.unwrap();
 
@@ -110,7 +114,7 @@ mod tests {
         password: S,
     ) -> Result<
         (
-            UnboundedSender<InternalServicePayload>,
+            UnboundedSender<InternalServiceRequest>,
             UnboundedReceiver<InternalServiceResponse>,
             Uuid,
             u64,
@@ -136,9 +140,10 @@ mod tests {
 
         if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
             id,
+            request_id: _,
         }) = greeter_packet
         {
-            let register_command = InternalServicePayload::Register {
+            let register_command = InternalServiceRequest::Register {
                 uuid: id,
                 server_addr,
                 full_name,
@@ -146,17 +151,18 @@ mod tests {
                 proposed_password: password.clone(),
                 default_security_settings: Default::default(),
                 connect_after_register: false,
+                request_id: Uuid::new_v4(),
             };
             send(&mut sink, register_command).await?;
 
             let second_packet = stream.next().await.unwrap()?;
             let response_packet: InternalServiceResponse = bincode2::deserialize(&second_packet)?;
             if let InternalServiceResponse::RegisterSuccess(
-                citadel_workspace_types::RegisterSuccess { id },
+                citadel_workspace_types::RegisterSuccess { id, request_id: _ },
             ) = response_packet
             {
                 // now, connect to the server
-                let command = InternalServicePayload::Connect {
+                let command = InternalServiceRequest::Connect {
                     username,
                     password,
                     connect_mode: Default::default(),
@@ -164,6 +170,7 @@ mod tests {
                     keep_alive_timeout: None,
                     uuid: id,
                     session_security_settings: Default::default(),
+                    request_id: Uuid::new_v4(),
                 };
 
                 send(&mut sink, command).await?;
@@ -171,7 +178,7 @@ mod tests {
                 let next_packet = stream.next().await.unwrap()?;
                 let response_packet: InternalServiceResponse = bincode2::deserialize(&next_packet)?;
                 if let InternalServiceResponse::ConnectSuccess(
-                    citadel_workspace_types::ConnectSuccess { cid },
+                    citadel_workspace_types::ConnectSuccess { cid, request_id: _ },
                 ) = response_packet
                 {
                     let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();
@@ -263,12 +270,13 @@ mod tests {
         .unwrap();
 
         let serialized_message = bincode2::serialize("Message Test").unwrap();
-        let message_command = InternalServicePayload::Message {
+        let message_command = InternalServiceRequest::Message {
             uuid,
             message: serialized_message,
             cid,
             peer_cid: None,
             security_level: SecurityLevel::Standard,
+            request_id: Uuid::new_v4(),
         };
         to_service.send(message_command).unwrap();
         let deserialized_message_response = from_service.recv().await.unwrap();
@@ -283,6 +291,7 @@ mod tests {
                 message,
                 cid,
                 peer_cid: _,
+                request_id: _,
             }) = deserialized_message_response
             {
                 println!("{message:?}");
@@ -295,7 +304,11 @@ mod tests {
             panic!("Message sending failed");
         }
 
-        let disconnect_command = InternalServicePayload::Disconnect { uuid, cid };
+        let disconnect_command = InternalServiceRequest::Disconnect {
+            uuid,
+            cid,
+            request_id: Uuid::new_v4(),
+        };
         to_service.send(disconnect_command).unwrap();
         let disconnect_response = from_service.recv().await.unwrap();
 
@@ -360,9 +373,10 @@ mod tests {
 
         if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
             id,
+            request_id: _,
         }) = greeter_packet
         {
-            let register_command = InternalServicePayload::Register {
+            let register_command = InternalServiceRequest::Register {
                 uuid: id,
                 server_addr: server_bind_address,
                 full_name: String::from("John"),
@@ -370,6 +384,7 @@ mod tests {
                 proposed_password: String::from("test12345").into_bytes().into(),
                 default_security_settings: Default::default(),
                 connect_after_register: true,
+                request_id: Uuid::new_v4(),
             };
             send(&mut sink, register_command).await?;
 
@@ -377,7 +392,10 @@ mod tests {
             let response_packet: InternalServiceResponse = bincode2::deserialize(&second_packet)?;
 
             if let InternalServiceResponse::ConnectSuccess(
-                citadel_workspace_types::ConnectSuccess { cid: _ },
+                citadel_workspace_types::ConnectSuccess {
+                    cid: _,
+                    request_id: _,
+                },
             ) = response_packet
             {
                 Ok(())
@@ -390,9 +408,9 @@ mod tests {
     }
 
     type PeerReturnHandle = (
-        UnboundedSender<InternalServicePayload>,
+        UnboundedSender<InternalServiceRequest>,
         UnboundedReceiver<InternalServiceResponse>,
-        UnboundedSender<InternalServicePayload>,
+        UnboundedSender<InternalServiceRequest>,
         UnboundedReceiver<InternalServiceResponse>,
         Uuid,
         Uuid,
@@ -458,20 +476,22 @@ mod tests {
         // now, both peers are connected and registered to the central server. Now, we
         // need to have them peer-register to each other
         to_service_a
-            .send(InternalServicePayload::PeerRegister {
+            .send(InternalServiceRequest::PeerRegister {
                 uuid: uuid_a,
                 cid: cid_a,
                 peer_id: cid_b.into(),
                 connect_after_register: false,
+                request_id: Uuid::new_v4(),
             })
             .unwrap();
 
         to_service_b
-            .send(InternalServicePayload::PeerRegister {
+            .send(InternalServiceRequest::PeerRegister {
                 uuid: uuid_b,
                 cid: cid_b,
                 peer_id: cid_a.into(),
                 connect_after_register: false,
+                request_id: Uuid::new_v4(),
             })
             .unwrap();
 
@@ -481,7 +501,8 @@ mod tests {
             InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
                 cid,
                 peer_cid,
-                username,
+                peer_username: username,
+                request_id: _,
             }) => {
                 assert_eq!(cid, cid_b);
                 assert_eq!(peer_cid, cid_b);
@@ -497,7 +518,8 @@ mod tests {
             InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
                 cid,
                 peer_cid,
-                username,
+                peer_username: username,
+                request_id: _,
             }) => {
                 assert_eq!(cid, cid_a);
                 assert_eq!(peer_cid, cid_a);
@@ -509,7 +531,7 @@ mod tests {
         }
 
         to_service_a
-            .send(InternalServicePayload::PeerConnect {
+            .send(InternalServiceRequest::PeerConnect {
                 uuid: uuid_a,
                 cid: cid_a,
                 username: String::from("peer.a"),
@@ -517,11 +539,12 @@ mod tests {
                 peer_username: String::from("peer.b"),
                 udp_mode: Default::default(),
                 session_security_settings: Default::default(),
+                request_id: Uuid::new_v4(),
             })
             .unwrap();
 
         to_service_b
-            .send(InternalServicePayload::PeerConnect {
+            .send(InternalServiceRequest::PeerConnect {
                 uuid: uuid_b,
                 cid: cid_b,
                 username: String::from("peer.b"),
@@ -529,12 +552,16 @@ mod tests {
                 peer_username: String::from("peer.a"),
                 udp_mode: Default::default(),
                 session_security_settings: Default::default(),
+                request_id: Uuid::new_v4(),
             })
             .unwrap();
 
         let item = from_service_b.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+                cid,
+                request_id: _,
+            }) => {
                 assert_eq!(cid, cid_b);
             }
             _ => {
@@ -545,7 +572,10 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid }) => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+                cid,
+                request_id: _,
+            }) => {
                 assert_eq!(cid, cid_a);
                 Ok((
                     to_service_a,
@@ -600,12 +630,13 @@ mod tests {
         .await?;
 
         let service_a_message = Vec::from("Hello World");
-        let service_a_message_payload = InternalServicePayload::Message {
+        let service_a_message_payload = InternalServiceRequest::Message {
             uuid: uuid_a,
             message: service_a_message.clone(),
             cid: cid_a,
             peer_cid: Some(cid_b),
             security_level: Default::default(),
+            request_id: Uuid::new_v4(),
         };
         to_service_a.send(service_a_message_payload).unwrap();
         let deserialized_service_a_message_response = from_service_a.recv().await.unwrap();
@@ -620,6 +651,7 @@ mod tests {
                 message,
                 cid: cid_a,
                 peer_cid: _cid_b,
+                request_id: _,
             }) = deserialized_service_a_message_response
             {
                 assert_eq!(&*service_a_message, &*message);
@@ -706,17 +738,18 @@ mod tests {
     }
 
     async fn test_kv_for_service(
-        to_service: &UnboundedSender<InternalServicePayload>,
+        to_service: &UnboundedSender<InternalServiceRequest>,
         from_service: &mut UnboundedReceiver<InternalServiceResponse>,
         uuid: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
     ) -> Result<(), Box<dyn Error>> {
         // test get_all_kv
-        to_service.send(InternalServicePayload::LocalDBGetAllKV {
+        to_service.send(InternalServiceRequest::LocalDBGetAllKV {
             uuid,
             cid,
             peer_cid,
+            request_id: Uuid::new_v4(),
         })?;
 
         if let InternalServiceResponse::LocalDBGetAllKVSuccess(resp) =
@@ -731,12 +764,13 @@ mod tests {
 
         // test set_kv
         let value = Vec::from("Hello, World!");
-        to_service.send(InternalServicePayload::LocalDBSetKV {
+        to_service.send(InternalServiceRequest::LocalDBSetKV {
             uuid,
             cid,
             peer_cid,
             key: "tmp".to_string(),
             value: value.clone(),
+            request_id: Uuid::new_v4(),
         })?;
 
         if let InternalServiceResponse::LocalDBSetKVSuccess(resp) =
@@ -750,11 +784,12 @@ mod tests {
         }
 
         // test get_kv
-        to_service.send(InternalServicePayload::LocalDBGetKV {
+        to_service.send(InternalServiceRequest::LocalDBGetKV {
             uuid,
             cid,
             peer_cid,
             key: "tmp".to_string(),
+            request_id: Uuid::new_v4(),
         })?;
 
         if let InternalServiceResponse::LocalDBGetKVSuccess(resp) =
@@ -769,10 +804,11 @@ mod tests {
         }
 
         // test get_all_kv
-        to_service.send(InternalServicePayload::LocalDBGetAllKV {
+        to_service.send(InternalServiceRequest::LocalDBGetAllKV {
             uuid,
             cid,
             peer_cid,
+            request_id: Uuid::new_v4(),
         })?;
 
         if let InternalServiceResponse::LocalDBGetAllKVSuccess(resp) =
@@ -790,11 +826,12 @@ mod tests {
         }
 
         // test delete_kv
-        to_service.send(InternalServicePayload::LocalDBDeleteKV {
+        to_service.send(InternalServiceRequest::LocalDBDeleteKV {
             uuid,
             cid,
             peer_cid,
             key: "tmp".to_string(),
+            request_id: Uuid::new_v4(),
         })?;
 
         if let InternalServiceResponse::LocalDBDeleteKVSuccess(resp) =
