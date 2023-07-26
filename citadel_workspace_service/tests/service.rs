@@ -17,6 +17,9 @@ mod tests {
     use std::future::Future;
     use std::net::SocketAddr;
     use std::time::Duration;
+    use citadel_sdk::prefabs::ClientServerRemote;
+    use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
+    use citadel_sdk::prefabs::server::empty::EmptyKernel;
     use tokio::net::TcpStream;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -51,6 +54,43 @@ mod tests {
         Ok(())
     }
 
+    pub fn server_test_node_skip_cert_verification<'a, K: NetKernel + 'a>(
+        kernel: K,
+        opts: impl FnOnce(&mut NodeBuilder),
+    ) -> (NodeFuture<'a, K>, SocketAddr) {
+        let mut builder = NodeBuilder::default();
+        let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let bind_addr = tcp_listener.local_addr().unwrap();
+        let builder = builder
+            .with_node_type(NodeType::Server(bind_addr))
+            .with_insecure_skip_cert_verification()
+            .with_underlying_protocol(
+                ServerUnderlyingProtocol::from_tcp_listener(tcp_listener).unwrap(),
+            );
+
+        (opts)(builder);
+
+        (builder.build(kernel).unwrap(), bind_addr)
+    }
+
+    pub fn server_info_skip_cert_verification<'a>() -> (NodeFuture<'a, EmptyKernel>, SocketAddr) {
+        server_test_node_skip_cert_verification(EmptyKernel::default(), |_| {})
+    }
+
+    pub fn server_info_reactive_skip_cert_verification<'a, F: 'a, Fut: 'a>(
+        f: F,
+        opts: impl FnOnce(&mut NodeBuilder),
+    ) -> (NodeFuture<'a, Box<dyn NetKernel + 'a>>, SocketAddr)
+        where
+            F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync,
+            Fut: Future<Output = Result<(), NetworkError>> + Send + Sync,
+    {
+        server_test_node_skip_cert_verification(
+            Box::new(ClientConnectListenerKernel::new(f)) as Box<dyn NetKernel>,
+            opts,
+        )
+    }
+
     #[tokio::test]
     async fn test_citadel_workspace_service_register_connect() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
@@ -58,7 +98,7 @@ mod tests {
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+        let (server, server_bind_address) = server_info_skip_cert_verification();
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
@@ -67,6 +107,7 @@ mod tests {
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -223,7 +264,7 @@ mod tests {
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = citadel_sdk::test_common::server_info_reactive(
+        let (server, server_bind_address) = server_info_reactive_skip_cert_verification(
             |conn, _remote| async move {
                 let (sink, mut stream) = conn.channel.split();
 
@@ -242,6 +283,7 @@ mod tests {
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -314,7 +356,7 @@ mod tests {
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = citadel_sdk::test_common::server_info_reactive(
+        let (server, server_bind_address) = server_info_reactive_skip_cert_verification(
             |conn, _remote| async move {
                 let (sink, mut stream) = conn.channel.split();
 
@@ -334,6 +376,7 @@ mod tests {
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -410,7 +453,7 @@ mod tests {
         let bind_address_internal_service_b = b_int_svc_addr;
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+        let (server, server_bind_address) = server_info_skip_cert_verification();
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
@@ -419,6 +462,7 @@ mod tests {
         let internal_service_a = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel_a)
             .unwrap();
 
@@ -428,6 +472,7 @@ mod tests {
         let internal_service_b = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel_b)
             .unwrap();
 
@@ -637,12 +682,13 @@ mod tests {
     #[tokio::test]
     async fn test_c2s_kv() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
-        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+        let (server, server_bind_address) = server_info_skip_cert_verification();
 
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55537".parse().unwrap();
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(CitadelWorkspaceService::new(
                 bind_address_internal_service_a,
             ))

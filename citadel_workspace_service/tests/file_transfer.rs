@@ -5,22 +5,22 @@ mod tests {
     use citadel_sdk::prelude::*;
     use citadel_workspace_lib::wrap_tcp_conn;
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
-    use citadel_workspace_types::{
-        DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequest, FileTransferStatus,
-        FileTransferTick, InternalServicePayload, InternalServiceResponse, PeerConnectSuccess,
-        PeerRegisterSuccess, SendFileSuccess, ServiceConnectionAccepted,
-    };
+    use citadel_workspace_types::{DeleteVirtualFileSuccess, DisconnectFailure, DownloadFileSuccess, FileTransferRequest, FileTransferStatus, FileTransferTick, InternalServicePayload, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess, SendFileFailure, SendFileSuccess, ServiceConnectionAccepted};
     use core::panic;
     use futures::stream::SplitSink;
     use futures::{SinkExt, StreamExt};
     use std::error::Error;
     use std::future::Future;
     use std::net::SocketAddr;
+    use std::panic::resume_unwind;
     use std::path::PathBuf;
     use std::str::FromStr;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::time::Duration;
+    use citadel_sdk::prefabs::ClientServerRemote;
+    use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
+    use citadel_sdk::prefabs::server::empty::EmptyKernel;
     use tokio::net::TcpStream;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -187,43 +187,39 @@ mod tests {
 
         async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
             citadel_logging::trace!(target: "citadel", "SERVER received {:?}", message);
-            if let NodeResult::ObjectTransferHandle(ObjectTransferHandle {
-                ticket: _,
-                mut handle,
-            }) = map_errors(message)?
-            {
-                let mut path = None;
-                // accept the transfer
-                handle
-                    .accept()
-                    .map_err(|err| NetworkError::msg(err.into_string()))?;
+            match message {
+                NodeResult::ObjectTransferHandle(object_transfer_handle) =>
+                    {
+                        let mut handle = object_transfer_handle.handle;
+                        let mut path = None;
+                        // accept the transfer
+                        handle.accept().unwrap();
 
-                use futures::StreamExt;
-                while let Some(status) = handle.next().await {
-                    match status {
-                        ObjectTransferStatus::ReceptionComplete => {
-                            citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
-                            let cmp = include_bytes!("../../resources/test.txt");
-                            let streamed_data =
-                                tokio::fs::read(path.clone().unwrap()).await.unwrap();
-                            assert_eq!(
-                                cmp,
-                                streamed_data.as_slice(),
-                                "Original data and streamed data does not match"
-                            );
+                        use futures::StreamExt;
+                        while let Some(status) = handle.next().await {
+                            match status {
+                                ObjectTransferStatus::ReceptionComplete => {
+                                    citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
+                                    let cmp = include_bytes!("../../resources/temp.txt");
+                                    let streamed_data =
+                                        tokio::fs::read(path.clone().unwrap()).await.unwrap();
+                                    assert_eq!(
+                                        cmp,
+                                        streamed_data.as_slice(),
+                                        "Original data and streamed data does not match"
+                                    );
+                                }
 
-                            self.1.store(true, std::sync::atomic::Ordering::Relaxed);
-                            self.0.clone().unwrap().shutdown().await?;
+                                ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                                    path = Some(file_path);
+                                    assert_eq!(vfm.name, "test.txt")
+                                }
+
+                                _ => {}
+                            }
                         }
-
-                        ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
-                            path = Some(file_path);
-                            assert_eq!(vfm.name, "test.txt")
-                        }
-
-                        _ => {}
                     }
-                }
+                _ => {}
             }
 
             Ok(())
@@ -234,11 +230,47 @@ mod tests {
         }
     }
 
+    pub fn server_test_node_skip_cert_verification<'a, K: NetKernel + 'a>(
+        kernel: K,
+        opts: impl FnOnce(&mut NodeBuilder),
+    ) -> (NodeFuture<'a, K>, SocketAddr) {
+        let mut builder = NodeBuilder::default();
+        let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let bind_addr = tcp_listener.local_addr().unwrap();
+        let builder = builder
+            .with_node_type(NodeType::Server(bind_addr))
+            .with_insecure_skip_cert_verification()
+            .with_underlying_protocol(
+                ServerUnderlyingProtocol::from_tcp_listener(tcp_listener).unwrap(),
+            );
+
+        (opts)(builder);
+
+        (builder.build(kernel).unwrap(), bind_addr)
+    }
+
+    pub fn server_info_skip_cert_verification<'a>() -> (NodeFuture<'a, EmptyKernel>, SocketAddr) {
+        server_test_node_skip_cert_verification(EmptyKernel::default(), |_| {})
+    }
+
+    pub fn server_info_reactive_skip_cert_verification<'a, F: 'a, Fut: 'a>(
+        f: F,
+        opts: impl FnOnce(&mut NodeBuilder),
+    ) -> (NodeFuture<'a, Box<dyn NetKernel + 'a>>, SocketAddr)
+        where
+            F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync,
+            Fut: Future<Output = Result<(), NetworkError>> + Send + Sync,
+    {
+        server_test_node_skip_cert_verification(
+            Box::new(ClientConnectListenerKernel::new(f)) as Box<dyn NetKernel>,
+            opts,
+        )
+    }
+
     pub fn server_info_file_transfer<'a>(
         switch: Arc<AtomicBool>,
     ) -> (NodeFuture<'a, ReceiverFileTransferKernel>, SocketAddr) {
-        let bind_addr = SocketAddr::from_str(&format!("127.0.0.1:0")).unwrap();
-        let (server, _) = citadel_sdk::test_common::server_test_node(
+        let (server, bind_addr) = server_test_node_skip_cert_verification(
             ReceiverFileTransferKernel(None, switch),
             |_| {},
         );
@@ -253,6 +285,7 @@ mod tests {
 
         // TCP client (GUI, CLI) -> Internal Service -> Receiver File Transfer Kernel server
         let server_success = &Arc::new(AtomicBool::new(false));
+        //let (server, server_bind_address) = server_info_file_transfer(server_success.clone());
         let (server, server_bind_address) = server_info_file_transfer(server_success.clone());
 
         tokio::task::spawn(server);
@@ -261,6 +294,7 @@ mod tests {
         let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
+            .with_insecure_skip_cert_verification()
             .with_backend(BackendType::InMemory)
             .build(internal_service_kernel)?;
 
@@ -282,11 +316,9 @@ mod tests {
         .await
         .unwrap();
 
-        let file_to_send = PathBuf::from("../../resources/test.txt");
-
         let file_transfer_command = InternalServicePayload::SendFile {
             uuid,
-            source: file_to_send,
+            source: "../resources/test.txt".parse().unwrap(),
             cid,
             is_refvs: false,
             peer_cid: None,
@@ -296,7 +328,19 @@ mod tests {
         };
         to_service.send(file_transfer_command).unwrap();
         let file_transfer_response = from_service.recv().await.unwrap();
-        info!(target: "citadel","{file_transfer_response:?}");
+        match file_transfer_response {
+            InternalServiceResponse::SendFileSuccess(SendFileSuccess { cid }) => {
+                info!(target: "citadel", "File Sending Request Success");
+            }
+            InternalServiceResponse::SendFileFailure(SendFileFailure { cid, message }) => {
+                panic!("File Send Failed: {message:?}")
+            }
+            _ => {
+                panic!("File Send Error - Unhandled Response")
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(3000)).await;
 
         let disconnect_command = InternalServicePayload::Disconnect { uuid, cid };
         to_service.send(disconnect_command).unwrap();
@@ -316,7 +360,7 @@ mod tests {
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+        let (server, server_bind_address) = server_info_skip_cert_verification();
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
@@ -325,6 +369,7 @@ mod tests {
         let internal_service_a = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel_a)
             .unwrap();
 
@@ -334,6 +379,7 @@ mod tests {
         let internal_service_b = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel_b)
             .unwrap();
 
@@ -496,7 +542,7 @@ mod tests {
 
                 let mut path = None;
                 while let Some(deserialized_service_a_payload_response) =
-                    from_service_a.recv().await.unwrap()
+                    from_service_a.recv().await
                 {
                     if let InternalServiceResponse::FileTransferTick(FileTransferTick {
                         uuid,
@@ -563,6 +609,7 @@ mod tests {
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;
 
         tokio::task::spawn(internal_service);
@@ -652,7 +699,7 @@ mod tests {
             }
             _ => {
                 info!(target = "citadel", "{:?}", file_delete_command);
-                panic!("Didn't get the REVFS DownloadFileSuccess");
+                panic!("Didn't get the REVFS DeleteVirtualFileSuccess");
             }
         }
         info!(target: "citadel","{file_delete_command:?}");
@@ -674,7 +721,7 @@ mod tests {
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = citadel_sdk::test_common::server_info();
+        let (server, server_bind_address) = server_info_skip_cert_verification();
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
@@ -683,6 +730,7 @@ mod tests {
         let internal_service_a = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel_a)
             .unwrap();
 
@@ -692,6 +740,7 @@ mod tests {
         let internal_service_b = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
             .build(internal_service_kernel_b)
             .unwrap();
 

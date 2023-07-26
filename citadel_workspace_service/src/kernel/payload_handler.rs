@@ -311,16 +311,16 @@ pub async fn payload_handler(
                 // TODO: move the TransferType to the enum in the TCP client request
                 if is_refvs {
                     client_to_server_remote
-                        .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
-                        .await
-                } else {
-                    client_to_server_remote
                         .remote_encrypted_virtual_filesystem_push_custom_chunking(
                             source,
                             virtual_directory,
                             chunk_size,
                             security_level,
                         )
+                        .await
+                } else {
+                    client_to_server_remote
+                        .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
                         .await
                 }
             };
