@@ -12,8 +12,9 @@ mod tests {
     use std::error::Error;
     use std::future::Future;
     use std::net::SocketAddr;
-    use std::panic::resume_unwind;
+    use std::panic::{resume_unwind, set_hook, take_hook};
     use std::path::PathBuf;
+    use std::process::exit;
     use std::str::FromStr;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
@@ -201,15 +202,12 @@ mod tests {
                             match status {
                                 ObjectTransferStatus::ReceptionComplete => {
                                     citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
-
                                     let mut cmp_path = PathBuf::from("..");
-                                    //cmp_path.push("..");
                                     cmp_path.push("resources");
-                                    cmp_path.push("temp");
+                                    cmp_path.push("test");
                                     cmp_path.set_extension("txt");
                                     let cmp_data =
                                         tokio::fs::read(cmp_path).await.unwrap();
-
                                     let streamed_data =
                                         tokio::fs::read(path.clone().unwrap()).await.unwrap();
                                     assert_eq!(
@@ -218,12 +216,10 @@ mod tests {
                                         "Original data and streamed data does not match"
                                     );
                                 }
-
                                 ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
                                     path = Some(file_path);
                                     assert_eq!(vfm.name, "test.txt")
                                 }
-
                                 _ => {}
                             }
                         }
@@ -288,6 +284,14 @@ mod tests {
 
     #[tokio::test]
     async fn standard_file_transfer_c2s_test() -> Result<(), Box<dyn Error>> {
+
+        // Causes panics in spawned threads to be caught
+        let orig_hook = take_hook();
+        set_hook(Box::new(move |panic_info| {
+            orig_hook(panic_info);
+            exit(1);
+        }));
+
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
@@ -356,21 +360,11 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
-        let mut cp = PathBuf::from("..");
-        cp.push("resources");
-        cp.push("temp");
-        cp.set_extension("txt");
-        let cpd = tokio::fs::read(cp).await.unwrap();
-        let cmpd = tokio::fs::read(cmp_path).await.unwrap();
-        assert_eq!(
-            cpd.as_slice(),
-            cmpd.as_slice(),
-            "Original data and streamed data does not match"
-        );
-
         let disconnect_command = InternalServicePayload::Disconnect { uuid, cid };
         to_service.send(disconnect_command).unwrap();
         let _disconnect_response = from_service.recv().await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(1000)).await;
 
         Ok(())
     }
