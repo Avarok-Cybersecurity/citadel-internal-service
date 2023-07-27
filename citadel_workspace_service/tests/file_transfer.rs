@@ -22,6 +22,7 @@ mod tests {
     use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
     use citadel_sdk::prefabs::server::empty::EmptyKernel;
     use tokio::net::TcpStream;
+    use tokio::spawn;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use uuid::Uuid;
@@ -200,11 +201,19 @@ mod tests {
                             match status {
                                 ObjectTransferStatus::ReceptionComplete => {
                                     citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
-                                    let cmp = include_bytes!("../../resources/temp.txt");
+
+                                    let mut cmp_path = PathBuf::from("..");
+                                    //cmp_path.push("..");
+                                    cmp_path.push("resources");
+                                    cmp_path.push("temp");
+                                    cmp_path.set_extension("txt");
+                                    let cmp_data =
+                                        tokio::fs::read(cmp_path).await.unwrap();
+
                                     let streamed_data =
                                         tokio::fs::read(path.clone().unwrap()).await.unwrap();
                                     assert_eq!(
-                                        cmp,
+                                        cmp_data.as_slice(),
                                         streamed_data.as_slice(),
                                         "Original data and streamed data does not match"
                                     );
@@ -316,9 +325,14 @@ mod tests {
         .await
         .unwrap();
 
+        let mut cmp_path = PathBuf::from("..");
+        cmp_path.push("resources");
+        cmp_path.push("test");
+        cmp_path.set_extension("txt");
+
         let file_transfer_command = InternalServicePayload::SendFile {
             uuid,
-            source: "../resources/test.txt".parse().unwrap(),
+            source: cmp_path.clone(),
             cid,
             is_refvs: false,
             peer_cid: None,
@@ -340,7 +354,19 @@ mod tests {
             }
         }
 
-        tokio::time::sleep(Duration::from_millis(3000)).await;
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        let mut cp = PathBuf::from("..");
+        cp.push("resources");
+        cp.push("temp");
+        cp.set_extension("txt");
+        let cpd = tokio::fs::read(cp).await.unwrap();
+        let cmpd = tokio::fs::read(cmp_path).await.unwrap();
+        assert_eq!(
+            cpd.as_slice(),
+            cmpd.as_slice(),
+            "Original data and streamed data does not match"
+        );
 
         let disconnect_command = InternalServicePayload::Disconnect { uuid, cid };
         to_service.send(disconnect_command).unwrap();
