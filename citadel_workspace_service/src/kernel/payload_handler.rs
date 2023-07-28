@@ -255,7 +255,7 @@ pub async fn payload_handler(
             uuid,
             source,
             cid,
-            is_refvs,
+            is_revfs,
             peer_cid,
             chunk_size,
             virtual_directory,
@@ -275,7 +275,7 @@ pub async fn payload_handler(
             let result = if let Some(peer_cid) = peer_cid {
                 match client_to_server_remote.find_target(cid, peer_cid).await {
                     Ok(peer_remote) => {
-                        if is_refvs {
+                        if is_revfs {
                             peer_remote
                                 .remote_encrypted_virtual_filesystem_push_custom_chunking(
                                     source,
@@ -309,7 +309,7 @@ pub async fn payload_handler(
                 }
             } else {
                 // TODO: move the TransferType to the enum in the TCP client request
-                if is_refvs {
+                if is_revfs {
                     client_to_server_remote
                         .remote_encrypted_virtual_filesystem_push_custom_chunking(
                             source,

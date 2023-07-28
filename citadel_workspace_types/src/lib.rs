@@ -306,7 +306,7 @@ pub enum InternalServicePayload {
         uuid: Uuid,
         source: PathBuf,
         cid: u64,
-        is_refvs: bool,
+        is_revfs: bool,
         peer_cid: Option<u64>,
         chunk_size: Option<usize>,
         virtual_directory: Option<PathBuf>,

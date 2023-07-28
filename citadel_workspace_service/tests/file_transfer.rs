@@ -338,7 +338,7 @@ mod tests {
             uuid,
             source: cmp_path.clone(),
             cid,
-            is_refvs: false,
+            is_revfs: false,
             peer_cid: None,
             chunk_size: None,
             virtual_directory: None,
@@ -526,12 +526,17 @@ mod tests {
             }
         }
 
-        let file_to_send = PathBuf::from("../../resources/test.txt");
+
+        let mut file_to_send = PathBuf::from("..");
+        file_to_send.push("resources");
+        file_to_send.push("test");
+        file_to_send.set_extension("txt");
+
         let send_file_to_service_b_payload = InternalServicePayload::SendFile {
             uuid: uuid_a,
             source: file_to_send,
             cid: cid_a,
-            is_refvs: false,
+            is_revfs: false,
             peer_cid: Some(cid_b),
             chunk_size: None,
             virtual_directory: None,
@@ -582,23 +587,35 @@ mod tests {
                             }
                             ObjectTransferStatus::ReceptionComplete => {
                                 info!(target: "citadel","File Transfer Complete");
-                                let cmp = include_bytes!("../../resources/test.txt");
+                                let mut cmp_path = PathBuf::from("..");
+                                cmp_path.push("resources");
+                                cmp_path.push("test");
+                                cmp_path.set_extension("txt");
+                                let cmp_data = tokio::fs::read(cmp_path.clone()).await.unwrap();
                                 let streamed_data =
                                     tokio::fs::read(path.clone().unwrap()).await.unwrap();
                                 assert_eq!(
-                                    cmp,
+                                    cmp_data.as_slice(),
                                     streamed_data.as_slice(),
                                     "Original data and streamed data does not match"
                                 );
+                                break;
                             }
                             _ => {}
                         }
                     }
+                    // else {
+                    //     panic!("Received Unhandled Service Response");
+                    // }
                 }
-                let cmp = include_bytes!("../../resources/test.txt");
+                let mut cmp_path = PathBuf::from("..");
+                cmp_path.push("resources");
+                cmp_path.push("test");
+                cmp_path.set_extension("txt");
+                let cmp_data = tokio::fs::read(cmp_path.clone()).await.unwrap();
                 let streamed_data = tokio::fs::read(path.clone().unwrap()).await.unwrap();
                 assert_eq!(
-                    cmp,
+                    cmp_data.as_slice(),
                     streamed_data.as_slice(),
                     "Original data and streamed data does not match"
                 );
@@ -657,7 +674,7 @@ mod tests {
             uuid,
             source: file_to_send,
             cid,
-            is_refvs: true,
+            is_revfs: true,
             peer_cid: None,
             chunk_size: None,
             virtual_directory: Some(virtual_path),
@@ -894,7 +911,7 @@ mod tests {
             uuid: uuid_a,
             source: file_to_send,
             cid: cid_a,
-            is_refvs: true,
+            is_revfs: true,
             peer_cid: Some(cid_b),
             chunk_size: None,
             virtual_directory: Some(virtual_path),
