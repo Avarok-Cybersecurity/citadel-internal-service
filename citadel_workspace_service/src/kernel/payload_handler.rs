@@ -261,22 +261,42 @@ pub async fn payload_handler(
             virtual_directory,
             security_level,
         } => {
-            let client_to_server_remote = ClientServerRemote::new(
-                VirtualTargetType::LocalGroupServer {
-                    implicated_cid: cid,
-                },
-                remote.clone(),
-            );
 
             let chunk_size = chunk_size.unwrap_or_default();
             let security_level = security_level.unwrap_or_default();
             let virtual_directory = virtual_directory.unwrap_or_default();
 
-            let result = if let Some(peer_cid) = peer_cid {
-                match client_to_server_remote.find_target(cid, peer_cid).await {
-                    Ok(peer_remote) => {
+            match server_connection_map.lock().await.get_mut(&cid) {
+                Some(conn) => {
+                    let result = if let Some(peer_cid) = peer_cid {
+                        if let Some(peer_remote) = conn.peers.get_mut(&peer_cid) {
+                            if is_revfs {
+                                peer_remote
+                                    .remote
+                                    .remote_encrypted_virtual_filesystem_push_custom_chunking(
+                                        source,
+                                        virtual_directory,
+                                        chunk_size,
+                                        security_level,
+                                    )
+                                    .await
+                            } else {
+                                peer_remote
+                                    .remote
+                                    .send_file_with_custom_opts(
+                                        source,
+                                        chunk_size,
+                                        TransferType::FileTransfer,
+                                    )
+                                    .await
+                            }
+                        } else {
+                            Err(NetworkError::msg("Peer Connection Not Found"))
+                        }
+                    } else {
                         if is_revfs {
-                            peer_remote
+                            conn
+                                .client_server_remote
                                 .remote_encrypted_virtual_filesystem_push_custom_chunking(
                                     source,
                                     virtual_directory,
@@ -285,68 +305,48 @@ pub async fn payload_handler(
                                 )
                                 .await
                         } else {
-                            peer_remote
-                                .send_file_with_custom_opts(
-                                    source,
-                                    chunk_size,
-                                    TransferType::FileTransfer,
-                                )
+                            conn
+                                .client_server_remote
+                                .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
                                 .await
                         }
-                    }
-                    Err(err) => {
-                        send_response_to_tcp_client(
-                            tcp_connection_map,
-                            InternalServiceResponse::SendFileFailure(SendFileFailure {
-                                cid,
-                                message: err.to_string(),
-                            }),
-                            uuid,
-                        )
-                        .await;
-                        Err(err)
-                    }
-                }
-            } else {
-                // TODO: move the TransferType to the enum in the TCP client request
-                if is_revfs {
-                    client_to_server_remote
-                        .remote_encrypted_virtual_filesystem_push_custom_chunking(
-                            source,
-                            virtual_directory,
-                            chunk_size,
-                            security_level,
-                        )
-                        .await
-                } else {
-                    client_to_server_remote
-                        .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
-                        .await
-                }
-            };
+                    };
+                    match result {
+                        Ok(_) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::SendFileSuccess(SendFileSuccess { cid }),
+                                uuid,
+                            )
+                                .await;
+                        }
 
-            match result {
-                Ok(_) => {
-                    send_response_to_tcp_client(
-                        tcp_connection_map,
-                        InternalServiceResponse::SendFileSuccess(SendFileSuccess { cid }),
-                        uuid,
-                    )
-                    .await;
+                        Err(err) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::SendFileFailure(SendFileFailure {
+                                    cid,
+                                    message: err.into_string(),
+                                }),
+                                uuid,
+                            )
+                                .await;
+                        }
+                    }
                 }
-
-                Err(err) => {
+                None => {
+                    info!(target: "citadel","server connection not found");
                     send_response_to_tcp_client(
                         tcp_connection_map,
                         InternalServiceResponse::SendFileFailure(SendFileFailure {
                             cid,
-                            message: err.into_string(),
+                            message: "Server Connection Not Found".into(),
                         }),
                         uuid,
                     )
-                    .await;
+                        .await;
                 }
-            }
+            };
         }
 
         InternalServicePayload::RespondFileTransfer {
