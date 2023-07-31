@@ -261,7 +261,6 @@ pub async fn payload_handler(
             virtual_directory,
             security_level,
         } => {
-
             let chunk_size = chunk_size.unwrap_or_default();
             let security_level = security_level.unwrap_or_default();
             let virtual_directory = virtual_directory.unwrap_or_default();
@@ -295,8 +294,7 @@ pub async fn payload_handler(
                         }
                     } else {
                         if is_revfs {
-                            conn
-                                .client_server_remote
+                            conn.client_server_remote
                                 .remote_encrypted_virtual_filesystem_push_custom_chunking(
                                     source,
                                     virtual_directory,
@@ -305,9 +303,12 @@ pub async fn payload_handler(
                                 )
                                 .await
                         } else {
-                            conn
-                                .client_server_remote
-                                .send_file_with_custom_opts(source, chunk_size, TransferType::FileTransfer)
+                            conn.client_server_remote
+                                .send_file_with_custom_opts(
+                                    source,
+                                    chunk_size,
+                                    TransferType::FileTransfer,
+                                )
                                 .await
                         }
                     };
@@ -318,7 +319,7 @@ pub async fn payload_handler(
                                 InternalServiceResponse::SendFileSuccess(SendFileSuccess { cid }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
 
                         Err(err) => {
@@ -330,7 +331,7 @@ pub async fn payload_handler(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 }
@@ -344,7 +345,7 @@ pub async fn payload_handler(
                         }),
                         uuid,
                     )
-                        .await;
+                    .await;
                 }
             };
         }

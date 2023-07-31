@@ -2,10 +2,18 @@
 mod tests {
     use bytes::Bytes;
     use citadel_logging::info;
+    use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
+    use citadel_sdk::prefabs::server::empty::EmptyKernel;
+    use citadel_sdk::prefabs::ClientServerRemote;
     use citadel_sdk::prelude::*;
     use citadel_workspace_lib::wrap_tcp_conn;
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
-    use citadel_workspace_types::{DeleteVirtualFileSuccess, DisconnectFailure, DownloadFileSuccess, FileTransferRequest, FileTransferStatus, FileTransferTick, InternalServicePayload, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess, SendFileFailure, SendFileSuccess, ServiceConnectionAccepted};
+    use citadel_workspace_types::{
+        DeleteVirtualFileSuccess, DisconnectFailure, DownloadFileSuccess, FileTransferRequest,
+        FileTransferStatus, FileTransferTick, InternalServicePayload, InternalServiceResponse,
+        PeerConnectSuccess, PeerRegisterSuccess, SendFileFailure, SendFileSuccess,
+        ServiceConnectionAccepted,
+    };
     use core::panic;
     use futures::stream::SplitSink;
     use futures::{SinkExt, StreamExt};
@@ -19,9 +27,6 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::time::Duration;
-    use citadel_sdk::prefabs::ClientServerRemote;
-    use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
-    use citadel_sdk::prefabs::server::empty::EmptyKernel;
     use tokio::net::TcpStream;
     use tokio::spawn;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -190,40 +195,38 @@ mod tests {
         async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
             citadel_logging::trace!(target: "citadel", "SERVER received {:?}", message);
             match message {
-                NodeResult::ObjectTransferHandle(object_transfer_handle) =>
-                    {
-                        let mut handle = object_transfer_handle.handle;
-                        let mut path = None;
-                        // accept the transfer
-                        handle.accept().unwrap();
+                NodeResult::ObjectTransferHandle(object_transfer_handle) => {
+                    let mut handle = object_transfer_handle.handle;
+                    let mut path = None;
+                    // accept the transfer
+                    handle.accept().unwrap();
 
-                        use futures::StreamExt;
-                        while let Some(status) = handle.next().await {
-                            match status {
-                                ObjectTransferStatus::ReceptionComplete => {
-                                    citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
-                                    let mut cmp_path = PathBuf::from("..");
-                                    cmp_path.push("resources");
-                                    cmp_path.push("test");
-                                    cmp_path.set_extension("txt");
-                                    let cmp_data =
-                                        tokio::fs::read(cmp_path).await.unwrap();
-                                    let streamed_data =
-                                        tokio::fs::read(path.clone().unwrap()).await.unwrap();
-                                    assert_eq!(
-                                        cmp_data.as_slice(),
-                                        streamed_data.as_slice(),
-                                        "Original data and streamed data does not match"
-                                    );
-                                }
-                                ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
-                                    path = Some(file_path);
-                                    assert_eq!(vfm.name, "test.txt")
-                                }
-                                _ => {}
+                    use futures::StreamExt;
+                    while let Some(status) = handle.next().await {
+                        match status {
+                            ObjectTransferStatus::ReceptionComplete => {
+                                citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
+                                let mut cmp_path = PathBuf::from("..");
+                                cmp_path.push("resources");
+                                cmp_path.push("test");
+                                cmp_path.set_extension("txt");
+                                let cmp_data = tokio::fs::read(cmp_path).await.unwrap();
+                                let streamed_data =
+                                    tokio::fs::read(path.clone().unwrap()).await.unwrap();
+                                assert_eq!(
+                                    cmp_data.as_slice(),
+                                    streamed_data.as_slice(),
+                                    "Original data and streamed data does not match"
+                                );
                             }
+                            ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                                path = Some(file_path);
+                                assert_eq!(vfm.name, "test.txt")
+                            }
+                            _ => {}
                         }
                     }
+                }
                 _ => {}
             }
 
@@ -262,9 +265,9 @@ mod tests {
         f: F,
         opts: impl FnOnce(&mut NodeBuilder),
     ) -> (NodeFuture<'a, Box<dyn NetKernel + 'a>>, SocketAddr)
-        where
-            F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync,
-            Fut: Future<Output = Result<(), NetworkError>> + Send + Sync,
+    where
+        F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync,
+        Fut: Future<Output = Result<(), NetworkError>> + Send + Sync,
     {
         server_test_node_skip_cert_verification(
             Box::new(ClientConnectListenerKernel::new(f)) as Box<dyn NetKernel>,
@@ -338,8 +341,8 @@ mod tests {
             "peer.a",
             "secret_a",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
         let (to_service_b, mut from_service_b, uuid_b, cid_b) = register_and_connect_to_server(
             bind_address_internal_service_b,
             server_bind_address,
@@ -347,8 +350,8 @@ mod tests {
             "peer.b",
             "secret_b",
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         // now, both peers are connected and registered to the central server. Now, we
         // need to have them peer-register to each other
@@ -374,10 +377,10 @@ mod tests {
 
         match item {
             InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-                                                             cid,
-                                                             peer_cid,
-                                                             username,
-                                                         }) => {
+                cid,
+                peer_cid,
+                username,
+            }) => {
                 assert_eq!(cid, cid_b);
                 assert_eq!(peer_cid, cid_b);
                 assert_eq!(username, "peer.a");
@@ -390,10 +393,10 @@ mod tests {
         let item = from_service_a.recv().await.unwrap();
         match item {
             InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-                                                             cid,
-                                                             peer_cid,
-                                                             username,
-                                                         }) => {
+                cid,
+                peer_cid,
+                username,
+            }) => {
                 assert_eq!(cid, cid_a);
                 assert_eq!(peer_cid, cid_a);
                 assert_eq!(username, "peer.b");
@@ -462,7 +465,6 @@ mod tests {
 
     #[tokio::test]
     async fn standard_file_transfer_c2s_test() -> Result<(), Box<dyn Error>> {
-
         // Causes panics in spawned threads to be caught
         let orig_hook = take_hook();
         set_hook(Box::new(move |panic_info| {
@@ -507,10 +509,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut cmp_path = PathBuf::from("..");
-        cmp_path.push("resources");
-        cmp_path.push("test");
-        cmp_path.set_extension("txt");
+        let cmp_path = PathBuf::from("../resources/test.txt");
 
         let file_transfer_command = InternalServicePayload::SendFile {
             uuid,
@@ -569,7 +568,7 @@ mod tests {
             bind_address_internal_service_a,
             bind_address_internal_service_b,
         )
-            .await?;
+        .await?;
 
         let mut file_to_send = PathBuf::from("..");
         file_to_send.push("resources");
@@ -709,7 +708,7 @@ mod tests {
         .unwrap();
 
         // Push file to REVFS
-        let file_to_send = PathBuf::from("../../resources/test.txt");
+        let file_to_send = PathBuf::from("../resources/test.txt");
         let virtual_path = PathBuf::from("/test.txt");
         let file_transfer_command = InternalServicePayload::SendFile {
             uuid,
@@ -810,10 +809,10 @@ mod tests {
             bind_address_internal_service_a,
             bind_address_internal_service_b,
         )
-            .await?;
+        .await?;
 
         // Push file to REVFS on peer
-        let file_to_send = PathBuf::from("../../resources/test.txt");
+        let file_to_send = PathBuf::from("../resources/test.txt");
         let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
         let send_file_to_service_b_payload = InternalServicePayload::SendFile {
             uuid: uuid_a,
@@ -857,7 +856,7 @@ mod tests {
         // Download P2P REVFS file - without delete on pull
         let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
         let download_file_command = InternalServicePayload::DownloadFile {
-            virtual_directory: virtual_path,
+            virtual_directory: virtual_path.clone(),
             security_level: None,
             delete_on_pull: false,
             cid: cid_a,
@@ -880,7 +879,6 @@ mod tests {
         info!(target: "citadel","{download_file_response:?}");
 
         // Delete file on Peer REVFS
-        let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
         let delete_file_command = InternalServicePayload::DeleteVirtualFile {
             virtual_directory: virtual_path,
             cid: cid_a,

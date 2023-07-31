@@ -2,6 +2,9 @@
 mod tests {
     use bytes::Bytes;
     use citadel_logging::info;
+    use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
+    use citadel_sdk::prefabs::server::empty::EmptyKernel;
+    use citadel_sdk::prefabs::ClientServerRemote;
     use citadel_sdk::prelude::*;
     use citadel_workspace_lib::wrap_tcp_conn;
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
@@ -17,9 +20,6 @@ mod tests {
     use std::future::Future;
     use std::net::SocketAddr;
     use std::time::Duration;
-    use citadel_sdk::prefabs::ClientServerRemote;
-    use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
-    use citadel_sdk::prefabs::server::empty::EmptyKernel;
     use tokio::net::TcpStream;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -81,9 +81,9 @@ mod tests {
         f: F,
         opts: impl FnOnce(&mut NodeBuilder),
     ) -> (NodeFuture<'a, Box<dyn NetKernel + 'a>>, SocketAddr)
-        where
-            F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync,
-            Fut: Future<Output = Result<(), NetworkError>> + Send + Sync,
+    where
+        F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync,
+        Fut: Future<Output = Result<(), NetworkError>> + Send + Sync,
     {
         server_test_node_skip_cert_verification(
             Box::new(ClientConnectListenerKernel::new(f)) as Box<dyn NetKernel>,
