@@ -1,3 +1,4 @@
+use crate::kernel::request_handler::handle_request;
 use bytes::Bytes;
 use citadel_logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
@@ -7,7 +8,6 @@ use citadel_workspace_lib::{deserialize, serialize_payload, wrap_tcp_conn};
 use citadel_workspace_types::*;
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
-use payload_handler::payload_handler;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use uuid::Uuid;
 
-pub(crate) mod payload_handler;
+pub(crate) mod request_handler;
 
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
@@ -166,7 +166,7 @@ impl NetKernel for CitadelWorkspaceService {
         let remote_for_closure = remote.clone();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServiceRequest>();
 
         let tcp_connection_map = &self.tcp_connection_map.clone();
         let listener_task = async move {
@@ -184,7 +184,7 @@ impl NetKernel for CitadelWorkspaceService {
         let inbound_command_task = async move {
             while let Some(command) = rx.recv().await {
                 // TODO: handle error once payload_handler is fallible
-                payload_handler(
+                handle_request(
                     command,
                     &server_connection_map,
                     &mut remote,
@@ -297,6 +297,7 @@ impl NetKernel for CitadelWorkspaceService {
                         let response = InternalServiceResponse::Disconnected(Disconnected {
                             cid: implicated_cid,
                             peer_cid: Some(peer_cid),
+                            request_id: None,
                         });
                         send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;
                     }
@@ -348,7 +349,7 @@ async fn sink_send_payload(
 
 fn send_to_kernel(
     payload_to_send: &[u8],
-    sender: &UnboundedSender<InternalServicePayload>,
+    sender: &UnboundedSender<InternalServiceRequest>,
 ) -> Result<(), NetworkError> {
     if let Some(payload) = deserialize(payload_to_send) {
         sender.send(payload)?;
@@ -361,7 +362,7 @@ fn send_to_kernel(
 
 fn handle_connection(
     conn: TcpStream,
-    to_kernel: UnboundedSender<InternalServicePayload>,
+    to_kernel: UnboundedSender<InternalServiceRequest>,
     mut from_kernel: tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
     conn_id: Uuid,
 ) {
@@ -373,6 +374,7 @@ fn handle_connection(
             let response =
                 InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
                     id: conn_id,
+                    request_id: None,
                 });
 
             sink_send_payload(&response, &mut sink).await;
