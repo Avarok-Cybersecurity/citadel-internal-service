@@ -51,7 +51,6 @@ pub struct Connection {
 struct PeerConnection {
     sink: PeerChannelSendHalf,
     remote: SymmetricIdentifierHandle,
-    handler_map: HashMap<u32, Option<ObjectTransferHandler>>,
     associated_tcp_connection: Uuid,
 }
 
@@ -80,7 +79,6 @@ impl Connection {
             PeerConnection {
                 sink,
                 remote,
-                handler_map: HashMap::new(),
                 associated_tcp_connection: self.associated_tcp_connection,
             },
         );
