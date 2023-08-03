@@ -52,6 +52,7 @@ struct PeerConnection {
     sink: PeerChannelSendHalf,
     remote: SymmetricIdentifierHandle,
     handler_map: HashMap<u32, Option<ObjectTransferHandler>>,
+    associated_tcp_connection: Uuid,
 }
 
 impl Connection {
@@ -81,6 +82,7 @@ impl Connection {
                 sink,
                 remote,
                 handler_map: HashMap::new(),
+                associated_tcp_connection: self.associated_tcp_connection,
             },
         );
     }
@@ -209,26 +211,45 @@ impl NetKernel for CitadelWorkspaceService {
         match message {
             NodeResult::Disconnect(disconnect) => {
                 if let Some(conn) = disconnect.v_conn_type {
-                    match conn {
+                    let (signal, conn_uuid) = match conn {
                         VirtualTargetType::LocalGroupServer { implicated_cid } => {
                             let mut server_connection_map = self.server_connection_map.lock().await;
-                            server_connection_map.remove(&implicated_cid);
-                            // TODO: send disconnect signal to the TCP connection
-                            // interested in this c2s connection
+                            if let Some(conn) = server_connection_map.remove(&implicated_cid) {
+                                (
+                                    InternalServiceResponse::Disconnected(Disconnected {
+                                        cid: implicated_cid,
+                                        peer_cid: None,
+                                        request_id: None,
+                                    }),
+                                    conn.associated_tcp_connection,
+                                )
+                            } else {
+                                return Ok(());
+                            }
                         }
                         VirtualTargetType::LocalGroupPeer {
                             implicated_cid,
                             peer_cid,
                         } => {
-                            let _did_remove = self
-                                .clear_peer_connection(implicated_cid, peer_cid)
-                                .await
-                                .is_some();
-
-                            // TODO: send disconnect signal to the TCP connection
+                            if let Some(conn) =
+                                self.clear_peer_connection(implicated_cid, peer_cid).await
+                            {
+                                (
+                                    InternalServiceResponse::Disconnected(Disconnected {
+                                        cid: implicated_cid,
+                                        peer_cid: Some(peer_cid),
+                                        request_id: None,
+                                    }),
+                                    conn.associated_tcp_connection,
+                                )
+                            } else {
+                                return Ok(());
+                            }
                         }
-                        _ => {}
-                    }
+                        _ => return Ok(()),
+                    };
+
+                    send_response_to_tcp_client(&self.tcp_connection_map, signal, conn_uuid).await
                 }
             }
             NodeResult::ObjectTransferHandle(object_transfer_handle) => {
