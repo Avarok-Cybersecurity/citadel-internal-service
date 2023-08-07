@@ -725,7 +725,6 @@ mod tests {
         file_to_send.push("test");
         file_to_send.set_extension("txt");
         let mut virtual_path = PathBuf::from("");
-        virtual_path.push(&std::path::MAIN_SEPARATOR.to_string());
         virtual_path.push("test");
         virtual_path.set_extension("txt");
         let file_transfer_command = InternalServiceRequest::SendFile {
@@ -753,7 +752,6 @@ mod tests {
         info!(target: "citadel","{file_transfer_response:?}");
 
         // Download/Pull file from REVFS - Don't delete on pull
-        let virtual_path = PathBuf::from("/test.txt");
         let file_download_command = InternalServiceRequest::DownloadFile {
             virtual_directory: virtual_path.clone(),
             security_level: None,
