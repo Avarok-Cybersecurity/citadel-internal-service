@@ -248,6 +248,7 @@ pub enum InternalServiceResponse {
     LocalDBClearAllKVSuccess(LocalDBClearAllKVSuccess),
     LocalDBClearAllKVFailure(LocalDBClearAllKVFailure),
     GetSessions(GetSessions),
+    GetAccountInformation(Accounts),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -370,12 +371,32 @@ pub enum InternalServiceRequest {
         uuid: Uuid,
         request_id: Uuid,
     },
+    GetAccountInformation {
+        uuid: Uuid,
+        request_id: Uuid,
+        // If specified, the command will reply with information for a specific account. Otherwise
+        // the command will reply with information for all accounts
+        cid: Option<u64>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionInformation {
     pub cid: u64,
     pub peer_connections: HashMap<u64, PeerSessionInformation>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Accounts {
+    pub accounts: HashMap<u64, AccountInformation>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AccountInformation {
+    pub username: String,
+    pub full_name: String,
+    pub peers: HashMap<u64, PeerSessionInformation>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

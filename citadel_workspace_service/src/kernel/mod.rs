@@ -117,7 +117,7 @@ impl NetKernel for CitadelWorkspaceService {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServiceRequest>();
 
-        let tcp_connection_map = &self.tcp_connection_map.clone();
+        let tcp_connection_map = &self.tcp_connection_map;
         let listener_task = async move {
             while let Ok((conn, _addr)) = listener.accept().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
@@ -128,13 +128,13 @@ impl NetKernel for CitadelWorkspaceService {
             Ok(())
         };
 
-        let server_connection_map = self.server_connection_map.clone();
+        let server_connection_map = &self.server_connection_map;
 
         let inbound_command_task = async move {
             while let Some(command) = rx.recv().await {
                 handle_request(
                     command,
-                    &server_connection_map,
+                    server_connection_map,
                     &mut remote,
                     tcp_connection_map,
                 )
