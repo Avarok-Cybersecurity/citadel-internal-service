@@ -3,15 +3,8 @@ use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use futures::StreamExt;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::Mutex;
-
 use citadel_workspace_types::{
-    ConnectionFailure, DeleteVirtualFileFailure, DeleteVirtualFileSuccess, DisconnectFailure,
-    Disconnected, DownloadFileFailure, DownloadFileSuccess, FileTransferStatus, GetSessions,
+    AccountInformation, Accounts, ConnectionFailure, DisconnectFailure, Disconnected, GetSessions,
     InternalServiceRequest, InternalServiceResponse, LocalDBClearAllKVFailure,
     LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess,
     LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess,
@@ -20,14 +13,13 @@ use citadel_workspace_types::{
     PeerRegisterFailure, PeerRegisterSuccess, PeerSessionInformation, SendFileFailure,
     SendFileSuccess, SessionInformation,
 };
+use futures::StreamExt;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::Mutex;
+
 use uuid::Uuid;
-
-// TODO: wrap all matched error below inside a function that takes f(NetworkError, InternalServicePayload) -> PayloadHandlerError
-/*pub struct PayloadHandlerError {
-    pub error: NetworkError,
-    pub response_payload: InternalServicePayload,
-}*/
-
 #[async_recursion]
 pub async fn handle_request(
     command: InternalServiceRequest,
@@ -36,6 +28,88 @@ pub async fn handle_request(
     tcp_connection_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
     match command {
+        InternalServiceRequest::GetAccountInformation {
+            uuid,
+            request_id,
+            cid,
+        } => {
+            async fn add_account_to_map(
+                accounts_ret: &mut HashMap<u64, AccountInformation>,
+                account: CNACMetadata,
+                remote: &NodeRemote,
+            ) {
+                let username = account.username.clone();
+                let full_name = account.full_name.clone();
+                let mut peers = HashMap::new();
+
+                // Get all the peers for this CID
+                let peer_cids = remote
+                    .account_manager()
+                    .get_hyperlan_peer_list(account.cid)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                let peers_info = remote
+                    .account_manager()
+                    .get_persistence_handler()
+                    .get_hyperlan_peers(account.cid, &peer_cids)
+                    .await
+                    .unwrap_or_default();
+
+                for peer in peers_info {
+                    peers.insert(
+                        peer.cid,
+                        PeerSessionInformation {
+                            cid: account.cid,
+                            peer_cid: peer.cid,
+                            peer_username: peer.username.unwrap_or_default(),
+                        },
+                    );
+                }
+
+                accounts_ret.insert(
+                    account.cid,
+                    AccountInformation {
+                        username,
+                        full_name,
+                        peers,
+                    },
+                );
+            }
+
+            let mut accounts_ret = HashMap::new();
+
+            let accounts = remote
+                .account_manager()
+                .get_persistence_handler()
+                .get_clients_metadata(None)
+                .await
+                .unwrap_or_default();
+            // We are only interested in the is_personal=True accounts
+            let filtered_accounts = accounts
+                .into_iter()
+                .filter(|r| r.is_personal)
+                .collect::<Vec<_>>();
+
+            if let Some(cid) = cid {
+                let account = filtered_accounts.into_iter().find(|r| r.cid == cid);
+                if let Some(account) = account {
+                    add_account_to_map(&mut accounts_ret, account, remote).await;
+                }
+            } else {
+                for account in filtered_accounts {
+                    add_account_to_map(&mut accounts_ret, account, remote).await;
+                }
+            }
+
+            let response = InternalServiceResponse::GetAccountInformation(Accounts {
+                accounts: accounts_ret,
+                request_id: Some(request_id),
+            });
+
+            send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
+        }
         // Return all the sessions for the given TCP connection
         InternalServiceRequest::GetSessions { uuid, request_id } => {
             let lock = server_connection_map.lock().await;

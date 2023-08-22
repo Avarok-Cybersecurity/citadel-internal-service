@@ -170,7 +170,7 @@ impl NetKernel for CitadelWorkspaceService {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServiceRequest>();
 
-        let tcp_connection_map = &self.tcp_connection_map.clone();
+        let tcp_connection_map = &self.tcp_connection_map;
         let listener_task = async move {
             while let Ok((conn, _addr)) = listener.accept().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
@@ -181,14 +181,14 @@ impl NetKernel for CitadelWorkspaceService {
             Ok(())
         };
 
-        let server_connection_map = self.server_connection_map.clone();
+        let server_connection_map = &self.server_connection_map;
 
         let inbound_command_task = async move {
             while let Some(command) = rx.recv().await {
                 // TODO: handle error once payload_handler is fallible
                 handle_request(
                     command,
-                    &server_connection_map,
+                    server_connection_map,
                     &mut remote,
                     tcp_connection_map,
                 )
@@ -348,21 +348,18 @@ impl NetKernel for CitadelWorkspaceService {
                     _,
                 ) = event.event
                 {
-                    let _did_remove = self
-                        .clear_peer_connection(implicated_cid, peer_cid)
-                        .await
-                        .is_some();
-
-                    let server_conn_map = self.server_connection_map.clone();
-                    let lock = server_conn_map.lock().await;
-                    if let Some(my_uuid) = lock.get(&implicated_cid) {
-                        let uuid = my_uuid.associated_tcp_connection;
+                    if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
                         let response = InternalServiceResponse::Disconnected(Disconnected {
                             cid: implicated_cid,
                             peer_cid: Some(peer_cid),
                             request_id: None,
                         });
-                        send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;
+                        send_response_to_tcp_client(
+                            &self.tcp_connection_map,
+                            response,
+                            conn.associated_tcp_connection,
+                        )
+                        .await;
                     }
                 }
             }
