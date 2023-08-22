@@ -261,40 +261,82 @@ impl NetKernel for CitadelWorkspaceService {
                 let object_id: u32 = object_transfer_handler.source as u32;
 
                 //TODO: Replace temporary metadata portions with actual metadata from handler
-                let mapped_transfer_type = if object_transfer_handler.is_revfs_pull {
-                    TransferType::RemoteEncryptedVirtualFilesystem {
-                        virtual_path: PathBuf::from("/test.txt"),
-                        security_level: Default::default(),
+                if let ObjectTransferOrientation::Receiver {is_revfs_pull} = object_transfer_handler.orientation { // Receiver - Determine transfer type
+                    let mapped_transfer_type = if is_revfs_pull {
+                        TransferType::RemoteEncryptedVirtualFilesystem {
+                            virtual_path: PathBuf::from("/test.txt"),
+                            security_level: Default::default(),
+                        }
                     }
-                } else {
-                    TransferType::FileTransfer
-                };
+                    else {
+                        TransferType::FileTransfer
+                    };
 
-                let mut server_connection_map = self.server_connection_map.lock().await;
-                if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                    connection.add_object_transfer_handler(
-                        peer_cid,
-                        object_id,
-                        Some(object_transfer_handler),
-                    );
-                    let uuid = connection.associated_tcp_connection;
-                    // TODO: add metadata to the request we send to TCP client
-                    let response =
-                        InternalServiceResponse::FileTransferRequest(FileTransferRequest {
-                            cid: implicated_cid,
+                    let mut server_connection_map = self.server_connection_map.lock().await;
+                    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
+                        connection.add_object_transfer_handler(
                             peer_cid,
-                            metadata: VirtualObjectMetadata {
-                                name: "test.txt".to_string(),
-                                date_created: "".to_string(),
-                                author: "".to_string(),
-                                plaintext_length: 0,
-                                group_count: 0,
-                                object_id,
+                            object_id,
+                            Some(object_transfer_handler),
+                        );
+                        let uuid = connection.associated_tcp_connection;
+                        // TODO: add metadata to the request we send to TCP client
+                        let response =
+                            InternalServiceResponse::FileTransferRequest(FileTransferRequest {
                                 cid: implicated_cid,
-                                transfer_type: mapped_transfer_type,
-                            },
-                        });
-                    send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;
+                                peer_cid,
+                                metadata: VirtualObjectMetadata {
+                                    name: "test.txt".to_string(),
+                                    date_created: "".to_string(),
+                                    author: "".to_string(),
+                                    plaintext_length: 0,
+                                    group_count: 0,
+                                    object_id,
+                                    cid: implicated_cid,
+                                    transfer_type: mapped_transfer_type,
+                                },
+                            });
+                        send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;
+                    }
+                }
+                else { // Sender - Must spawn a task to relay status updates to TCP client
+                    let mut handle_inner = object_transfer_handler.inner;
+                    let connection_map_clone = self.tcp_connection_map.clone();
+                    let mut server_connection_map = self.server_connection_map.lock().await;
+                    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
+                        let uuid = connection.associated_tcp_connection;
+                        let sender_status_updater = async move {
+                            while let Some(status) = handle_inner.next().await {
+                                let status_message = status.clone();
+                                match connection_map_clone.lock().await.get(&uuid) {
+                                    Some(entry) => {
+                                        let message = InternalServiceResponse::FileTransferTick(
+                                            FileTransferTick {
+                                                uuid,
+                                                cid: implicated_cid,
+                                                peer_cid,
+                                                status: status_message,
+                                            },
+                                        );
+                                        match entry.send(message.clone()) {
+                                            Ok(res) => res,
+                                            Err(_) => {
+                                                info!(target: "citadel", "File Transfer Status Tick Not Sent")
+                                            }
+                                        }
+                                        if let ObjectTransferStatus::TransferComplete {} = status { break; }
+                                    },
+                                    None => {
+                                        info!(target:"citadel","Connection not found during File Transfer Status Tick")
+                                    }
+                                }
+                            }
+                        };
+                        tokio::task::spawn(sender_status_updater);
+                    }
+                    else{
+                        info!(target: "citadel", "Server Connection Not Found")
+                    }
                 }
             }
             NodeResult::PeerEvent(event) => {

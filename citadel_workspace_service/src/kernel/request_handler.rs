@@ -567,7 +567,7 @@ pub async fn handle_request(
                         tcp_connection_map,
                         InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
                             cid,
-                            message: "Server Connection Not Found".into_string(),
+                            message: String::from("Server Connection Not Found"),
                             request_id: Some(request_id),
                         }),
                         uuid,
@@ -641,7 +641,7 @@ pub async fn handle_request(
                         InternalServiceResponse::DeleteVirtualFileFailure(
                             DeleteVirtualFileFailure {
                                 cid,
-                                message: "Server Connection Not Found".into_string(),
+                                message: String::from("Server Connection Not Found"),
                                 request_id: Some(request_id),
                             },
                         ),
