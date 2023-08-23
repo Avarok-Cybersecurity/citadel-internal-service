@@ -99,9 +99,9 @@ mod tests {
         let password = password.into();
 
         if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
-                                                                      id,
-                                                                      request_id: _,
-                                                                  }) = greeter_packet
+            id,
+            request_id: _,
+        }) = greeter_packet
         {
             let register_command = InternalServiceRequest::Register {
                 uuid: id,
@@ -441,7 +441,10 @@ mod tests {
 
         let item = from_service_b.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid, request_id: _ }) => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+                cid,
+                request_id: _,
+            }) => {
                 assert_eq!(cid, cid_b);
             }
             _ => {
@@ -452,7 +455,10 @@ mod tests {
 
         let item = from_service_a.recv().await.unwrap();
         match item {
-            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid, request_id: _ }) => {
+            InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+                cid,
+                request_id: _,
+            }) => {
                 assert_eq!(cid, cid_a);
                 Ok((
                     to_service_a,
@@ -537,7 +543,11 @@ mod tests {
             InternalServiceResponse::SendFileSuccess(SendFileSuccess { cid, request_id: _ }) => {
                 info!(target: "citadel", "File Sending Request Success");
             }
-            InternalServiceResponse::SendFileFailure(SendFileFailure { cid, message, request_id: _ }) => {
+            InternalServiceResponse::SendFileFailure(SendFileFailure {
+                cid,
+                message,
+                request_id: _,
+            }) => {
                 panic!("File Send Failed: {message:?}")
             }
             _ => {
@@ -547,7 +557,11 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
-        let disconnect_command = InternalServiceRequest::Disconnect { uuid, request_id: Uuid::new_v4(), cid };
+        let disconnect_command = InternalServiceRequest::Disconnect {
+            uuid,
+            request_id: Uuid::new_v4(),
+            cid,
+        };
         to_service.send(disconnect_command).unwrap();
         let _disconnect_response = from_service.recv().await.unwrap();
 
@@ -741,7 +755,10 @@ mod tests {
         to_service.send(file_transfer_command).unwrap();
         let file_transfer_response = from_service.recv().await.unwrap();
         match file_transfer_response {
-            InternalServiceResponse::SendFileSuccess(SendFileSuccess { cid: response_cid, request_id: _ }) => {
+            InternalServiceResponse::SendFileSuccess(SendFileSuccess {
+                cid: response_cid,
+                request_id: _,
+            }) => {
                 assert_eq!(cid, response_cid);
             }
             _ => {
@@ -765,9 +782,9 @@ mod tests {
         let file_download_response = from_service.recv().await.unwrap();
         match file_download_response {
             InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
-                                                             cid: response_cid,
-                                                             request_id: _,
-                                                         }) => {
+                cid: response_cid,
+                request_id: _,
+            }) => {
                 assert_eq!(cid, response_cid);
             }
             _ => {
@@ -790,9 +807,9 @@ mod tests {
         let file_delete_command = from_service.recv().await.unwrap();
         match file_delete_command {
             InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess {
-                                                                  cid: response_cid,
-                                                                  request_id: _,
-                                                              }) => {
+                cid: response_cid,
+                request_id: _,
+            }) => {
                 assert_eq!(cid, response_cid);
             }
             _ => {
@@ -802,7 +819,11 @@ mod tests {
         }
         info!(target: "citadel","{file_delete_command:?}");
 
-        let disconnect_command = InternalServiceRequest::Disconnect { uuid, request_id: Uuid::new_v4(), cid };
+        let disconnect_command = InternalServiceRequest::Disconnect {
+            uuid,
+            request_id: Uuid::new_v4(),
+            cid,
+        };
         to_service.send(disconnect_command).unwrap();
         let _disconnect_response = from_service.recv().await.unwrap();
 
@@ -891,9 +912,9 @@ mod tests {
         let download_file_response = from_service_a.recv().await.unwrap();
         match download_file_response {
             InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
-                                                             cid: response_cid,
-                                                             request_id: _,
-                                                         }) => {
+                cid: response_cid,
+                request_id: _,
+            }) => {
                 assert_eq!(cid_a, response_cid);
             }
             _ => {
@@ -915,9 +936,9 @@ mod tests {
         let delete_file_response = from_service_a.recv().await.unwrap();
         match download_file_response {
             InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess {
-                                                                  cid: response_cid,
-                                                                  request_id: _,
-                                                              }) => {
+                cid: response_cid,
+                request_id: _,
+            }) => {
                 assert_eq!(cid_a, response_cid);
             }
             _ => {

@@ -261,14 +261,16 @@ impl NetKernel for CitadelWorkspaceService {
                 let object_id: u32 = object_transfer_handler.source as u32;
 
                 //TODO: Replace temporary metadata portions with actual metadata from handler
-                if let ObjectTransferOrientation::Receiver {is_revfs_pull} = object_transfer_handler.orientation { // Receiver - Determine transfer type
+                if let ObjectTransferOrientation::Receiver { is_revfs_pull } =
+                    object_transfer_handler.orientation
+                {
+                    // Receiver - Determine transfer type
                     let mapped_transfer_type = if is_revfs_pull {
                         TransferType::RemoteEncryptedVirtualFilesystem {
                             virtual_path: PathBuf::from("/test.txt"),
                             security_level: Default::default(),
                         }
-                    }
-                    else {
+                    } else {
                         TransferType::FileTransfer
                     };
 
@@ -298,8 +300,8 @@ impl NetKernel for CitadelWorkspaceService {
                             });
                         send_response_to_tcp_client(&self.tcp_connection_map, response, uuid).await;
                     }
-                }
-                else { // Sender - Must spawn a task to relay status updates to TCP client
+                } else {
+                    // Sender - Must spawn a task to relay status updates to TCP client
                     let mut handle_inner = object_transfer_handler.inner;
                     let connection_map_clone = self.tcp_connection_map.clone();
                     let mut server_connection_map = self.server_connection_map.lock().await;
@@ -324,8 +326,10 @@ impl NetKernel for CitadelWorkspaceService {
                                                 info!(target: "citadel", "File Transfer Status Tick Not Sent")
                                             }
                                         }
-                                        if let ObjectTransferStatus::TransferComplete {} = status { break; }
-                                    },
+                                        if let ObjectTransferStatus::TransferComplete {} = status {
+                                            break;
+                                        }
+                                    }
                                     None => {
                                         info!(target:"citadel","Connection not found during File Transfer Status Tick")
                                     }
@@ -333,8 +337,7 @@ impl NetKernel for CitadelWorkspaceService {
                             }
                         };
                         tokio::task::spawn(sender_status_updater);
-                    }
-                    else{
+                    } else {
                         info!(target: "citadel", "Server Connection Not Found")
                     }
                 }

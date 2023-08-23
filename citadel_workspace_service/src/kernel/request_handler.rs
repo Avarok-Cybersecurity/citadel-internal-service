@@ -4,14 +4,15 @@ use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
 use citadel_workspace_types::{
-    AccountInformation, Accounts, ConnectionFailure, DisconnectFailure, Disconnected, GetSessions,
-    InternalServiceRequest, InternalServiceResponse, LocalDBClearAllKVFailure,
-    LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess,
-    LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess,
-    LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent,
-    PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess,
-    PeerRegisterFailure, PeerRegisterSuccess, PeerSessionInformation, SendFileFailure,
-    SendFileSuccess, SessionInformation,
+    AccountInformation, Accounts, ConnectionFailure, DeleteVirtualFileFailure,
+    DeleteVirtualFileSuccess, DisconnectFailure, Disconnected, DownloadFileFailure,
+    DownloadFileSuccess, FileTransferStatus, GetSessions, InternalServiceRequest,
+    InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
+    LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
+    LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
+    MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
+    PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
+    PeerSessionInformation, SendFileFailure, SendFileSuccess, SessionInformation,
 };
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -501,8 +502,10 @@ pub async fn handle_request(
                         let connection_map_clone = tcp_connection_map.clone();
                         let result = if accept {
                             let accept_result = owned_handler.accept();
+                            let mut handler_inner = owned_handler.inner;
+
                             let tcp_client_metadata_updater = async move {
-                                while let Some(status) = owned_handler.next().await {
+                                while let Some(status) = handler_inner.next().await {
                                     let message = InternalServiceResponse::FileTransferTick(
                                         citadel_workspace_types::FileTransferTick {
                                             uuid,
@@ -598,8 +601,7 @@ pub async fn handle_request(
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        conn
-                            .client_server_remote
+                        conn.client_server_remote
                             .remote_encrypted_virtual_filesystem_pull(
                                 virtual_directory,
                                 security_level,
@@ -618,7 +620,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
 
                         Err(err) => {
@@ -631,7 +633,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 }
@@ -646,7 +648,7 @@ pub async fn handle_request(
                         }),
                         uuid,
                     )
-                        .await;
+                    .await;
                 }
             };
         }
@@ -658,7 +660,6 @@ pub async fn handle_request(
             uuid,
             request_id,
         } => {
-
             match server_connection_map.lock().await.get_mut(&cid) {
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
@@ -671,8 +672,7 @@ pub async fn handle_request(
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        conn
-                            .client_server_remote
+                        conn.client_server_remote
                             .remote_encrypted_virtual_filesystem_delete(virtual_directory)
                             .await
                     };
@@ -689,7 +689,7 @@ pub async fn handle_request(
                                 ),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
 
                         Err(err) => {
@@ -704,7 +704,7 @@ pub async fn handle_request(
                                 ),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 }
@@ -721,7 +721,7 @@ pub async fn handle_request(
                         ),
                         uuid,
                     )
-                        .await;
+                    .await;
                 }
             };
         }
