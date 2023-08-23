@@ -6,7 +6,7 @@ use citadel_sdk::prelude::*;
 use citadel_workspace_types::{
     AccountInformation, Accounts, ConnectionFailure, DeleteVirtualFileFailure,
     DeleteVirtualFileSuccess, DisconnectFailure, Disconnected, DownloadFileFailure,
-    DownloadFileSuccess, FileTransferStatus, GetSessions, InternalServiceRequest,
+    DownloadFileSuccess, FileTransferStatus, FileTransferTick, GetSessions, InternalServiceRequest,
     InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
     LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
     LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
@@ -402,6 +402,7 @@ pub async fn handle_request(
                     let result = if let Some(peer_cid) = peer_cid {
                         if let Some(peer_remote) = conn.peers.get_mut(&peer_cid) {
                             if is_revfs {
+                                info!(target: "citadel","Send File REVFS to Peer");
                                 peer_remote
                                     .remote
                                     .remote_encrypted_virtual_filesystem_push_custom_chunking(
@@ -412,6 +413,7 @@ pub async fn handle_request(
                                     )
                                     .await
                             } else {
+                                info!(target: "citadel","Send File Standard to Peer");
                                 peer_remote
                                     .remote
                                     .send_file_with_custom_opts(
@@ -425,6 +427,7 @@ pub async fn handle_request(
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else if is_revfs {
+                        info!(target: "citadel","Send File REVFS to Server");
                         conn.client_server_remote
                             .remote_encrypted_virtual_filesystem_push_custom_chunking(
                                 source,
@@ -434,6 +437,7 @@ pub async fn handle_request(
                             )
                             .await
                     } else {
+                        info!(target: "citadel","Send File Standard to Server");
                         conn.client_server_remote
                             .send_file_with_custom_opts(
                                 source,
@@ -445,6 +449,7 @@ pub async fn handle_request(
 
                     match result {
                         Ok(_) => {
+                            info!(target: "citadel","InternalServiceRequest Send File Success");
                             send_response_to_tcp_client(
                                 tcp_connection_map,
                                 InternalServiceResponse::SendFileSuccess(SendFileSuccess {
@@ -457,6 +462,7 @@ pub async fn handle_request(
                         }
 
                         Err(err) => {
+                            info!(target: "citadel","InternalServiceRequest Send File Failure");
                             send_response_to_tcp_client(
                                 tcp_connection_map,
                                 InternalServiceResponse::SendFileFailure(SendFileFailure {
@@ -506,21 +512,29 @@ pub async fn handle_request(
 
                             let tcp_client_metadata_updater = async move {
                                 while let Some(status) = handler_inner.next().await {
-                                    let message = InternalServiceResponse::FileTransferTick(
-                                        citadel_workspace_types::FileTransferTick {
-                                            uuid,
-                                            cid,
-                                            peer_cid,
-                                            status,
-                                        },
-                                    );
+                                    let status_message = status.clone();
                                     match connection_map_clone.lock().await.get(&uuid) {
-                                        Some(entry) => match entry.send(message) {
-                                            Ok(res) => res,
-                                            Err(_) => {
-                                                info!(target: "citadel", "File Transfer Status Tick Not Sent")
+                                        Some(entry) => {
+                                            let message = InternalServiceResponse::FileTransferTick(
+                                                FileTransferTick {
+                                                    uuid,
+                                                    cid,
+                                                    peer_cid,
+                                                    status: status_message,
+                                                },
+                                            );
+                                            match entry.send(message.clone()) {
+                                                Ok(res) => res,
+                                                Err(_) => {
+                                                    info!(target: "citadel", "File Transfer Status Tick Not Sent")
+                                                }
                                             }
-                                        },
+                                            if let ObjectTransferStatus::TransferComplete {} =
+                                                status
+                                            {
+                                                break;
+                                            }
+                                        }
                                         None => {
                                             info!(target:"citadel","Connection not found during File Transfer Status Tick")
                                         }

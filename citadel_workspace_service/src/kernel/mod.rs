@@ -264,6 +264,7 @@ impl NetKernel for CitadelWorkspaceService {
                 if let ObjectTransferOrientation::Receiver { is_revfs_pull } =
                     object_transfer_handler.orientation
                 {
+                    info!(target: "citadel", "Receiver Obtaining ObjectTransferHandler");
                     // Receiver - Determine transfer type
                     let mapped_transfer_type = if is_revfs_pull {
                         TransferType::RemoteEncryptedVirtualFilesystem {
@@ -302,6 +303,7 @@ impl NetKernel for CitadelWorkspaceService {
                     }
                 } else {
                     // Sender - Must spawn a task to relay status updates to TCP client
+                    info!(target: "citadel", "Sender Obtaining ObjectTransferHandler");
                     let mut handle_inner = object_transfer_handler.inner;
                     let connection_map_clone = self.tcp_connection_map.clone();
                     let mut server_connection_map = self.server_connection_map.lock().await;

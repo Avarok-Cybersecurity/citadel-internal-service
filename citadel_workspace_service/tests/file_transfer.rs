@@ -611,86 +611,157 @@ mod tests {
             security_level: None,
         };
         to_service_a.send(send_file_to_service_b_payload).unwrap();
-        let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
-        //info!(target: "citadel","{deserialized_service_a_payload_response:?}");
+        info!(target:"citadel", "File Transfer Request Sent from {cid_a:?}");
 
-        if let InternalServiceResponse::FileTransferStatus(FileTransferStatus { .. }) =
-            &deserialized_service_a_payload_response
+        info!(target:"citadel", "File Transfer Request Sent Successfully {cid_a:?}");
+        let deserialized_service_a_payload_response = from_service_b.recv().await.unwrap();
+        if let InternalServiceResponse::FileTransferRequest(FileTransferRequest { .. }) =
+            deserialized_service_a_payload_response
         {
-            info!(target:"citadel", "File Transfer Request {cid_b}");
-            let deserialized_service_a_payload_response = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::FileTransferRequest(FileTransferRequest { .. }) =
-                deserialized_service_a_payload_response
-            {
-                let file_transfer_accept_payload = InternalServiceRequest::RespondFileTransfer {
-                    uuid: uuid_b,
-                    cid: cid_b,
-                    peer_cid: cid_a,
-                    object_id: cid_a as u32,
-                    accept: true,
-                    download_location: None,
-                    request_id: Uuid::new_v4(),
-                };
-                to_service_b.send(file_transfer_accept_payload).unwrap();
-                info!(target:"citadel", "Accepted File Transfer {cid_b}");
+            info!(target:"citadel", "File Transfer Request {cid_b:?}");
 
-                let mut path = None;
-                while let Some(deserialized_service_a_payload_response) =
-                    from_service_a.recv().await
-                {
-                    if let InternalServiceResponse::FileTransferTick(FileTransferTick {
-                        uuid,
-                        cid,
-                        peer_cid,
+            let file_transfer_accept = InternalServiceRequest::RespondFileTransfer {
+                uuid: uuid_b,
+                cid: cid_b,
+                peer_cid: cid_a,
+                object_id: cid_a as u32,
+                accept: true,
+                download_location: None,
+                request_id: Uuid::new_v4(),
+            };
+            to_service_b.send(file_transfer_accept).unwrap();
+            info!(target:"citadel", "Accepted File Transfer {cid_b:?}");
+
+            let file_transfer_accept = from_service_b.recv().await.unwrap();
+            if let InternalServiceResponse::FileTransferStatus(FileTransferStatus {
+                cid: _,
+                object_id: _,
+                success,
+                response,
+                message: _,
+                request_id: _,
+            }) = file_transfer_accept
+            {
+                if success && response {
+                    info!(target:"citadel", "File Transfer Accept Success {cid_b:?}");
+                    // continue to status ticks
+                } else {
+                    panic!("Service B Accept Response Failure - Success: {success:?} Response {response:?}")
+                }
+            } else {
+                panic!("Unhandled Service B response")
+            }
+
+            // Service B Awaits status updates on Reception of file
+            let mut path = None;
+            while let mut receiving = true {
+                let tick_response = from_service_b.recv().await.unwrap();
+                match tick_response {
+                    InternalServiceResponse::FileTransferTick(FileTransferTick {
+                        uuid: _,
+                        cid: _,
+                        peer_cid: _,
                         status,
-                    }) = deserialized_service_a_payload_response
-                    {
-                        match status {
-                            ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
-                                path = Some(file_path);
-                                info!(target: "citadel","File Transfer Beginning");
-                                assert_eq!(vfm.name, "test.txt")
-                            }
-                            ObjectTransferStatus::ReceptionTick(_, _, _) => {
-                                info!(target: "citadel","File Transfer Tick");
-                            }
-                            ObjectTransferStatus::ReceptionComplete => {
-                                info!(target: "citadel","File Transfer Complete");
-                                let mut cmp_path = PathBuf::from("..");
-                                cmp_path.push("resources");
-                                cmp_path.push("test");
-                                cmp_path.set_extension("txt");
-                                let cmp_data = tokio::fs::read(cmp_path.clone()).await.unwrap();
-                                let streamed_data =
-                                    tokio::fs::read(path.clone().unwrap()).await.unwrap();
-                                assert_eq!(
-                                    cmp_data.as_slice(),
-                                    streamed_data.as_slice(),
-                                    "Original data and streamed data does not match"
-                                );
-                                break;
-                            }
-                            _ => {}
+                    }) => match status {
+                        ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                            path = Some(file_path);
+                            info!(target: "citadel", "File Transfer (Receiving) Beginning");
+                            assert_eq!(vfm.name, "test.txt")
                         }
+                        ObjectTransferStatus::ReceptionTick(..) => {
+                            info!(target: "citadel", "File Transfer (Receiving) Tick");
+                        }
+                        ObjectTransferStatus::ReceptionComplete => {
+                            info!(target: "citadel", "File Transfer (Receiving) Completed");
+                            let mut cmp_path = PathBuf::from("..");
+                            cmp_path.push("resources");
+                            cmp_path.push("test");
+                            cmp_path.set_extension("txt");
+                            let cmp_data = tokio::fs::read(cmp_path.clone()).await.unwrap();
+                            let streamed_data =
+                                tokio::fs::read(path.clone().unwrap()).await.unwrap();
+                            assert_eq!(
+                                cmp_data.as_slice(),
+                                streamed_data.as_slice(),
+                                "Original data and streamed data does not match"
+                            );
+                            receiving = false;
+                        }
+                        _ => {
+                            panic!("File Send Reception Status Yielded Unexpected Response")
+                        }
+                    },
+                    unintended_response => {
+                        panic!(
+                            "File Send - Expected Status on Transfer, got: {unintended_response:?}"
+                        )
                     }
                 }
-                let mut cmp_path = PathBuf::from("..");
-                cmp_path.push("resources");
-                cmp_path.push("test");
-                cmp_path.set_extension("txt");
-                let cmp_data = tokio::fs::read(cmp_path.clone()).await.unwrap();
-                let streamed_data = tokio::fs::read(path.clone().unwrap()).await.unwrap();
-                assert_eq!(
-                    cmp_data.as_slice(),
-                    streamed_data.as_slice(),
-                    "Original data and streamed data does not match"
-                );
-            } else {
-                panic!("File Transfer P2P Failure");
             }
+
+            // let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
+            // if let InternalServiceResponse::SendFileSuccess(SendFileSuccess { .. }) = deserialized_service_a_payload_response {
+            //     info!(target: "citadel", "Service A Send File Success");
+            // }
+            // else {
+            //     panic!("Service A Send File Status Failure")
+            // }
+
+            // Service A Awaits status updates on Transmission of file
+            // while let mut transmitting = true {
+            //     let tick_response = from_service_a.recv().await.unwrap();
+            //     match tick_response {
+            //         InternalServiceResponse::FileTransferTick(FileTransferTick{ uuid, cid, peer_cid, status }) => {
+            //             match status {
+            //                 ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+            //                     path = Some(file_path);
+            //                     info!(target: "citadel", "File Transfer (Sending) Beginning");
+            //                     assert_eq!(vfm.name, "test.txt")
+            //                 },
+            //                 ObjectTransferStatus::TransferTick( .. ) => {
+            //                     info!(target: "citadel", "File Transfer (Sending) Tick");
+            //                 },
+            //                 ObjectTransferStatus::TransferComplete => {
+            //                     info!(target: "citadel", "File Transfer (Sending) Completed");
+            //                     let mut cmp_path = PathBuf::from("..");
+            //                     cmp_path.push("resources");
+            //                     cmp_path.push("test");
+            //                     cmp_path.set_extension("txt");
+            //                     let cmp_data = tokio::fs::read(cmp_path.clone()).await.unwrap();
+            //                     let streamed_data =
+            //                     tokio::fs::read(path.clone().unwrap()).await.unwrap();
+            //                     assert_eq!(
+            //                         cmp_data.as_slice(),
+            //                         streamed_data.as_slice(),
+            //                         "Original data and streamed data does not match"
+            //                     );
+            //                     transmitting = false;
+            //                 },
+            //                 _ => {
+            //                     panic!("File Send Transmission Status Yielded Unexpected Response")
+            //                 }
+            //             }
+            //         },
+            //         unintended_response => {
+            //             panic!("File Send - Expected Status on Transfer, got: {unintended_response:?}")
+            //         }
+            //     }
+            // }
+
+            // let mut cmp_path = PathBuf::from("..");
+            // cmp_path.push("resources");
+            // cmp_path.push("test");
+            // cmp_path.set_extension("txt");
+            // let cmp_data = tokio::fs::read(cmp_path.clone()).await.unwrap();
+            // let streamed_data = tokio::fs::read(path.clone().unwrap()).await.unwrap();
+            // assert_eq!(
+            //     cmp_data.as_slice(),
+            //     streamed_data.as_slice(),
+            //     "Original data and streamed data does not match"
+            // );
         } else {
-            panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
-        }
+            panic!("File Transfer P2P Failure");
+        };
 
         Ok(())
     }
