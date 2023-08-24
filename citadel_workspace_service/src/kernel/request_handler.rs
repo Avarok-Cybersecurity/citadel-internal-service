@@ -1,4 +1,6 @@
-use crate::kernel::{create_client_server_remote, send_response_to_tcp_client, Connection};
+use crate::kernel::{
+    create_client_server_remote, send_response_to_tcp_client, spawn_tick_updater, Connection,
+};
 use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
@@ -6,7 +8,7 @@ use citadel_sdk::prelude::*;
 use citadel_workspace_types::{
     AccountInformation, Accounts, ConnectionFailure, DeleteVirtualFileFailure,
     DeleteVirtualFileSuccess, DisconnectFailure, Disconnected, DownloadFileFailure,
-    DownloadFileSuccess, FileTransferStatus, FileTransferTick, GetSessions, InternalServiceRequest,
+    DownloadFileSuccess, FileTransferStatus, GetSessions, InternalServiceRequest,
     InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
     LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
     LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
@@ -386,65 +388,40 @@ pub async fn handle_request(
             uuid,
             source,
             cid,
-            is_revfs,
             peer_cid,
             chunk_size,
-            virtual_directory,
-            security_level,
+            transfer_type,
             request_id,
         } => {
-            let chunk_size = chunk_size.unwrap_or_default();
-            let security_level = security_level.unwrap_or_default();
-            let virtual_directory = virtual_directory.unwrap_or_default();
-
-            match server_connection_map.lock().await.get_mut(&cid) {
+            let lock = server_connection_map.lock().await;
+            match lock.get(&cid) {
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
-                        if let Some(peer_remote) = conn.peers.get_mut(&peer_cid) {
-                            if is_revfs {
-                                info!(target: "citadel","Send File REVFS to Peer");
-                                peer_remote
-                                    .remote
-                                    .remote_encrypted_virtual_filesystem_push_custom_chunking(
-                                        source,
-                                        virtual_directory,
-                                        chunk_size,
-                                        security_level,
-                                    )
-                                    .await
-                            } else {
-                                info!(target: "citadel","Send File Standard to Peer");
-                                peer_remote
-                                    .remote
-                                    .send_file_with_custom_opts(
-                                        source,
-                                        chunk_size,
-                                        TransferType::FileTransfer,
-                                    )
-                                    .await
-                            }
+                        if let Some(peer_remote) = conn.peers.get(&peer_cid) {
+                            let request = NodeRequest::SendObject(SendObject {
+                                source: Box::new(source),
+                                chunk_size,
+                                implicated_cid: cid,
+                                v_conn_type: *peer_remote.remote.user(),
+                                transfer_type,
+                            });
+
+                            remote.send(request).await
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
-                    } else if is_revfs {
-                        info!(target: "citadel","Send File REVFS to Server");
-                        conn.client_server_remote
-                            .remote_encrypted_virtual_filesystem_push_custom_chunking(
-                                source,
-                                virtual_directory,
-                                chunk_size,
-                                security_level,
-                            )
-                            .await
                     } else {
-                        info!(target: "citadel","Send File Standard to Server");
-                        conn.client_server_remote
-                            .send_file_with_custom_opts(
-                                source,
-                                chunk_size,
-                                TransferType::FileTransfer,
-                            )
-                            .await
+                        let request = NodeRequest::SendObject(SendObject {
+                            source: Box::new(source),
+                            chunk_size,
+                            implicated_cid: cid,
+                            v_conn_type: VirtualTargetType::LocalGroupServer {
+                                implicated_cid: cid,
+                            },
+                            transfer_type,
+                        });
+
+                        remote.send(request).await
                     };
 
                     match result {
@@ -501,47 +478,21 @@ pub async fn handle_request(
             download_location: _,
             request_id,
         } => {
-            if let Some(connection) = server_connection_map.lock().await.get_mut(&cid) {
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(mut handler) = connection.take_file_transfer_handle(peer_cid, object_id)
                 {
                     if let Some(mut owned_handler) = handler.take() {
-                        let connection_map_clone = tcp_connection_map.clone();
                         let result = if accept {
                             let accept_result = owned_handler.accept();
-                            let mut handler_inner = owned_handler.inner;
+                            spawn_tick_updater(
+                                owned_handler,
+                                cid,
+                                peer_cid,
+                                &mut server_connection_map,
+                                tcp_connection_map.clone(),
+                            );
 
-                            let tcp_client_metadata_updater = async move {
-                                while let Some(status) = handler_inner.next().await {
-                                    let status_message = status.clone();
-                                    match connection_map_clone.lock().await.get(&uuid) {
-                                        Some(entry) => {
-                                            let message = InternalServiceResponse::FileTransferTick(
-                                                FileTransferTick {
-                                                    uuid,
-                                                    cid,
-                                                    peer_cid,
-                                                    status: status_message,
-                                                },
-                                            );
-                                            match entry.send(message.clone()) {
-                                                Ok(res) => res,
-                                                Err(_) => {
-                                                    info!(target: "citadel", "File Transfer Status Tick Not Sent")
-                                                }
-                                            }
-                                            if let ObjectTransferStatus::TransferComplete {} =
-                                                status
-                                            {
-                                                break;
-                                            }
-                                        }
-                                        None => {
-                                            info!(target:"citadel","Connection not found during File Transfer Status Tick")
-                                        }
-                                    }
-                                }
-                            };
-                            tokio::task::spawn(tcp_client_metadata_updater);
                             accept_result
                         } else {
                             owned_handler.decline()

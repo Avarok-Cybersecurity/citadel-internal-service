@@ -1,9 +1,9 @@
 use bytes::BytesMut;
-use citadel_sdk::prelude::VirtualObjectMetadata;
 pub use citadel_sdk::prelude::{
     ConnectMode, ObjectTransferStatus, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode,
     UserIdentifier,
 };
+use citadel_sdk::prelude::{TransferType, VirtualObjectMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -254,7 +254,7 @@ pub struct FileTransferRequest {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileTransferStatus {
     pub cid: u64,
-    pub object_id: u32,
+    pub object_id: u64,
     pub success: bool,
     pub response: bool,
     pub message: Option<String>,
@@ -352,17 +352,15 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         source: PathBuf,
         cid: u64,
-        is_revfs: bool,
         peer_cid: Option<u64>,
         chunk_size: Option<usize>,
-        virtual_directory: Option<PathBuf>,
-        security_level: Option<SecurityLevel>,
+        transfer_type: TransferType,
     },
     RespondFileTransfer {
         uuid: Uuid,
         cid: u64,
         peer_cid: u64,
-        object_id: u32,
+        object_id: u64,
         accept: bool,
         download_location: Option<PathBuf>,
         request_id: Uuid,
