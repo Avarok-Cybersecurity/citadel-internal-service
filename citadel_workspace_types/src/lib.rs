@@ -78,7 +78,7 @@ pub struct DisconnectFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SendFileSuccess {
+pub struct SendFileRequestSent {
     pub cid: u64,
     pub request_id: Option<Uuid>,
 }
@@ -281,7 +281,7 @@ pub enum InternalServiceResponse {
     MessageReceived(MessageReceived),
     Disconnected(Disconnected),
     DisconnectFailure(DisconnectFailure),
-    SendFileSuccess(SendFileSuccess),
+    SendFileRequestSent(SendFileRequestSent),
     SendFileFailure(SendFileFailure),
     FileTransferRequest(FileTransferRequest),
     FileTransferStatus(FileTransferStatus),

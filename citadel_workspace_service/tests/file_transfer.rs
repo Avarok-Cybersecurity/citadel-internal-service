@@ -11,7 +11,7 @@ mod tests {
     use citadel_workspace_types::{
         DeleteVirtualFileSuccess, DisconnectFailure, DownloadFileSuccess, FileTransferRequest,
         FileTransferStatus, FileTransferTick, InternalServiceRequest, InternalServiceResponse,
-        PeerConnectSuccess, PeerRegisterSuccess, SendFileFailure, SendFileSuccess,
+        PeerConnectSuccess, PeerRegisterSuccess, SendFileFailure, SendFileRequestSent,
         ServiceConnectionAccepted,
     };
     use core::panic;
@@ -479,7 +479,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_standard_file_transfer_c2s() -> Result<(), Box<dyn Error>> {
+    async fn test_citadel_workspace_service_standard_file_transfer_c2s(
+    ) -> Result<(), Box<dyn Error>> {
         // Causes panics in spawned threads to be caught
         let orig_hook = take_hook();
         set_hook(Box::new(move |panic_info| {
@@ -764,7 +765,7 @@ mod tests {
         let send_file_to_service_b_payload = InternalServiceRequest::SendFile {
             uuid: uuid_a,
             request_id: Uuid::new_v4(),
-            source: file_to_send,
+            source: file_to_send.clone(),
             cid: cid_a,
             transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
                 virtual_path: virtual_path.clone(),
@@ -777,7 +778,7 @@ mod tests {
         let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_payload_response:?}");
 
-        if let InternalServiceResponse::FileTransferStatus(FileTransferStatus { .. }) =
+        if let InternalServiceResponse::SendFileRequestSent(SendFileRequestSent { .. }) =
             &deserialized_service_a_payload_response
         {
             info!(target:"citadel", "File Transfer Request {cid_b}");
@@ -806,7 +807,6 @@ mod tests {
         }
 
         // Download P2P REVFS file - without delete on pull
-        let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
         let download_file_command = InternalServiceRequest::DownloadFile {
             virtual_directory: virtual_path.clone(),
             security_level: None,
@@ -817,20 +817,9 @@ mod tests {
             request_id: Uuid::new_v4(),
         };
         to_service_a.send(download_file_command).unwrap();
-        let download_file_response = from_service_a.recv().await.unwrap();
-        match download_file_response {
-            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
-                cid: response_cid,
-                request_id: _,
-            }) => {
-                assert_eq!(cid_a, response_cid);
-            }
-            _ => {
-                info!(target = "citadel", "{:?}", download_file_response);
-                panic!("Didn't get the REVFS DownloadFileSuccess");
-            }
-        }
-        info!(target: "citadel","{download_file_response:?}");
+
+        exhaust_stream_to_file_completion(file_to_send.clone(), &mut from_service_a).await;
+        exhaust_stream_to_file_completion(file_to_send.clone(), &mut from_service_b).await;
 
         // Delete file on Peer REVFS
         let delete_file_command = InternalServiceRequest::DeleteVirtualFile {
@@ -842,7 +831,7 @@ mod tests {
         };
         to_service_a.send(delete_file_command).unwrap();
         let delete_file_response = from_service_a.recv().await.unwrap();
-        match download_file_response {
+        match delete_file_response {
             InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess {
                 cid: response_cid,
                 request_id: _,
@@ -865,6 +854,7 @@ mod tests {
     ) {
         // Exhaust the stream for the receiver
         let mut path = None;
+        let mut is_revfs = false;
         loop {
             let tick_response = svc.recv().await.unwrap();
             match tick_response {
@@ -876,6 +866,10 @@ mod tests {
                 }) => match status {
                     ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
                         path = Some(file_path);
+                        is_revfs = matches!(
+                            vfm.transfer_type,
+                            TransferType::RemoteEncryptedVirtualFilesystem { .. }
+                        );
                         info!(target: "citadel", "File Transfer (Receiving) Beginning");
                         assert_eq!(vfm.name, "test.txt")
                     }
@@ -891,11 +885,21 @@ mod tests {
                         )
                         .await
                         .unwrap();
-                        assert_eq!(
-                            cmp_data.as_slice(),
-                            streamed_data.as_slice(),
-                            "Original data and streamed data does not match"
-                        );
+                        if is_revfs {
+                            // The locally stored contents should NEVER be the same as the plaintext for REVFS
+                            assert_ne!(
+                                cmp_data.as_slice(),
+                                streamed_data.as_slice(),
+                                "Original data and streamed data does not match"
+                            );
+                        } else {
+                            assert_eq!(
+                                cmp_data.as_slice(),
+                                streamed_data.as_slice(),
+                                "Original data and streamed data does not match"
+                            );
+                        }
+
                         return;
                     }
                     ObjectTransferStatus::TransferComplete => {

@@ -255,8 +255,23 @@ impl NetKernel for CitadelWorkspaceService {
                 let metadata = object_transfer_handle.handle.metadata.clone();
                 let object_id = metadata.object_id;
                 let object_transfer_handler = object_transfer_handle.handle;
-                let implicated_cid = object_transfer_handler.receiver;
-                let peer_cid = object_transfer_handler.source;
+
+                let (implicated_cid, peer_cid) = if matches!(
+                    object_transfer_handler.orientation,
+                    ObjectTransferOrientation::Receiver {
+                        is_revfs_pull: true
+                    }
+                ) {
+                    (
+                        object_transfer_handler.source,
+                        object_transfer_handler.receiver,
+                    )
+                } else {
+                    (
+                        object_transfer_handler.receiver,
+                        object_transfer_handler.source,
+                    )
+                };
 
                 citadel_logging::info!(target: "citadel", "Orientation: {:?}", object_transfer_handler.orientation);
 

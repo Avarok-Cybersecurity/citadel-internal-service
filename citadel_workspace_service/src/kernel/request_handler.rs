@@ -14,7 +14,7 @@ use citadel_workspace_types::{
     LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
     MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
     PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
-    PeerSessionInformation, SendFileFailure, SendFileSuccess, SessionInformation,
+    PeerSessionInformation, SendFileFailure, SendFileRequestSent, SessionInformation,
 };
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -429,7 +429,7 @@ pub async fn handle_request(
                             info!(target: "citadel","InternalServiceRequest Send File Success");
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::SendFileSuccess(SendFileSuccess {
+                                InternalServiceResponse::SendFileRequestSent(SendFileRequestSent {
                                     cid,
                                     request_id: Some(request_id),
                                 }),
@@ -554,25 +554,26 @@ pub async fn handle_request(
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
                         if let Some(peer_remote) = conn.peers.get_mut(&peer_cid) {
-                            peer_remote
-                                .remote
-                                .remote_encrypted_virtual_filesystem_pull(
-                                    virtual_directory,
-                                    security_level,
-                                    delete_on_pull,
-                                )
-                                .await
+                            let request = NodeRequest::PullObject(PullObject {
+                                v_conn: *peer_remote.remote.user(),
+                                virtual_dir: virtual_directory,
+                                delete_on_pull,
+                                transfer_security_level: security_level,
+                            });
+
+                            peer_remote.remote.send(request).await
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        conn.client_server_remote
-                            .remote_encrypted_virtual_filesystem_pull(
-                                virtual_directory,
-                                security_level,
-                                delete_on_pull,
-                            )
-                            .await
+                        let request = NodeRequest::PullObject(PullObject {
+                            v_conn: *conn.client_server_remote.user(),
+                            virtual_dir: virtual_directory,
+                            delete_on_pull,
+                            transfer_security_level: security_level,
+                        });
+
+                        conn.client_server_remote.send(request).await
                     };
 
                     match result {
