@@ -488,13 +488,11 @@ fn spawn_tick_updater(
                             }
                         }
 
-                        let is_complete = matches!(
+                        if matches!(
                             status,
                             ObjectTransferStatus::TransferComplete { .. }
                                 | ObjectTransferStatus::ReceptionComplete
-                        );
-
-                        if is_complete {
+                        ) {
                             break;
                         }
                     }

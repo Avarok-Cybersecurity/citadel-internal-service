@@ -2,33 +2,24 @@
 mod tests {
     use bytes::Bytes;
     use citadel_logging::info;
-    use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
     use citadel_sdk::prefabs::server::empty::EmptyKernel;
-    use citadel_sdk::prefabs::ClientServerRemote;
     use citadel_sdk::prelude::*;
     use citadel_workspace_lib::wrap_tcp_conn;
     use citadel_workspace_service::kernel::CitadelWorkspaceService;
-    use citadel_workspace_types::{
-        DeleteVirtualFileSuccess, DisconnectFailure, DownloadFileSuccess, FileTransferRequest,
-        FileTransferStatus, FileTransferTick, InternalServiceRequest, InternalServiceResponse,
-        PeerConnectSuccess, PeerRegisterSuccess, SendFileFailure, SendFileRequestSent,
-        ServiceConnectionAccepted,
-    };
+    use citadel_workspace_types::{DeleteVirtualFileSuccess, DownloadFileFailure, FileTransferRequest, FileTransferStatus, FileTransferTick, InternalServiceRequest, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess, SendFileFailure, SendFileRequestSent, ServiceConnectionAccepted};
     use core::panic;
     use futures::stream::SplitSink;
     use futures::{SinkExt, StreamExt};
     use std::error::Error;
     use std::future::Future;
     use std::net::SocketAddr;
-    use std::panic::{resume_unwind, set_hook, take_hook};
+    use std::panic::{set_hook, take_hook};
     use std::path::PathBuf;
     use std::process::exit;
-    use std::str::FromStr;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::net::TcpStream;
-    use tokio::spawn;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use uuid::Uuid;
@@ -200,33 +191,68 @@ mod tests {
             match message {
                 NodeResult::ObjectTransferHandle(object_transfer_handle) => {
                     let mut handle = object_transfer_handle.handle;
+                    let orientation = handle.orientation;
                     let mut path = None;
                     // accept the transfer
                     handle.accept().unwrap();
 
                     use futures::StreamExt;
-                    while let Some(status) = handle.next().await {
-                        match status {
-                            ObjectTransferStatus::ReceptionComplete => {
-                                citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
-                                let mut cmp_path = PathBuf::from("..");
-                                cmp_path.push("resources");
-                                cmp_path.push("test");
-                                cmp_path.set_extension("txt");
-                                let cmp_data = tokio::fs::read(cmp_path).await.unwrap();
-                                let streamed_data =
-                                    tokio::fs::read(path.clone().unwrap()).await.unwrap();
-                                assert_eq!(
-                                    cmp_data.as_slice(),
-                                    streamed_data.as_slice(),
-                                    "Original data and streamed data does not match"
-                                );
+                    match orientation {
+                        ObjectTransferOrientation::Receiver { is_revfs_pull} => {
+                            while let Some(status) = handle.next().await {
+                                match status {
+                                    ObjectTransferStatus::ReceptionComplete => {
+                                        citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
+                                        let mut cmp_path = PathBuf::from("..");
+                                        cmp_path.push("resources");
+                                        cmp_path.push("test");
+                                        cmp_path.set_extension("txt");
+                                        let cmp_data = tokio::fs::read(cmp_path).await.unwrap();
+                                        let streamed_data =
+                                            tokio::fs::read(path.clone().unwrap()).await.unwrap();
+                                        if is_revfs_pull {
+                                            assert_ne!(
+                                                cmp_data.as_slice(),
+                                                streamed_data.as_slice(),
+                                                "Original data and streamed data match - Should not match"
+                                            );
+                                        } else {
+                                            assert_eq!(
+                                                cmp_data.as_slice(),
+                                                streamed_data.as_slice(),
+                                                "Original data and streamed data do not match"
+                                            );
+                                        }
+                                    }
+                                    ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                                        path = Some(file_path);
+                                        assert_eq!(vfm.name, "test.txt")
+                                    }
+                                    _ => {}
+                                }
                             }
-                            ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
-                                path = Some(file_path);
-                                assert_eq!(vfm.name, "test.txt")
+                        }
+                        ObjectTransferOrientation::Sender => {
+                            while let Some(status) = handle.next().await {
+                                match status {
+                                    ObjectTransferStatus::TransferComplete => {
+                                        citadel_logging::trace!(target: "citadel", "Server has finished transmitting the file!");
+                                        let mut cmp_path = PathBuf::from("..");
+                                        cmp_path.push("resources");
+                                        cmp_path.push("test");
+                                        cmp_path.set_extension("txt");
+                                        let cmp_data = tokio::fs::read(cmp_path).await.unwrap();
+                                        let streamed_data =
+                                            tokio::fs::read(path.clone().unwrap()).await.unwrap();
+                                        assert_eq!(
+                                            cmp_data.as_slice(),
+                                            streamed_data.as_slice(),
+                                            "Original data and streamed data do not match"
+                                        );
+                                    }
+                                    _ => {}
+                                }
                             }
-                            _ => {}
                         }
                     }
                 }
@@ -262,20 +288,6 @@ mod tests {
 
     pub fn server_info_skip_cert_verification<'a>() -> (NodeFuture<'a, EmptyKernel>, SocketAddr) {
         server_test_node_skip_cert_verification(EmptyKernel::default(), |_| {})
-    }
-
-    pub fn server_info_reactive_skip_cert_verification<'a, F: 'a, Fut: 'a>(
-        f: F,
-        opts: impl FnOnce(&mut NodeBuilder),
-    ) -> (NodeFuture<'a, Box<dyn NetKernel + 'a>>, SocketAddr)
-    where
-        F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync,
-        Fut: Future<Output = Result<(), NetworkError>> + Send + Sync,
-    {
-        server_test_node_skip_cert_verification(
-            Box::new(ClientConnectListenerKernel::new(f)) as Box<dyn NetKernel>,
-            opts,
-        )
     }
 
     pub fn server_info_file_transfer<'a>(
@@ -692,6 +704,10 @@ mod tests {
         };
         to_service.send(file_transfer_command).unwrap();
         let file_transfer_response = from_service.recv().await.unwrap();
+        if let InternalServiceResponse::SendFileFailure(SendFileFailure{ cid: _, message, request_id: _ }) = file_transfer_response {
+            panic!("Send File Failure: {message:?}")
+        }
+
         // Wait for the sender to complete the transfer
         exhaust_stream_to_file_completion(file_to_send.clone(), &mut from_service).await;
 
@@ -706,6 +722,11 @@ mod tests {
             request_id: Uuid::new_v4(),
         };
         to_service.send(file_download_command).unwrap();
+        let download_file_response = from_service.recv().await.unwrap();
+        if let InternalServiceResponse::DownloadFileFailure(DownloadFileFailure{ cid: _, message, request_id: _, }) = download_file_response {
+            panic!("Download File Failure: {message:?}")
+        }
+
         // Exhaust the download request
         exhaust_stream_to_file_completion(file_to_send.clone(), &mut from_service).await;
 
@@ -718,13 +739,17 @@ mod tests {
             request_id: Uuid::new_v4(),
         };
         to_service.send(file_delete_command).unwrap();
+        info!(target: "citadel","DeleteVirtualFile Request sent to server");
+
         let file_delete_command = from_service.recv().await.unwrap();
+
         match file_delete_command {
             InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess {
                 cid: response_cid,
                 request_id: _,
             }) => {
                 assert_eq!(cid, response_cid);
+                info!(target: "citadel","CID Comparison Yielded Success");
             }
             _ => {
                 info!(target = "citadel", "{:?}", file_delete_command);
