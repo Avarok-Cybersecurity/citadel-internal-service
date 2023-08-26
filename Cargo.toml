@@ -20,7 +20,7 @@ citadel_workspace_lib = { path = "./citadel_workspace_lib", default-features = f
 
 # standard deps
 serde = { version = "1.0.104", features = ["derive"] }
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "update_file_transfer_types"}
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "master"}
 tokio = { version = "1.28.1", default-features = false }
 tokio-util = { version = "0.7.8", default-features = false }
 bincode2 = { version = "2.0.1", default-features = false }
