@@ -192,53 +192,50 @@ mod tests {
 
         async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
             citadel_logging::trace!(target: "citadel", "SERVER received {:?}", message);
-            match message {
-                NodeResult::ObjectTransferHandle(object_transfer_handle) => {
-                    let mut handle = object_transfer_handle.handle;
-                    let mut path = None;
-                    let mut is_revfs = false;
-                    // accept the transfer
-                    handle.accept().unwrap();
+            if let NodeResult::ObjectTransferHandle(object_transfer_handle) = message {
+                let mut handle = object_transfer_handle.handle;
+                let mut path = None;
+                let mut is_revfs = false;
+                // accept the transfer
+                handle.accept().unwrap();
 
-                    use futures::StreamExt;
-                    while let Some(status) = handle.next().await {
-                        match status {
-                            ObjectTransferStatus::ReceptionComplete => {
-                                citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
-                                let mut cmp_path = PathBuf::from("..");
-                                cmp_path.push("resources");
-                                cmp_path.push("test");
-                                cmp_path.set_extension("txt");
-                                let cmp_data = tokio::fs::read(cmp_path).await.unwrap();
-                                let streamed_data =
-                                    tokio::fs::read(path.clone().unwrap()).await.unwrap();
-                                if is_revfs {
-                                    assert_ne!(
-                                        cmp_data.as_slice(),
-                                        streamed_data.as_slice(),
-                                        "Original data and streamed data match - Should not match"
-                                    );
-                                } else {
-                                    assert_eq!(
-                                        cmp_data.as_slice(),
-                                        streamed_data.as_slice(),
-                                        "Original data and streamed data do not match"
-                                    );
-                                }
-                            }
-                            ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
-                                is_revfs = matches!(
-                                    vfm.transfer_type,
-                                    TransferType::RemoteEncryptedVirtualFilesystem { .. }
+                use futures::StreamExt;
+                while let Some(status) = handle.next().await {
+                    match status {
+                        ObjectTransferStatus::ReceptionComplete => {
+                            citadel_logging::trace!(target: "citadel", "Server has finished receiving the file!");
+                            let mut cmp_path = PathBuf::from("..");
+                            cmp_path.push("resources");
+                            cmp_path.push("test");
+                            cmp_path.set_extension("txt");
+                            let cmp_data = tokio::fs::read(cmp_path).await.unwrap();
+                            let streamed_data =
+                                tokio::fs::read(path.clone().unwrap()).await.unwrap();
+                            if is_revfs {
+                                assert_ne!(
+                                    cmp_data.as_slice(),
+                                    streamed_data.as_slice(),
+                                    "Original data and streamed data match - Should not match"
                                 );
-                                path = Some(file_path);
-                                assert_eq!(vfm.name, "test.txt")
+                            } else {
+                                assert_eq!(
+                                    cmp_data.as_slice(),
+                                    streamed_data.as_slice(),
+                                    "Original data and streamed data do not match"
+                                );
                             }
-                            _ => {}
                         }
+                        ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                            is_revfs = matches!(
+                                vfm.transfer_type,
+                                TransferType::RemoteEncryptedVirtualFilesystem { .. }
+                            );
+                            path = Some(file_path);
+                            assert_eq!(vfm.name, "test.txt")
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
             }
 
             Ok(())

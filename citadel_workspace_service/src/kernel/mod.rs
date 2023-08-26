@@ -262,6 +262,8 @@ impl NetKernel for CitadelWorkspaceService {
                         is_revfs_pull: true
                     }
                 ) {
+                    // When this is a REVFS pull reception handle, THIS node is the source of the file.
+                    // The other node, i.e. the peer, is the receiver who is requesting the file.
                     (
                         object_transfer_handler.source,
                         object_transfer_handler.receiver,
