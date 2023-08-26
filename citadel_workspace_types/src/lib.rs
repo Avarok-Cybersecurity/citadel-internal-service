@@ -1,8 +1,9 @@
 use bytes::BytesMut;
 pub use citadel_sdk::prelude::{
-    ConnectMode, SecBuffer, SecurityLevel, SessionSecuritySettings, TransferType, UdpMode,
+    ConnectMode, ObjectTransferStatus, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode,
     UserIdentifier,
 };
+use citadel_sdk::prelude::{TransferType, VirtualObjectMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -77,13 +78,39 @@ pub struct DisconnectFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SendFileSuccess {
+pub struct SendFileRequestSent {
     pub cid: u64,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SendFileFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DownloadFileSuccess {
+    pub cid: u64,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DownloadFileFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DeleteVirtualFileSuccess {
+    pub cid: u64,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DeleteVirtualFileFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
@@ -218,6 +245,31 @@ pub struct GetSessions {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileTransferRequest {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub metadata: VirtualObjectMetadata, // TODO: metadata: VirtualObjectMetadata
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileTransferStatus {
+    pub cid: u64,
+    pub object_id: u64,
+    pub success: bool,
+    pub response: bool,
+    pub message: Option<String>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileTransferTick {
+    pub uuid: Uuid,
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub status: ObjectTransferStatus,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectionFailure(ConnectionFailure),
@@ -229,8 +281,15 @@ pub enum InternalServiceResponse {
     MessageReceived(MessageReceived),
     Disconnected(Disconnected),
     DisconnectFailure(DisconnectFailure),
-    SendFileSuccess(SendFileSuccess),
+    SendFileRequestSent(SendFileRequestSent),
     SendFileFailure(SendFileFailure),
+    FileTransferRequest(FileTransferRequest),
+    FileTransferStatus(FileTransferStatus),
+    FileTransferTick(FileTransferTick),
+    DownloadFileSuccess(DownloadFileSuccess),
+    DownloadFileFailure(DownloadFileFailure),
+    DeleteVirtualFileSuccess(DeleteVirtualFileSuccess),
+    DeleteVirtualFileFailure(DeleteVirtualFileFailure),
     PeerConnectSuccess(PeerConnectSuccess),
     PeerConnectFailure(PeerConnectFailure),
     PeerDisconnectSuccess(PeerDisconnectSuccess),
@@ -293,14 +352,32 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         source: PathBuf,
         cid: u64,
-        chunk_size: usize,
+        peer_cid: Option<u64>,
+        chunk_size: Option<usize>,
         transfer_type: TransferType,
     },
+    RespondFileTransfer {
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: u64,
+        object_id: u64,
+        accept: bool,
+        download_location: Option<PathBuf>,
+        request_id: Uuid,
+    },
     DownloadFile {
-        virtual_path: PathBuf,
-        transfer_security_level: SecurityLevel,
+        virtual_directory: PathBuf,
+        security_level: Option<SecurityLevel>,
         delete_on_pull: bool,
         cid: u64,
+        peer_cid: Option<u64>,
+        uuid: Uuid,
+        request_id: Uuid,
+    },
+    DeleteVirtualFile {
+        virtual_directory: PathBuf,
+        cid: u64,
+        peer_cid: Option<u64>,
         uuid: Uuid,
         request_id: Uuid,
     },
