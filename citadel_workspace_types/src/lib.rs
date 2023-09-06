@@ -3,7 +3,7 @@ pub use citadel_sdk::prelude::{
     ConnectMode, ObjectTransferStatus, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode,
     UserIdentifier,
 };
-use citadel_sdk::prelude::{TransferType, VirtualObjectMetadata};
+use citadel_sdk::prelude::{MessageGroupKey, TransferType, VirtualObjectMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -381,12 +381,6 @@ pub enum InternalServiceRequest {
         uuid: Uuid,
         request_id: Uuid,
     },
-    StartGroup {
-        initial_users_to_invite: Option<Vec<UserIdentifier>>,
-        cid: u64,
-        uuid: Uuid,
-        request_id: Uuid,
-    },
     PeerConnect {
         uuid: Uuid,
         request_id: Uuid,
@@ -454,6 +448,58 @@ pub enum InternalServiceRequest {
         // If specified, the command will reply with information for a specific account. Otherwise
         // the command will reply with information for all accounts
         cid: Option<u64>,
+    },
+    GroupCreate {
+        uuid: Uuid,
+        cid: u64,
+        request_id: Uuid,
+        initial_users_to_invite: Option<Vec<UserIdentifier>>,
+    },
+    GroupLeave {
+        uuid: Uuid,
+        cid: u64,
+        group_key: MessageGroupKey,
+        request_id: Uuid,
+    },
+    GroupEnd {
+        uuid: Uuid,
+        cid: u64,
+        group_key: MessageGroupKey,
+        request_id: Uuid,
+    },
+    GroupMessage {
+        uuid: Uuid,
+        cid: u64,
+        group_key: MessageGroupKey,
+        request_id: Uuid,
+    },
+    GroupInvite {
+        uuid: Uuid,
+        cid: u64,
+        group_key: MessageGroupKey,
+        request_id: Uuid,
+    },
+    GroupRespondInviteRequest {
+        uuid: Uuid,
+        cid: u64,
+        request_id: Uuid,
+    },
+    GroupKick {
+        uuid: Uuid,
+        cid: u64,
+        group_key: MessageGroupKey,
+        request_id: Uuid,
+    },
+    GroupListGroupsFor {
+        uuid: Uuid,
+        cid: u64,
+        request_id: Uuid,
+    },
+    GroupRequestJoin {
+        uuid: Uuid,
+        cid: u64,
+        group_key: MessageGroupKey,
+        request_id: Uuid,
     },
 }
 

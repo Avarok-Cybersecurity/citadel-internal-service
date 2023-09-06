@@ -692,28 +692,6 @@ pub async fn handle_request(
             };
         }
 
-        InternalServiceRequest::StartGroup {
-            initial_users_to_invite,
-            cid,
-            uuid: _uuid,
-            request_id: _,
-        } => {
-            let client_to_server_remote = ClientServerRemote::new(
-                VirtualTargetType::LocalGroupServer {
-                    implicated_cid: cid,
-                },
-                remote.clone(),
-            );
-            match client_to_server_remote
-                .create_group(initial_users_to_invite)
-                .await
-            {
-                Ok(_group_channel) => {}
-
-                Err(_err) => {}
-            }
-        }
-
         InternalServiceRequest::PeerRegister {
             uuid,
             cid,
@@ -1310,6 +1288,40 @@ pub async fn handle_request(
                 }
             }
         },
+
+        InternalServiceRequest::GroupCreate {
+            uuid,
+            cid,
+            request_id,
+            initial_users_to_invite
+        } => {
+            let client_to_server_remote = ClientServerRemote::new(
+                VirtualTargetType::LocalGroupServer {
+                    implicated_cid: cid,
+                },
+                remote.clone(),
+            );
+            match client_to_server_remote
+                .create_group(initial_users_to_invite)
+                .await
+            {
+                Ok(_group_channel) => {}
+
+                Err(_err) => {}
+            }
+        },
+
+        InternalServiceRequest::GroupLeave { .. } => {
+
+        },
+
+        InternalServiceRequest::GroupEnd { .. } => {},
+        InternalServiceRequest::GroupMessage { .. } => {},
+        InternalServiceRequest::GroupInvite { .. } => {},
+        InternalServiceRequest::GroupRespondInviteRequest { .. } => {},
+        InternalServiceRequest::GroupKick { .. } => {},
+        InternalServiceRequest::GroupListGroupsFor { .. } => {},
+        InternalServiceRequest::GroupRequestJoin { .. } => {},
     }
 }
 
