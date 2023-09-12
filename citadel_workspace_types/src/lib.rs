@@ -159,6 +159,34 @@ pub struct PeerRegisterFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupCreateSuccess {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupCreateFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupLeaveSuccess {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupLeaveFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalDBGetKVSuccess {
     pub cid: u64,
     pub peer_cid: Option<u64>,
@@ -296,6 +324,8 @@ pub enum InternalServiceResponse {
     PeerDisconnectFailure(PeerDisconnectFailure),
     PeerRegisterSuccess(PeerRegisterSuccess),
     PeerRegisterFailure(PeerRegisterFailure),
+    GroupCreateSuccess(GroupCreateSuccess),
+    GroupCreateFailure(GroupCreateFailure),
     LocalDBGetKVSuccess(LocalDBGetKVSuccess),
     LocalDBGetKVFailure(LocalDBGetKVFailure),
     LocalDBSetKVSuccess(LocalDBSetKVSuccess),

@@ -44,6 +44,7 @@ pub struct Connection {
     peers: HashMap<u64, PeerConnection>,
     associated_tcp_connection: Uuid,
     c2s_file_transfer_handlers: HashMap<u64, Option<ObjectTransferHandler>>,
+    groups: HashMap<MessageGroupKey, GroupConnection>,
 }
 
 #[allow(dead_code)]
@@ -51,6 +52,12 @@ struct PeerConnection {
     sink: PeerChannelSendHalf,
     remote: SymmetricIdentifierHandle,
     handler_map: HashMap<u64, Option<ObjectTransferHandler>>,
+    associated_tcp_connection: Uuid,
+}
+
+#[allow(dead_code)]
+struct GroupConnection {
+    channel: GroupChannel,
     associated_tcp_connection: Uuid,
 }
 
@@ -66,6 +73,7 @@ impl Connection {
             client_server_remote,
             associated_tcp_connection,
             c2s_file_transfer_handlers: HashMap::new(),
+            groups: HashMap::new(),
         }
     }
 
@@ -105,6 +113,24 @@ impl Connection {
                 peer_connection.handler_map.insert(object_id, handler);
             }
         }
+    }
+
+    fn add_group_connection(
+        &mut self,
+        group_key: MessageGroupKey,
+        channel: GroupChannel,
+    ) {
+        self.groups.insert(
+            group_key,
+            GroupConnection {
+                channel,
+                associated_tcp_connection: self.associated_tcp_connection,
+            },
+        );
+    }
+
+    fn clear_group_connection(&mut self, group_key: MessageGroupKey) -> Option<GroupConnection> {
+        self.groups.remove(&group_key)
     }
 
     // fn remove_object_transfer_handler(&mut self, peer_cid: u64, object_id: u32) -> Option<Option<ObjectTransferHandler>> {

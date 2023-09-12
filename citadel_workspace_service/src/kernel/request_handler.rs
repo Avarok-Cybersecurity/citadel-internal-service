@@ -1,21 +1,9 @@
-use crate::kernel::{
-    create_client_server_remote, send_response_to_tcp_client, spawn_tick_updater, Connection,
-};
+use crate::kernel::{create_client_server_remote, send_response_to_tcp_client, spawn_tick_updater, Connection, GroupConnection};
 use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{
-    AccountInformation, Accounts, ConnectionFailure, DeleteVirtualFileFailure,
-    DeleteVirtualFileSuccess, DisconnectFailure, Disconnected, DownloadFileFailure,
-    DownloadFileSuccess, FileTransferStatus, GetSessions, InternalServiceRequest,
-    InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
-    LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
-    LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
-    MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
-    PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
-    PeerSessionInformation, SendFileFailure, SendFileRequestSent, SessionInformation,
-};
+use citadel_workspace_types::{AccountInformation, Accounts, ConnectionFailure, DeleteVirtualFileFailure, DeleteVirtualFileSuccess, DisconnectFailure, Disconnected, DownloadFileFailure, DownloadFileSuccess, FileTransferStatus, GetSessions, InternalServiceRequest, InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess, PeerSessionInformation, SendFileFailure, SendFileRequestSent, SessionInformation, GroupCreateFailure, GroupCreateSuccess};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1305,13 +1293,50 @@ pub async fn handle_request(
                 .create_group(initial_users_to_invite)
                 .await
             {
-                Ok(_group_channel) => {}
+                Ok(group_channel) => {
+                    //Store the group channel in map
+                    let group_key = group_channel.key();
+                    server_connection_map
+                        .lock()
+                        .await
+                        .get_mut(&cid)
+                        .unwrap()
+                        .add_group_connection(group_key, group_channel);
 
-                Err(_err) => {}
+                    // Relay success to TCP client
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess {
+                            cid,
+                            group_key,
+                            request_id: Some(request_id),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+
+                Err(err) => {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupCreateFailure(GroupCreateFailure {
+                            cid,
+                            message: err.into_string(),
+                            request_id: Some(request_id),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
             }
         },
 
-        InternalServiceRequest::GroupLeave { .. } => {
+        InternalServiceRequest::GroupLeave {
+            uuid,
+            cid,
+            group_key,
+            request_id
+        } => {
 
         },
 
