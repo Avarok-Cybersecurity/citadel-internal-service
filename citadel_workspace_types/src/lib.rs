@@ -231,6 +231,35 @@ pub struct LocalDBClearAllKVSuccess {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ListAllPeers {
+    pub cid: u64,
+    pub online_status: HashMap<u64, bool>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ListAllPeersFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ListRegisteredPeersFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ListRegisteredPeers {
+    pub cid: u64,
+    pub peers: HashMap<u64, PeerSessionInformation>,
+    pub online_status: HashMap<u64, bool>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalDBClearAllKVFailure {
     pub cid: u64,
     pub peer_cid: Option<u64>,
@@ -308,6 +337,10 @@ pub enum InternalServiceResponse {
     LocalDBClearAllKVFailure(LocalDBClearAllKVFailure),
     GetSessions(GetSessions),
     GetAccountInformation(Accounts),
+    ListAllPeers(ListAllPeers),
+    ListAllPeersFailure(ListAllPeersFailure),
+    ListRegisteredPeers(ListRegisteredPeers),
+    ListRegisteredPeersFailure(ListRegisteredPeersFailure),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -386,6 +419,16 @@ pub enum InternalServiceRequest {
         cid: u64,
         uuid: Uuid,
         request_id: Uuid,
+    },
+    ListAllPeers {
+        uuid: Uuid,
+        request_id: Uuid,
+        cid: u64,
+    },
+    ListRegisteredPeers {
+        uuid: Uuid,
+        request_id: Uuid,
+        cid: u64,
     },
     PeerConnect {
         uuid: Uuid,
