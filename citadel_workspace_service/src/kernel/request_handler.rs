@@ -95,6 +95,7 @@ pub async fn handle_request(
                     cid,
                     online_status: peers
                         .into_iter()
+                        .filter(|peer| peer.cid != cid)
                         .map(|peer| (peer.cid, peer.is_online))
                         .collect(),
                     request_id: Some(request_id),

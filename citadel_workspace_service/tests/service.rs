@@ -262,6 +262,47 @@ mod tests {
         }
     }
 
+    async fn test_list_peers(
+        uuid: Uuid,
+        cid: u64,
+        peer_cid: u64,
+        to_service: &tokio::sync::mpsc::UnboundedSender<InternalServiceRequest>,
+        from_service: &mut tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
+    ) {
+        // Test that service A views the right information
+        let svc_a_request = InternalServiceRequest::ListAllPeers {
+            uuid,
+            request_id: Uuid::new_v4(),
+            cid,
+        };
+
+        to_service.send(svc_a_request).unwrap();
+
+        let resp = from_service.recv().await.unwrap();
+        if let InternalServiceResponse::ListAllPeers(list) = resp {
+            assert_eq!(list.online_status.len(), 1);
+            assert!(list.online_status.contains_key(&peer_cid))
+        } else {
+            panic!("Invalid ListAllPeers response")
+        }
+
+        let svc_a_request = InternalServiceRequest::ListRegisteredPeers {
+            uuid,
+            request_id: Uuid::new_v4(),
+            cid,
+        };
+
+        to_service.send(svc_a_request).unwrap();
+
+        let resp = from_service.recv().await.unwrap();
+        if let InternalServiceResponse::ListRegisteredPeers(list) = resp {
+            assert_eq!(list.online_status.len(), 1);
+            assert!(list.online_status.contains_key(&peer_cid))
+        } else {
+            panic!("Invalid ListAllPeers response")
+        }
+    }
+
     #[tokio::test]
     async fn test_citadel_workspace_service_peer_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
@@ -270,6 +311,33 @@ mod tests {
             "127.0.0.1:55527".parse().unwrap(),
         )
         .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_citadel_workspace_service_peer_test_list_peers() -> Result<(), Box<dyn Error>> {
+        citadel_logging::setup_log();
+
+        let (
+            to_service_a,
+            mut from_service_a,
+            to_service_b,
+            mut from_service_b,
+            uuid_a,
+            uuid_b,
+            cid_a,
+            cid_b,
+        ) = register_and_connect_to_server_then_peers(
+            "127.0.0.1:55526".parse().unwrap(),
+            "127.0.0.1:55527".parse().unwrap(),
+        )
+        .await?;
+
+        // Test that service A views the right information
+        test_list_peers(uuid_a, cid_a, cid_b, &to_service_a, &mut from_service_a).await;
+        // Test that service B views the right information
+        test_list_peers(uuid_b, cid_b, cid_a, &to_service_b, &mut from_service_b).await;
+
         Ok(())
     }
 
