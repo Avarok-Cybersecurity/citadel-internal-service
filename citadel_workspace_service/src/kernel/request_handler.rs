@@ -9,7 +9,8 @@ use citadel_workspace_types::{
     AccountInformation, Accounts, ConnectionFailure, DeleteVirtualFileFailure,
     DeleteVirtualFileSuccess, DisconnectFailure, Disconnected, DownloadFileFailure,
     DownloadFileSuccess, FileTransferStatus, GetSessions, InternalServiceRequest,
-    InternalServiceResponse, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
+    InternalServiceResponse, ListAllPeers, ListAllPeersFailure, ListRegisteredPeers,
+    ListRegisteredPeersFailure, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
     LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
     LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
     MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
@@ -31,6 +32,88 @@ pub async fn handle_request(
     tcp_connection_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
     match command {
+        InternalServiceRequest::ListRegisteredPeers {
+            uuid,
+            request_id,
+            cid,
+        } => {
+            match remote.get_local_group_mutual_peers(cid).await {
+                Ok(peers) => {
+                    let mut accounts = HashMap::new();
+                    for peer in &peers {
+                        // TOOD: Do not unwrap below
+                        let peer_username = remote
+                            .find_target(cid, peer.cid)
+                            .await
+                            .unwrap()
+                            .target_username()
+                            .cloned()
+                            .unwrap_or_default();
+                        accounts.insert(
+                            peer.cid,
+                            PeerSessionInformation {
+                                cid,
+                                peer_cid: peer.cid,
+                                peer_username,
+                            },
+                        );
+                    }
+
+                    let peers = ListRegisteredPeers {
+                        cid,
+                        peers: accounts,
+                        online_status: peers
+                            .iter()
+                            .map(|peer| (peer.cid, peer.is_online))
+                            .collect(),
+                        request_id: Some(request_id),
+                    };
+
+                    let response = InternalServiceResponse::ListRegisteredPeers(peers);
+                    send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
+                }
+
+                Err(err) => {
+                    let response = InternalServiceResponse::ListRegisteredPeersFailure(
+                        ListRegisteredPeersFailure {
+                            cid,
+                            message: err.into_string(),
+                            request_id: Some(request_id),
+                        },
+                    );
+                    send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
+                }
+            }
+        }
+        InternalServiceRequest::ListAllPeers {
+            uuid,
+            request_id,
+            cid,
+        } => match remote.get_local_group_peers(cid, None).await {
+            Ok(peers) => {
+                let peers = ListAllPeers {
+                    cid,
+                    online_status: peers
+                        .into_iter()
+                        .filter(|peer| peer.cid != cid)
+                        .map(|peer| (peer.cid, peer.is_online))
+                        .collect(),
+                    request_id: Some(request_id),
+                };
+
+                let response = InternalServiceResponse::ListAllPeers(peers);
+                send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
+            }
+
+            Err(err) => {
+                let response = InternalServiceResponse::ListAllPeersFailure(ListAllPeersFailure {
+                    cid,
+                    message: err.into_string(),
+                    request_id: Some(request_id),
+                });
+                send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
+            }
+        },
         InternalServiceRequest::GetAccountInformation {
             uuid,
             request_id,
