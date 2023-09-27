@@ -187,6 +187,105 @@ pub struct GroupLeaveFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupEndSuccess {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupEndFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupMessageSuccess {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupMessageFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupInviteSuccess {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupInviteFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupRespondInviteRequestSuccess {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupRespondInviteRequestFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupKickSuccess {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupKickFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupListGroupsForSuccess {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub group_list: Option<Vec<MessageGroupKey>>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupListGroupsForFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupRequestJoinSuccess {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupRequestJoinFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalDBGetKVSuccess {
     pub cid: u64,
     pub peer_cid: Option<u64>,
@@ -326,6 +425,22 @@ pub enum InternalServiceResponse {
     PeerRegisterFailure(PeerRegisterFailure),
     GroupCreateSuccess(GroupCreateSuccess),
     GroupCreateFailure(GroupCreateFailure),
+    GroupLeaveSuccess(GroupLeaveSuccess),
+    GroupLeaveFailure(GroupLeaveFailure),
+    GroupEndSuccess(GroupEndSuccess),
+    GroupEndFailure(GroupEndFailure),
+    GroupMessageSuccess(GroupMessageSuccess),
+    GroupMessageFailure(GroupMessageFailure),
+    GroupInviteSuccess(GroupInviteSuccess),
+    GroupInviteFailure(GroupInviteFailure),
+    GroupRespondInviteRequestSuccess(GroupRespondInviteRequestSuccess),
+    GroupRespondInviteRequestFailure(GroupRespondInviteRequestFailure),
+    GroupKickSuccess(GroupKickSuccess),
+    GroupKickFailure(GroupKickFailure),
+    GroupListGroupsForSuccess(GroupListGroupsForSuccess),
+    GroupListGroupsForFailure(GroupListGroupsForFailure),
+    GroupRequestJoinSuccess(GroupRequestJoinSuccess),
+    GroupRequestJoinFailure(GroupRequestJoinFailure),
     LocalDBGetKVSuccess(LocalDBGetKVSuccess),
     LocalDBGetKVFailure(LocalDBGetKVFailure),
     LocalDBSetKVSuccess(LocalDBSetKVSuccess),
@@ -500,29 +615,35 @@ pub enum InternalServiceRequest {
     GroupMessage {
         uuid: Uuid,
         cid: u64,
+        message: Vec<u8>,
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
     GroupInvite {
         uuid: Uuid,
         cid: u64,
+        peer_cid: u64,
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
     GroupRespondInviteRequest {
         uuid: Uuid,
         cid: u64,
+        group_key: MessageGroupKey,
+        response: bool,
         request_id: Uuid,
     },
     GroupKick {
         uuid: Uuid,
         cid: u64,
+        peer_cid: u64,
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
     GroupListGroupsFor {
         uuid: Uuid,
         cid: u64,
+        peer_cid: u64,
         request_id: Uuid,
     },
     GroupRequestJoin {

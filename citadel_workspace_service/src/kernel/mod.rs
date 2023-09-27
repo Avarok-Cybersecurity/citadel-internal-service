@@ -115,11 +115,7 @@ impl Connection {
         }
     }
 
-    fn add_group_connection(
-        &mut self,
-        group_key: MessageGroupKey,
-        channel: GroupChannel,
-    ) {
+    fn add_group_connection(&mut self, group_key: MessageGroupKey, channel: GroupChannel) {
         self.groups.insert(
             group_key,
             GroupConnection {
@@ -129,9 +125,9 @@ impl Connection {
         );
     }
 
-    fn clear_group_connection(&mut self, group_key: MessageGroupKey) -> Option<GroupConnection> {
-        self.groups.remove(&group_key)
-    }
+    // fn clear_group_connection(&mut self, group_key: MessageGroupKey) -> Option<GroupConnection> {
+    //     self.groups.remove(&group_key)
+    // }
 
     // fn remove_object_transfer_handler(&mut self, peer_cid: u64, object_id: u32) -> Option<Option<ObjectTransferHandler>> {
     //     if self.implicated_cid() == peer_cid {
