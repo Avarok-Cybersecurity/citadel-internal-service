@@ -167,15 +167,24 @@ impl NetKernel for CitadelWorkspaceService {
         let remote_for_closure = remote.clone();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InternalServiceRequest>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
         let tcp_connection_map = &self.tcp_connection_map;
+        let server_connection_map = &self.server_connection_map;
+
         let listener_task = async move {
             while let Ok((conn, _addr)) = listener.accept().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
                 let id = Uuid::new_v4();
                 tcp_connection_map.lock().await.insert(id, tx1);
-                handle_connection(conn, tx.clone(), rx1, id);
+                handle_connection(
+                    conn,
+                    tx.clone(),
+                    rx1,
+                    id,
+                    tcp_connection_map.clone(),
+                    server_connection_map.clone(),
+                );
             }
             Ok(())
         };
@@ -183,10 +192,11 @@ impl NetKernel for CitadelWorkspaceService {
         let server_connection_map = &self.server_connection_map;
 
         let inbound_command_task = async move {
-            while let Some(command) = rx.recv().await {
+            while let Some((command, conn_id)) = rx.recv().await {
                 // TODO: handle error once payload_handler is fallible
                 handle_request(
                     command,
+                    conn_id,
                     server_connection_map,
                     &mut remote,
                     tcp_connection_map,
@@ -403,10 +413,11 @@ async fn sink_send_payload(
 
 fn send_to_kernel(
     payload_to_send: &[u8],
-    sender: &UnboundedSender<InternalServiceRequest>,
+    sender: &UnboundedSender<(InternalServiceRequest, Uuid)>,
+    conn_id: Uuid,
 ) -> Result<(), NetworkError> {
     if let Some(payload) = deserialize(payload_to_send) {
-        sender.send(payload)?;
+        sender.send((payload, conn_id))?;
         Ok(())
     } else {
         error!(target: "citadel", "w task: failed to deserialize payload");
@@ -416,9 +427,11 @@ fn send_to_kernel(
 
 fn handle_connection(
     conn: TcpStream,
-    to_kernel: UnboundedSender<InternalServiceRequest>,
+    to_kernel: UnboundedSender<(InternalServiceRequest, Uuid)>,
     mut from_kernel: tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
     conn_id: Uuid,
+    tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    server_connection_map: Arc<Mutex<HashMap<u64, Connection>>>,
 ) {
     tokio::task::spawn(async move {
         let framed = wrap_tcp_conn(conn);
@@ -426,10 +439,7 @@ fn handle_connection(
 
         let write_task = async move {
             let response =
-                InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
-                    id: conn_id,
-                    request_id: None,
-                });
+                InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted);
 
             sink_send_payload(&response, &mut sink).await;
 
@@ -442,7 +452,7 @@ fn handle_connection(
             while let Some(message) = stream.next().await {
                 match message {
                     Ok(message) => {
-                        if let Err(err) = send_to_kernel(&message, &to_kernel) {
+                        if let Err(err) = send_to_kernel(&message, &to_kernel, conn_id) {
                             error!(target: "citadel", "Failed to send to kernel: {:?}", err);
                             break;
                         }
@@ -453,6 +463,10 @@ fn handle_connection(
                 }
             }
             info!(target: "citadel", "Disconnected");
+            tcp_connection_map.lock().await.remove(&conn_id);
+            let mut server_connection_map = server_connection_map.lock().await;
+            // Remove all connections whose associated_tcp_connection is conn_id
+            server_connection_map.retain(|_, v| v.associated_tcp_connection != conn_id);
         };
 
         tokio::select! {
@@ -478,7 +492,6 @@ fn spawn_tick_updater(
                 match tcp_connection_map.lock().await.get(&uuid) {
                     Some(entry) => {
                         let message = InternalServiceResponse::FileTransferTick(FileTransferTick {
-                            uuid,
                             cid: implicated_cid,
                             peer_cid,
                             status: status_message,

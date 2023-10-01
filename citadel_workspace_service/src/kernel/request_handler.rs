@@ -27,16 +27,13 @@ use uuid::Uuid;
 #[async_recursion]
 pub async fn handle_request(
     command: InternalServiceRequest,
+    uuid: Uuid,
     server_connection_map: &Arc<Mutex<HashMap<u64, Connection>>>,
     remote: &mut NodeRemote,
     tcp_connection_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
     match command {
-        InternalServiceRequest::ListRegisteredPeers {
-            uuid,
-            request_id,
-            cid,
-        } => {
+        InternalServiceRequest::ListRegisteredPeers { request_id, cid } => {
             match remote.get_local_group_mutual_peers(cid).await {
                 Ok(peers) => {
                     let mut accounts = HashMap::new();
@@ -85,40 +82,35 @@ pub async fn handle_request(
                 }
             }
         }
-        InternalServiceRequest::ListAllPeers {
-            uuid,
-            request_id,
-            cid,
-        } => match remote.get_local_group_peers(cid, None).await {
-            Ok(peers) => {
-                let peers = ListAllPeers {
-                    cid,
-                    online_status: peers
-                        .into_iter()
-                        .filter(|peer| peer.cid != cid)
-                        .map(|peer| (peer.cid, peer.is_online))
-                        .collect(),
-                    request_id: Some(request_id),
-                };
+        InternalServiceRequest::ListAllPeers { request_id, cid } => {
+            match remote.get_local_group_peers(cid, None).await {
+                Ok(peers) => {
+                    let peers = ListAllPeers {
+                        cid,
+                        online_status: peers
+                            .into_iter()
+                            .filter(|peer| peer.cid != cid)
+                            .map(|peer| (peer.cid, peer.is_online))
+                            .collect(),
+                        request_id: Some(request_id),
+                    };
 
-                let response = InternalServiceResponse::ListAllPeers(peers);
-                send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
-            }
+                    let response = InternalServiceResponse::ListAllPeers(peers);
+                    send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
+                }
 
-            Err(err) => {
-                let response = InternalServiceResponse::ListAllPeersFailure(ListAllPeersFailure {
-                    cid,
-                    message: err.into_string(),
-                    request_id: Some(request_id),
-                });
-                send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
+                Err(err) => {
+                    let response =
+                        InternalServiceResponse::ListAllPeersFailure(ListAllPeersFailure {
+                            cid,
+                            message: err.into_string(),
+                            request_id: Some(request_id),
+                        });
+                    send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
+                }
             }
-        },
-        InternalServiceRequest::GetAccountInformation {
-            uuid,
-            request_id,
-            cid,
-        } => {
+        }
+        InternalServiceRequest::GetAccountInformation { request_id, cid } => {
             async fn add_account_to_map(
                 accounts_ret: &mut HashMap<u64, AccountInformation>,
                 account: CNACMetadata,
@@ -197,7 +189,7 @@ pub async fn handle_request(
             send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
         }
         // Return all the sessions for the given TCP connection
-        InternalServiceRequest::GetSessions { uuid, request_id } => {
+        InternalServiceRequest::GetSessions { request_id } => {
             let lock = server_connection_map.lock().await;
             let mut sessions = Vec::new();
             for (cid, connection) in lock.iter() {
@@ -231,7 +223,6 @@ pub async fn handle_request(
             send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
         }
         InternalServiceRequest::Connect {
-            uuid,
             username,
             password,
             connect_mode,
@@ -306,7 +297,6 @@ pub async fn handle_request(
             };
         }
         InternalServiceRequest::Register {
-            uuid,
             server_addr,
             full_name,
             username,
@@ -330,7 +320,6 @@ pub async fn handle_request(
                     false => {
                         let response = InternalServiceResponse::RegisterSuccess(
                             citadel_workspace_types::RegisterSuccess {
-                                id: uuid,
                                 request_id: Some(request_id),
                             },
                         );
@@ -338,7 +327,6 @@ pub async fn handle_request(
                     }
                     true => {
                         let connect_command = InternalServiceRequest::Connect {
-                            uuid,
                             username,
                             password: proposed_password,
                             keep_alive_timeout: None,
@@ -350,6 +338,7 @@ pub async fn handle_request(
 
                         handle_request(
                             connect_command,
+                            uuid,
                             server_connection_map,
                             remote,
                             tcp_connection_map,
@@ -369,7 +358,6 @@ pub async fn handle_request(
             };
         }
         InternalServiceRequest::Message {
-            uuid,
             message,
             cid,
             peer_cid,
@@ -431,11 +419,7 @@ pub async fn handle_request(
             };
         }
 
-        InternalServiceRequest::Disconnect {
-            cid,
-            uuid,
-            request_id,
-        } => {
+        InternalServiceRequest::Disconnect { cid, request_id } => {
             let request = NodeRequest::DisconnectFromHypernode(DisconnectFromHypernode {
                 implicated_cid: cid,
                 v_conn_type: VirtualTargetType::LocalGroupServer {
@@ -468,7 +452,6 @@ pub async fn handle_request(
         }
 
         InternalServiceRequest::SendFile {
-            uuid,
             source,
             cid,
             peer_cid,
@@ -553,7 +536,6 @@ pub async fn handle_request(
         }
 
         InternalServiceRequest::RespondFileTransfer {
-            uuid,
             cid,
             peer_cid,
             object_id,
@@ -628,7 +610,6 @@ pub async fn handle_request(
             delete_on_pull,
             cid,
             peer_cid,
-            uuid,
             request_id,
         } => {
             let security_level = security_level.unwrap_or_default();
@@ -706,7 +687,6 @@ pub async fn handle_request(
             virtual_directory,
             cid,
             peer_cid,
-            uuid,
             request_id,
         } => {
             match server_connection_map.lock().await.get_mut(&cid) {
@@ -778,7 +758,6 @@ pub async fn handle_request(
         InternalServiceRequest::StartGroup {
             initial_users_to_invite,
             cid,
-            uuid: _uuid,
             request_id: _,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
@@ -798,7 +777,6 @@ pub async fn handle_request(
         }
 
         InternalServiceRequest::PeerRegister {
-            uuid,
             cid,
             peer_id: peer_username,
             connect_after_register,
@@ -833,7 +811,6 @@ pub async fn handle_request(
                                 match connect_after_register {
                                     true => {
                                         let connect_command = InternalServiceRequest::PeerConnect {
-                                            uuid,
                                             cid,
                                             username: this_username.clone(),
                                             peer_cid,
@@ -848,6 +825,7 @@ pub async fn handle_request(
 
                                         handle_request(
                                             connect_command,
+                                            uuid,
                                             server_connection_map,
                                             remote,
                                             tcp_connection_map,
@@ -908,7 +886,6 @@ pub async fn handle_request(
         }
 
         InternalServiceRequest::PeerConnect {
-            uuid,
             cid,
             username,
             peer_cid,
@@ -1017,7 +994,6 @@ pub async fn handle_request(
             }
         }
         InternalServiceRequest::PeerDisconnect {
-            uuid,
             cid,
             peer_cid,
             request_id,
@@ -1091,7 +1067,6 @@ pub async fn handle_request(
             }
         }
         InternalServiceRequest::LocalDBGetKV {
-            uuid,
             cid,
             peer_cid,
             key,
@@ -1151,7 +1126,6 @@ pub async fn handle_request(
             }
         },
         InternalServiceRequest::LocalDBSetKV {
-            uuid,
             cid,
             peer_cid,
             key,
@@ -1214,7 +1188,6 @@ pub async fn handle_request(
             }
         },
         InternalServiceRequest::LocalDBDeleteKV {
-            uuid,
             cid,
             peer_cid,
             key,
@@ -1276,7 +1249,6 @@ pub async fn handle_request(
             }
         },
         InternalServiceRequest::LocalDBGetAllKV {
-            uuid,
             cid,
             peer_cid,
             request_id,
@@ -1335,7 +1307,6 @@ pub async fn handle_request(
             }
         },
         InternalServiceRequest::LocalDBClearAllKV {
-            uuid,
             cid,
             peer_cid,
             request_id,
