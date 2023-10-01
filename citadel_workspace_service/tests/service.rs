@@ -50,7 +50,7 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        let (to_service, mut from_service, uuid, cid) = register_and_connect_to_server(
+        let (to_service, mut from_service, cid) = register_and_connect_to_server(
             bind_address_internal_service,
             server_bind_address,
             "John Doe",
@@ -60,7 +60,6 @@ mod tests {
         .await
         .unwrap();
         let disconnect_command = InternalServiceRequest::Disconnect {
-            uuid,
             cid,
             request_id: Uuid::new_v4(),
         };
@@ -113,7 +112,7 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        let (to_service, mut from_service, uuid, cid) = register_and_connect_to_server(
+        let (to_service, mut from_service, cid) = register_and_connect_to_server(
             bind_address_internal_service,
             server_bind_address,
             "John Doe",
@@ -125,7 +124,6 @@ mod tests {
 
         let serialized_message = bincode2::serialize("Message Test").unwrap();
         let message_command = InternalServiceRequest::Message {
-            uuid,
             message: serialized_message,
             cid,
             peer_cid: None,
@@ -159,7 +157,6 @@ mod tests {
         }
 
         let disconnect_command = InternalServiceRequest::Disconnect {
-            uuid,
             cid,
             request_id: Uuid::new_v4(),
         };
@@ -226,13 +223,10 @@ mod tests {
 
         info!(target: "citadel", "Greeter packet {greeter_packet:?}");
 
-        if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
-            id,
-            request_id: _,
-        }) = greeter_packet
+        if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted) =
+            greeter_packet
         {
             let register_command = InternalServiceRequest::Register {
-                uuid: id,
                 server_addr: server_bind_address,
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
@@ -263,7 +257,6 @@ mod tests {
     }
 
     async fn test_list_peers(
-        uuid: Uuid,
         cid: u64,
         peer_cid: u64,
         to_service: &tokio::sync::mpsc::UnboundedSender<InternalServiceRequest>,
@@ -271,7 +264,6 @@ mod tests {
     ) {
         // Test that service A views the right information
         let svc_a_request = InternalServiceRequest::ListAllPeers {
-            uuid,
             request_id: Uuid::new_v4(),
             cid,
         };
@@ -287,7 +279,6 @@ mod tests {
         }
 
         let svc_a_request = InternalServiceRequest::ListRegisteredPeers {
-            uuid,
             request_id: Uuid::new_v4(),
             cid,
         };
@@ -318,25 +309,17 @@ mod tests {
     async fn test_citadel_workspace_service_peer_test_list_peers() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
 
-        let (
-            to_service_a,
-            mut from_service_a,
-            to_service_b,
-            mut from_service_b,
-            uuid_a,
-            uuid_b,
-            cid_a,
-            cid_b,
-        ) = register_and_connect_to_server_then_peers(
-            "127.0.0.1:55526".parse().unwrap(),
-            "127.0.0.1:55527".parse().unwrap(),
-        )
-        .await?;
+        let (to_service_a, mut from_service_a, to_service_b, mut from_service_b, cid_a, cid_b) =
+            register_and_connect_to_server_then_peers(
+                "127.0.0.1:55526".parse().unwrap(),
+                "127.0.0.1:55527".parse().unwrap(),
+            )
+            .await?;
 
         // Test that service A views the right information
-        test_list_peers(uuid_a, cid_a, cid_b, &to_service_a, &mut from_service_a).await;
+        test_list_peers(cid_a, cid_b, &to_service_a, &mut from_service_a).await;
         // Test that service B views the right information
-        test_list_peers(uuid_b, cid_b, cid_a, &to_service_b, &mut from_service_b).await;
+        test_list_peers(cid_b, cid_a, &to_service_b, &mut from_service_b).await;
 
         Ok(())
     }
@@ -349,24 +332,15 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let (
-            to_service_a,
-            mut from_service_a,
-            _to_service_b,
-            mut from_service_b,
-            uuid_a,
-            _uuid_b,
-            cid_a,
-            cid_b,
-        ) = register_and_connect_to_server_then_peers(
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-        )
-        .await?;
+        let (to_service_a, mut from_service_a, _to_service_b, mut from_service_b, cid_a, cid_b) =
+            register_and_connect_to_server_then_peers(
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            )
+            .await?;
 
         let service_a_message = Vec::from("Hello World");
         let service_a_message_payload = InternalServiceRequest::Message {
-            uuid: uuid_a,
             message: service_a_message.clone(),
             cid: cid_a,
             peer_cid: Some(cid_b),
@@ -419,7 +393,7 @@ mod tests {
         spawn_services(internal_service, server);
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
-        let (to_service_a, mut from_service_a, uuid, cid) = register_and_connect_to_server(
+        let (to_service_a, mut from_service_a, cid) = register_and_connect_to_server(
             bind_address_internal_service_a,
             server_bind_address,
             "peer a",
@@ -428,7 +402,7 @@ mod tests {
         )
         .await?;
 
-        test_kv_for_service(&to_service_a, &mut from_service_a, uuid, cid, None).await
+        test_kv_for_service(&to_service_a, &mut from_service_a, cid, None).await
     }
 
     #[tokio::test]
@@ -439,37 +413,15 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let (
-            to_service_a,
-            mut from_service_a,
-            to_service_b,
-            mut from_service_b,
-            uuid_a,
-            uuid_b,
-            cid_a,
-            cid_b,
-        ) = register_and_connect_to_server_then_peers(
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-        )
-        .await?;
+        let (to_service_a, mut from_service_a, to_service_b, mut from_service_b, cid_a, cid_b) =
+            register_and_connect_to_server_then_peers(
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            )
+            .await?;
 
-        test_kv_for_service(
-            &to_service_a,
-            &mut from_service_a,
-            uuid_a,
-            cid_a,
-            Some(cid_b),
-        )
-        .await?;
-        test_kv_for_service(
-            &to_service_b,
-            &mut from_service_b,
-            uuid_b,
-            cid_b,
-            Some(cid_a),
-        )
-        .await?;
+        test_kv_for_service(&to_service_a, &mut from_service_a, cid_a, Some(cid_b)).await?;
+        test_kv_for_service(&to_service_b, &mut from_service_b, cid_b, Some(cid_a)).await?;
         Ok(())
     }
 }
