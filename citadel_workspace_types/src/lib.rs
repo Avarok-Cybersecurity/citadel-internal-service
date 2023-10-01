@@ -25,7 +25,6 @@ pub struct ConnectionFailure {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegisterSuccess {
-    pub id: Uuid,
     pub request_id: Option<Uuid>,
 }
 
@@ -36,10 +35,7 @@ pub struct RegisterFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceConnectionAccepted {
-    pub id: Uuid,
-    pub request_id: Option<Uuid>,
-}
+pub struct ServiceConnectionAccepted;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MessageSent {
@@ -292,7 +288,6 @@ pub struct FileTransferStatus {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileTransferTick {
-    pub uuid: Uuid,
     pub cid: u64,
     pub peer_cid: u64,
     pub status: ObjectTransferStatus,
@@ -346,7 +341,6 @@ pub enum InternalServiceResponse {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum InternalServiceRequest {
     Connect {
-        uuid: Uuid,
         // A user-provided unique ID that will be returned in the response
         request_id: Uuid,
         username: String,
@@ -357,7 +351,6 @@ pub enum InternalServiceRequest {
         session_security_settings: SessionSecuritySettings,
     },
     Register {
-        uuid: Uuid,
         request_id: Uuid,
         server_addr: SocketAddr,
         full_name: String,
@@ -367,7 +360,6 @@ pub enum InternalServiceRequest {
         default_security_settings: SessionSecuritySettings,
     },
     Message {
-        uuid: Uuid,
         request_id: Uuid,
         message: Vec<u8>,
         cid: u64,
@@ -376,12 +368,10 @@ pub enum InternalServiceRequest {
         security_level: SecurityLevel,
     },
     Disconnect {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
     },
     SendFile {
-        uuid: Uuid,
         request_id: Uuid,
         source: PathBuf,
         cid: u64,
@@ -390,7 +380,6 @@ pub enum InternalServiceRequest {
         transfer_type: TransferType,
     },
     RespondFileTransfer {
-        uuid: Uuid,
         cid: u64,
         peer_cid: u64,
         object_id: u64,
@@ -404,34 +393,31 @@ pub enum InternalServiceRequest {
         delete_on_pull: bool,
         cid: u64,
         peer_cid: Option<u64>,
-        uuid: Uuid,
+
         request_id: Uuid,
     },
     DeleteVirtualFile {
         virtual_directory: PathBuf,
         cid: u64,
         peer_cid: Option<u64>,
-        uuid: Uuid,
+
         request_id: Uuid,
     },
     StartGroup {
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
         cid: u64,
-        uuid: Uuid,
+
         request_id: Uuid,
     },
     ListAllPeers {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
     },
     ListRegisteredPeers {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
     },
     PeerConnect {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         username: String,
@@ -441,27 +427,23 @@ pub enum InternalServiceRequest {
         session_security_settings: SessionSecuritySettings,
     },
     PeerDisconnect {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: u64,
     },
     PeerRegister {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_id: UserIdentifier,
         connect_after_register: bool,
     },
     LocalDBGetKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
         key: String,
     },
     LocalDBSetKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
@@ -469,30 +451,25 @@ pub enum InternalServiceRequest {
         value: Vec<u8>,
     },
     LocalDBDeleteKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
         key: String,
     },
     LocalDBGetAllKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
     },
     LocalDBClearAllKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
     },
     GetSessions {
-        uuid: Uuid,
         request_id: Uuid,
     },
     GetAccountInformation {
-        uuid: Uuid,
         request_id: Uuid,
         // If specified, the command will reply with information for a specific account. Otherwise
         // the command will reply with information for all accounts

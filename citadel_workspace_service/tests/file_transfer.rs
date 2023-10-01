@@ -62,7 +62,7 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        let (to_service, mut from_service, uuid, cid) = register_and_connect_to_server(
+        let (to_service, mut from_service, cid) = register_and_connect_to_server(
             bind_address_internal_service,
             server_bind_address,
             "John Doe",
@@ -75,7 +75,6 @@ mod tests {
         let cmp_path = PathBuf::from("../resources/test.txt");
 
         let file_transfer_command = InternalServiceRequest::SendFile {
-            uuid,
             request_id: Uuid::new_v4(),
             source: cmp_path.clone(),
             cid,
@@ -98,25 +97,16 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let (
-            to_service_a,
-            mut from_service_a,
-            to_service_b,
-            mut from_service_b,
-            uuid_a,
-            uuid_b,
-            cid_a,
-            cid_b,
-        ) = register_and_connect_to_server_then_peers(
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-        )
-        .await?;
+        let (to_service_a, mut from_service_a, to_service_b, mut from_service_b, cid_a, cid_b) =
+            register_and_connect_to_server_then_peers(
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            )
+            .await?;
 
         let file_to_send = PathBuf::from("../resources/test.txt");
 
         let send_file_to_service_b_payload = InternalServiceRequest::SendFile {
-            uuid: uuid_a,
             request_id: Uuid::new_v4(),
             source: file_to_send,
             cid: cid_a,
@@ -136,7 +126,6 @@ mod tests {
             info!(target:"citadel", "File Transfer Request {cid_b:?}");
 
             let file_transfer_accept = InternalServiceRequest::RespondFileTransfer {
-                uuid: uuid_b,
                 cid: cid_b,
                 peer_cid: cid_a,
                 object_id: metadata.object_id as _,
@@ -213,7 +202,7 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        let (to_service, mut from_service, uuid, cid) = register_and_connect_to_server(
+        let (to_service, mut from_service, cid) = register_and_connect_to_server(
             bind_address_internal_service,
             server_bind_address,
             "John Doe",
@@ -227,7 +216,6 @@ mod tests {
         let file_to_send = PathBuf::from("../resources/test.txt");
         let virtual_path = PathBuf::from("/vfs/test.txt");
         let file_transfer_command = InternalServiceRequest::SendFile {
-            uuid,
             request_id: Uuid::new_v4(),
             source: file_to_send.clone(),
             cid,
@@ -259,7 +247,6 @@ mod tests {
             delete_on_pull: false,
             cid,
             peer_cid: None,
-            uuid,
             request_id: Uuid::new_v4(),
         };
         to_service.send(file_download_command).unwrap();
@@ -281,7 +268,6 @@ mod tests {
             virtual_directory: virtual_path.clone(),
             cid,
             peer_cid: None,
-            uuid,
             request_id: Uuid::new_v4(),
         };
         to_service.send(file_delete_command).unwrap();
@@ -315,26 +301,17 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let (
-            to_service_a,
-            mut from_service_a,
-            to_service_b,
-            mut from_service_b,
-            uuid_a,
-            uuid_b,
-            cid_a,
-            cid_b,
-        ) = register_and_connect_to_server_then_peers(
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-        )
-        .await?;
+        let (to_service_a, mut from_service_a, to_service_b, mut from_service_b, cid_a, cid_b) =
+            register_and_connect_to_server_then_peers(
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            )
+            .await?;
 
         // Push file to REVFS on peer
         let file_to_send = PathBuf::from("../resources/test.txt");
         let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
         let send_file_to_service_b_payload = InternalServiceRequest::SendFile {
-            uuid: uuid_a,
             request_id: Uuid::new_v4(),
             source: file_to_send.clone(),
             cid: cid_a,
@@ -360,7 +337,6 @@ mod tests {
             }) = deserialized_service_a_payload_response
             {
                 let file_transfer_accept_payload = InternalServiceRequest::RespondFileTransfer {
-                    uuid: uuid_b,
                     cid: cid_b,
                     peer_cid: cid_a,
                     object_id: metadata.object_id as _,
@@ -384,7 +360,6 @@ mod tests {
             delete_on_pull: false,
             cid: cid_a,
             peer_cid: Some(cid_b),
-            uuid: uuid_a,
             request_id: Uuid::new_v4(),
         };
         to_service_a.send(download_file_command).unwrap();
@@ -397,7 +372,6 @@ mod tests {
             virtual_directory: virtual_path,
             cid: cid_a,
             peer_cid: Some(cid_b),
-            uuid: uuid_a,
             request_id: Uuid::new_v4(),
         };
         to_service_a.send(delete_file_command).unwrap();
@@ -430,7 +404,6 @@ mod tests {
             let tick_response = svc.recv().await.unwrap();
             match tick_response {
                 InternalServiceResponse::FileTransferTick(FileTransferTick {
-                    uuid: _,
                     cid: _,
                     peer_cid: _,
                     status,
