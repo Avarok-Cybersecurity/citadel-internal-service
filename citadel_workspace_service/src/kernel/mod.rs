@@ -463,16 +463,17 @@ fn handle_connection(
                 }
             }
             info!(target: "citadel", "Disconnected");
-            tcp_connection_map.lock().await.remove(&conn_id);
-            let mut server_connection_map = server_connection_map.lock().await;
-            // Remove all connections whose associated_tcp_connection is conn_id
-            server_connection_map.retain(|_, v| v.associated_tcp_connection != conn_id);
         };
 
         tokio::select! {
             res0 = write_task => res0,
             res1 = read_task => res1,
         }
+
+        tcp_connection_map.lock().await.remove(&conn_id);
+        let mut server_connection_map = server_connection_map.lock().await;
+        // Remove all connections whose associated_tcp_connection is conn_id
+        server_connection_map.retain(|_, v| v.associated_tcp_connection != conn_id);
     });
 }
 
