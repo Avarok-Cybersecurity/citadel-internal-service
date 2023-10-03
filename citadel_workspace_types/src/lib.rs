@@ -420,9 +420,7 @@ pub enum InternalServiceRequest {
     PeerConnect {
         request_id: Uuid,
         cid: u64,
-        username: String,
         peer_cid: u64,
-        peer_username: String,
         udp_mode: UdpMode,
         session_security_settings: SessionSecuritySettings,
     },
@@ -434,7 +432,7 @@ pub enum InternalServiceRequest {
     PeerRegister {
         request_id: Uuid,
         cid: u64,
-        peer_id: UserIdentifier,
+        peer_cid: UserIdentifier,
         connect_after_register: bool,
     },
     LocalDBGetKV {
