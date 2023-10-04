@@ -24,6 +24,7 @@ pub struct CitadelWorkspaceService {
     pub bind_address: SocketAddr,
     pub server_connection_map: Arc<Mutex<HashMap<u64, Connection>>>,
     pub tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    pub group_map: Arc<Mutex<HashMap<MessageGroupKey, GroupConnection>>>,
 }
 
 impl CitadelWorkspaceService {
@@ -33,6 +34,7 @@ impl CitadelWorkspaceService {
             bind_address,
             server_connection_map: Arc::new(Mutex::new(Default::default())),
             tcp_connection_map: Arc::new(Mutex::new(Default::default())),
+            group_map: Arc::new(Mutex::new(Default::default())),
         }
     }
 }
@@ -44,7 +46,6 @@ pub struct Connection {
     peers: HashMap<u64, PeerConnection>,
     associated_tcp_connection: Uuid,
     c2s_file_transfer_handlers: HashMap<u64, Option<ObjectTransferHandler>>,
-    groups: HashMap<MessageGroupKey, GroupConnection>,
 }
 
 #[allow(dead_code)]
@@ -58,6 +59,7 @@ struct PeerConnection {
 #[allow(dead_code)]
 struct GroupConnection {
     channel: GroupChannel,
+    implicated_cid: u64,
     associated_tcp_connection: Uuid,
 }
 
@@ -73,7 +75,6 @@ impl Connection {
             client_server_remote,
             associated_tcp_connection,
             c2s_file_transfer_handlers: HashMap::new(),
-            groups: HashMap::new(),
         }
     }
 
@@ -113,16 +114,6 @@ impl Connection {
                 peer_connection.handler_map.insert(object_id, handler);
             }
         }
-    }
-
-    fn add_group_connection(&mut self, group_key: MessageGroupKey, channel: GroupChannel) {
-        self.groups.insert(
-            group_key,
-            GroupConnection {
-                channel,
-                associated_tcp_connection: self.associated_tcp_connection,
-            },
-        );
     }
 
     // fn clear_group_connection(&mut self, group_key: MessageGroupKey) -> Option<GroupConnection> {
@@ -212,6 +203,7 @@ impl NetKernel for CitadelWorkspaceService {
                     server_connection_map,
                     &mut remote,
                     tcp_connection_map,
+                    group_map
                 )
                 .await;
             }
@@ -355,29 +347,47 @@ impl NetKernel for CitadelWorkspaceService {
                     );
                 }
             }
-            NodeResult::PeerEvent(event) => {
-                if let PeerSignal::Disconnect(
-                    PeerConnectionType::LocalGroupPeer {
-                        implicated_cid,
-                        peer_cid,
-                    },
-                    _,
-                ) = event.event
-                {
-                    if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
-                        let response = InternalServiceResponse::Disconnected(Disconnected {
-                            cid: implicated_cid,
-                            peer_cid: Some(peer_cid),
-                            request_id: None,
-                        });
-                        send_response_to_tcp_client(
-                            &self.tcp_connection_map,
-                            response,
-                            conn.associated_tcp_connection,
-                        )
-                        .await;
-                    }
+            NodeResult::GroupChannelCreated(group_channel_created) => {
+                let group_channel = group_channel_created.channel;
+                let mut server_connection_map = self.server_connection_map.lock().await;
+                if let Some(connection) = server_connection_map.get_mut(&group_channel.cid) {
+                    connection.add_group_connection(group_channel.key(), group_channel);
                 }
+            }
+            NodeResult::PeerEvent(event) => {
+                match event.event {
+                    PeerSignal::Disconnect(
+                        PeerConnectionType::LocalGroupPeer {
+                            implicated_cid,
+                            peer_cid,
+                        },
+                        _,
+                    ) => {
+                        if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
+                            let response = InternalServiceResponse::Disconnected(Disconnected {
+                                cid: implicated_cid,
+                                peer_cid: Some(peer_cid),
+                                request_id: None,
+                            });
+                            send_response_to_tcp_client(
+                                &self.tcp_connection_map,
+                                response,
+                                conn.associated_tcp_connection,
+                            )
+                                .await;
+                        }
+                    }
+                    PeerSignal::BroadcastConnected(group_broadcast) => {
+                        let mut group_map = self.group_map.lock().await;
+                        handle_group_broadcast(group_broadcast, &mut group_map, self.tcp_connection_map.clone()).await;
+                    }
+                    _ => {}
+                }
+            }
+
+            NodeResult::GroupEvent(group_event) => {
+                let mut group_map = self.group_map.lock().await;
+                handle_group_broadcast(group_event.event, &mut group_map, self.tcp_connection_map.clone()).await;
             }
 
             _ => {}
@@ -482,6 +492,108 @@ fn handle_connection(
             res1 = read_task => res1,
         }
     });
+}
+
+async fn handle_group_broadcast(
+    group_broadcast: GroupBroadcast,
+    group_map: &mut HashMap<MessageGroupKey, GroupConnection>,
+    tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+) {
+    let Some((response, cid)) = match group_broadcast {
+        GroupBroadcast::Invitation(group_key) => {
+            if let Some(group_connection) = group_map.get_mut(&MessageGroupKey) {
+                let cid = group_connection.implicated_cid;
+                Some((InternalServiceResponse::GroupInvitation(GroupInvitation {
+                    cid,
+                    group_key,
+                    request_id: None,
+                }), cid))
+            }
+            else {
+                None
+            }
+
+        },
+
+        GroupBroadcast::RequestJoin(group_key) => {
+            if let Some(group_connection) = group_map.get_mut(&MessageGroupKey) {
+                let cid = group_connection.implicated_cid;
+                Some((InternalServiceResponse::GroupJoinRequest(GroupJoinRequest {
+                    cid,
+                    peer_cid,
+                    group_key,
+                    request_id: None,
+                }), cid))
+            }
+            else {
+                None
+            }
+        },
+
+        GroupBroadcast::AcceptMembership(group_key) => {
+            if let Some(group_connection) = group_map.get_mut(&MessageGroupKey) {
+                let cid = group_connection.implicated_cid;
+                Some((InternalServiceResponse::GroupRequestJoinAccepted(GroupRequestJoinAccepted {
+                    cid,
+                    group_key,
+                    request_id: None,
+                }), cid))
+            }
+            else {
+                None
+            }
+        },
+
+        GroupBroadcast::Message(peer_cid, group_key, message) => {
+            if let Some(group_connection) = group_map.get_mut(&MessageGroupKey) {
+                let cid = group_connection.implicated_cid;
+                Some((InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
+                    cid,
+                    peer_cid,
+                    message: message.into(),
+                    group_key,
+                    request_id: None,
+                }), cid))
+            }
+            else {
+                None
+            }
+        },
+
+        GroupBroadcast::LeaveRoomResponse(group_key, status, message) => {},
+
+        GroupBroadcast::EndResponse(group_key, status) => {},
+
+        GroupBroadcast::Disconnected(group_key) => {},
+
+        GroupBroadcast::MessageResponse(group_key, status) => {},
+
+        GroupBroadcast::AddResponse(group_key, member_list) => {},
+
+        GroupBroadcast::AcceptMembershipResponse(group_key, status) => {},
+
+        GroupBroadcast::KickResponse(group_key, status) => {},
+
+        GroupBroadcast::ListResponse(group_list) => {},
+
+        GroupBroadcast::CreateResponse(group_key) => {},
+
+        GroupBroadcast::MemberStateChanged(group_key, member_state) => {},
+
+        GroupBroadcast::GroupNonExists(group_key) => {},
+
+        GroupBroadcast::SignalResponse(result) => {},
+
+        _ => {None},
+    };
+    if let Some(internal_service_response) = response {
+        send_response_to_tcp_client(
+            &tcp_connection_map,
+            internal_service_response,
+            connection.associated_tcp_connection,
+        )
+            .await;
+    }
 }
 
 fn spawn_tick_updater(

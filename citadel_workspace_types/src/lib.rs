@@ -201,6 +201,15 @@ pub struct GroupEndFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupMessageReceived {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub message: Vec<u8>,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GroupMessageSuccess {
     pub cid: u64,
     pub group_key: MessageGroupKey,
@@ -211,6 +220,13 @@ pub struct GroupMessageSuccess {
 pub struct GroupMessageFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupInvitation {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
 
@@ -268,6 +284,13 @@ pub struct GroupListGroupsForSuccess {
 pub struct GroupListGroupsForFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupRequestJoinAccepted {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
 
@@ -429,8 +452,10 @@ pub enum InternalServiceResponse {
     GroupLeaveFailure(GroupLeaveFailure),
     GroupEndSuccess(GroupEndSuccess),
     GroupEndFailure(GroupEndFailure),
+    GroupMessageReceived(GroupMessageReceived),
     GroupMessageSuccess(GroupMessageSuccess),
     GroupMessageFailure(GroupMessageFailure),
+    GroupInvitation(GroupInvitation),
     GroupInviteSuccess(GroupInviteSuccess),
     GroupInviteFailure(GroupInviteFailure),
     GroupRespondInviteRequestSuccess(GroupRespondInviteRequestSuccess),
@@ -439,6 +464,7 @@ pub enum InternalServiceResponse {
     GroupKickFailure(GroupKickFailure),
     GroupListGroupsForSuccess(GroupListGroupsForSuccess),
     GroupListGroupsForFailure(GroupListGroupsForFailure),
+    GroupRequestJoinAccepted(GroupRequestJoinAccepted),
     GroupRequestJoinSuccess(GroupRequestJoinSuccess),
     GroupRequestJoinFailure(GroupRequestJoinFailure),
     LocalDBGetKVSuccess(LocalDBGetKVSuccess),

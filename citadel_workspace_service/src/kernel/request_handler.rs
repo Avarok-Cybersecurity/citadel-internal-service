@@ -1,6 +1,4 @@
-use crate::kernel::{
-    create_client_server_remote, send_response_to_tcp_client, spawn_tick_updater, Connection,
-};
+use crate::kernel::{create_client_server_remote, send_response_to_tcp_client, spawn_tick_updater, Connection, GroupConnection};
 use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
@@ -34,6 +32,7 @@ pub async fn handle_request(
     server_connection_map: &Arc<Mutex<HashMap<u64, Connection>>>,
     remote: &mut NodeRemote,
     tcp_connection_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    group_map: &Arc<Mutex<HashMap<MessageGroupKey, GroupConnection>>>,
 ) {
     match command {
         InternalServiceRequest::GetAccountInformation {
@@ -275,6 +274,7 @@ pub async fn handle_request(
                             server_connection_map,
                             remote,
                             tcp_connection_map,
+                            group_map
                         )
                         .await
                     }
@@ -751,6 +751,7 @@ pub async fn handle_request(
                                             server_connection_map,
                                             remote,
                                             tcp_connection_map,
+                                            group_map,
                                         )
                                         .await;
                                     }
@@ -1311,14 +1312,16 @@ pub async fn handle_request(
                 .await
             {
                 Ok(group_channel) => {
-                    //Store the group channel in map
+                    //Store the group connection in map
                     let group_key = group_channel.key();
-                    server_connection_map
-                        .lock()
-                        .await
-                        .get_mut(&cid)
-                        .unwrap()
-                        .add_group_connection(group_key, group_channel);
+                    group_map.lock().await.insert(
+                        group_key,
+                        GroupConnection {
+                            channel,
+                            implicated_cid,
+                            associated_tcp_connection: uuid,
+                        },
+                    );
 
                     // Relay success to TCP client
                     send_response_to_tcp_client(
