@@ -789,10 +789,7 @@ pub async fn handle_request(
                 remote.clone(),
             );
 
-            match client_to_server_remote
-                .propose_target(cid, peer_cid)
-                .await
-            {
+            match client_to_server_remote.propose_target(cid, peer_cid).await {
                 Ok(symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(_peer_register_success) => {
