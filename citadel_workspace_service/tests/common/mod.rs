@@ -197,7 +197,7 @@ pub async fn register_and_connect_to_server_then_peers(
         .send(InternalServiceRequest::PeerRegister {
             request_id: Uuid::new_v4(),
             cid: cid_a,
-            peer_id: cid_b.into(),
+            peer_cid: cid_b.into(),
             connect_after_register: false,
         })
         .unwrap();
@@ -206,7 +206,7 @@ pub async fn register_and_connect_to_server_then_peers(
         .send(InternalServiceRequest::PeerRegister {
             request_id: Uuid::new_v4(),
             cid: cid_b,
-            peer_id: cid_a.into(),
+            peer_cid: cid_a.into(),
             connect_after_register: false,
         })
         .unwrap();
@@ -250,9 +250,7 @@ pub async fn register_and_connect_to_server_then_peers(
         .send(InternalServiceRequest::PeerConnect {
             request_id: Uuid::new_v4(),
             cid: cid_a,
-            username: String::from("peer.a"),
             peer_cid: cid_b,
-            peer_username: String::from("peer.b"),
             udp_mode: Default::default(),
             session_security_settings: Default::default(),
         })
@@ -262,9 +260,7 @@ pub async fn register_and_connect_to_server_then_peers(
         .send(InternalServiceRequest::PeerConnect {
             request_id: Uuid::new_v4(),
             cid: cid_b,
-            username: String::from("peer.b"),
             peer_cid: cid_a,
-            peer_username: String::from("peer.a"),
             udp_mode: Default::default(),
             session_security_settings: Default::default(),
         })

@@ -422,9 +422,6 @@ pub async fn handle_request(
         InternalServiceRequest::Disconnect { cid, request_id } => {
             let request = NodeRequest::DisconnectFromHypernode(DisconnectFromHypernode {
                 implicated_cid: cid,
-                v_conn_type: VirtualTargetType::LocalGroupServer {
-                    implicated_cid: cid,
-                },
             });
             server_connection_map.lock().await.remove(&cid);
             match remote.send(request).await {
@@ -778,7 +775,7 @@ pub async fn handle_request(
 
         InternalServiceRequest::PeerRegister {
             cid,
-            peer_id: peer_username,
+            peer_cid,
             connect_after_register,
             request_id,
         } => {
@@ -789,35 +786,20 @@ pub async fn handle_request(
                 remote.clone(),
             );
 
-            match client_to_server_remote
-                .propose_target(cid, peer_username.clone())
-                .await
-            {
+            match client_to_server_remote.propose_target(cid, peer_cid).await {
                 Ok(symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref.register_to_peer().await {
                         Ok(_peer_register_success) => {
                             let account_manager = symmetric_identifier_handle_ref.account_manager();
-                            let this_username = account_manager
-                                .get_username_by_cid(cid)
-                                .await
-                                .ok()
-                                .flatten()
-                                .unwrap_or_default();
-                            if let Ok(target_information) = account_manager
-                                .find_target_information(cid, peer_username.clone())
-                                .await
+                            if let Ok(target_information) =
+                                account_manager.find_target_information(cid, peer_cid).await
                             {
                                 let (peer_cid, mutual_peer) = target_information.unwrap();
                                 match connect_after_register {
                                     true => {
                                         let connect_command = InternalServiceRequest::PeerConnect {
                                             cid,
-                                            username: this_username.clone(),
                                             peer_cid,
-                                            peer_username: mutual_peer
-                                                .username
-                                                .clone()
-                                                .unwrap_or_default(),
                                             udp_mode: Default::default(),
                                             session_security_settings: Default::default(),
                                             request_id,
@@ -833,7 +815,6 @@ pub async fn handle_request(
                                         .await;
                                     }
                                     false => {
-                                        println!("{:?}", mutual_peer);
                                         send_response_to_tcp_client(
                                             tcp_connection_map,
                                             InternalServiceResponse::PeerRegisterSuccess(
@@ -887,9 +868,7 @@ pub async fn handle_request(
 
         InternalServiceRequest::PeerConnect {
             cid,
-            username,
             peer_cid,
-            peer_username,
             udp_mode,
             session_security_settings,
             request_id,
@@ -902,11 +881,7 @@ pub async fn handle_request(
                 },
                 remote.clone(),
             );
-            match client_to_server_remote
-                .find_target(username, peer_username)
-                .await
-            {
-                // username or cid?
+            match client_to_server_remote.find_target(cid, peer_cid).await {
                 Ok(symmetric_identifier_handle_ref) => {
                     match symmetric_identifier_handle_ref
                         .connect_to_peer_custom(session_security_settings, udp_mode)

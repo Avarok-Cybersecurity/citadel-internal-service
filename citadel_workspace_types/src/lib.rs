@@ -393,20 +393,17 @@ pub enum InternalServiceRequest {
         delete_on_pull: bool,
         cid: u64,
         peer_cid: Option<u64>,
-
         request_id: Uuid,
     },
     DeleteVirtualFile {
         virtual_directory: PathBuf,
         cid: u64,
         peer_cid: Option<u64>,
-
         request_id: Uuid,
     },
     StartGroup {
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
         cid: u64,
-
         request_id: Uuid,
     },
     ListAllPeers {
@@ -420,9 +417,7 @@ pub enum InternalServiceRequest {
     PeerConnect {
         request_id: Uuid,
         cid: u64,
-        username: String,
         peer_cid: u64,
-        peer_username: String,
         udp_mode: UdpMode,
         session_security_settings: SessionSecuritySettings,
     },
@@ -434,7 +429,7 @@ pub enum InternalServiceRequest {
     PeerRegister {
         request_id: Uuid,
         cid: u64,
-        peer_id: UserIdentifier,
+        peer_cid: u64,
         connect_after_register: bool,
     },
     LocalDBGetKV {
