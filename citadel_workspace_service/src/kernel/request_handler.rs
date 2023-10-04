@@ -422,9 +422,6 @@ pub async fn handle_request(
         InternalServiceRequest::Disconnect { cid, request_id } => {
             let request = NodeRequest::DisconnectFromHypernode(DisconnectFromHypernode {
                 implicated_cid: cid,
-                v_conn_type: VirtualTargetType::LocalGroupServer {
-                    implicated_cid: cid,
-                },
             });
             server_connection_map.lock().await.remove(&cid);
             match remote.send(request).await {
