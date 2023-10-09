@@ -42,7 +42,6 @@ pub async fn register_and_connect_to_server<
     (
         UnboundedSender<InternalServiceRequest>,
         UnboundedReceiver<InternalServiceResponse>,
-        Uuid,
         u64,
     ),
     Box<dyn Error>,
@@ -64,13 +63,10 @@ pub async fn register_and_connect_to_server<
     let full_name = full_name.into();
     let password = password.into();
 
-    if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
-        id,
-        request_id: _,
-    }) = greeter_packet
+    if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted) =
+        greeter_packet
     {
         let register_command = InternalServiceRequest::Register {
-            uuid: id,
             request_id: Uuid::new_v4(),
             server_addr,
             full_name,
@@ -84,7 +80,7 @@ pub async fn register_and_connect_to_server<
         let second_packet = stream.next().await.unwrap()?;
         let response_packet: InternalServiceResponse = bincode2::deserialize(&second_packet)?;
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_workspace_types::RegisterSuccess { id, request_id: _ },
+            citadel_workspace_types::RegisterSuccess { request_id: _ },
         ) = response_packet
         {
             // now, connect to the server
@@ -94,7 +90,6 @@ pub async fn register_and_connect_to_server<
                 connect_mode: Default::default(),
                 udp_mode: Default::default(),
                 keep_alive_timeout: None,
-                uuid: id,
                 session_security_settings: Default::default(),
                 request_id: Uuid::new_v4(),
             };
@@ -129,7 +124,7 @@ pub async fn register_and_connect_to_server<
 
                 spawn_services(service_to_test, test_to_service);
 
-                Ok((to_service_sender, from_service, id, cid))
+                Ok((to_service_sender, from_service, cid))
             } else {
                 Err(generic_error("Connection to server was not a success"))
             }
@@ -177,7 +172,7 @@ pub async fn register_and_connect_to_server_then_peers(
     // give time for both the server and internal service to run
     tokio::time::sleep(Duration::from_millis(2000)).await;
     info!(target: "citadel", "about to connect to internal service");
-    let (to_service_a, mut from_service_a, uuid_a, cid_a) = register_and_connect_to_server(
+    let (to_service_a, mut from_service_a, cid_a) = register_and_connect_to_server(
         bind_address_internal_service_a,
         server_bind_address,
         "Peer A",
@@ -186,7 +181,7 @@ pub async fn register_and_connect_to_server_then_peers(
     )
     .await
     .unwrap();
-    let (to_service_b, mut from_service_b, uuid_b, cid_b) = register_and_connect_to_server(
+    let (to_service_b, mut from_service_b, cid_b) = register_and_connect_to_server(
         bind_address_internal_service_b,
         server_bind_address,
         "Peer B",
@@ -200,20 +195,18 @@ pub async fn register_and_connect_to_server_then_peers(
     // need to have them peer-register to each other
     to_service_a
         .send(InternalServiceRequest::PeerRegister {
-            uuid: uuid_a,
             request_id: Uuid::new_v4(),
             cid: cid_a,
-            peer_id: cid_b.into(),
+            peer_cid: cid_b.into(),
             connect_after_register: false,
         })
         .unwrap();
 
     to_service_b
         .send(InternalServiceRequest::PeerRegister {
-            uuid: uuid_b,
             request_id: Uuid::new_v4(),
             cid: cid_b,
-            peer_id: cid_a.into(),
+            peer_cid: cid_a.into(),
             connect_after_register: false,
         })
         .unwrap();
@@ -255,12 +248,9 @@ pub async fn register_and_connect_to_server_then_peers(
 
     to_service_a
         .send(InternalServiceRequest::PeerConnect {
-            uuid: uuid_a,
             request_id: Uuid::new_v4(),
             cid: cid_a,
-            username: String::from("peer.a"),
             peer_cid: cid_b,
-            peer_username: String::from("peer.b"),
             udp_mode: Default::default(),
             session_security_settings: Default::default(),
         })
@@ -268,12 +258,9 @@ pub async fn register_and_connect_to_server_then_peers(
 
     to_service_b
         .send(InternalServiceRequest::PeerConnect {
-            uuid: uuid_b,
             request_id: Uuid::new_v4(),
             cid: cid_b,
-            username: String::from("peer.b"),
             peer_cid: cid_a,
-            peer_username: String::from("peer.a"),
             udp_mode: Default::default(),
             session_security_settings: Default::default(),
         })
@@ -299,8 +286,6 @@ pub async fn register_and_connect_to_server_then_peers(
                 from_service_a,
                 to_service_b,
                 from_service_b,
-                uuid_a,
-                uuid_b,
                 cid_a,
                 cid_b,
             ))
@@ -317,8 +302,6 @@ pub type PeerReturnHandle = (
     UnboundedReceiver<InternalServiceResponse>,
     UnboundedSender<InternalServiceRequest>,
     UnboundedReceiver<InternalServiceResponse>,
-    Uuid,
-    Uuid,
     u64,
     u64,
 );
@@ -475,13 +458,11 @@ pub fn server_info_file_transfer<'a>(
 pub async fn test_kv_for_service(
     to_service: &UnboundedSender<InternalServiceRequest>,
     from_service: &mut UnboundedReceiver<InternalServiceResponse>,
-    uuid: Uuid,
     cid: u64,
     peer_cid: Option<u64>,
 ) -> Result<(), Box<dyn Error>> {
     // test get_all_kv
     to_service.send(InternalServiceRequest::LocalDBGetAllKV {
-        uuid,
         cid,
         peer_cid,
         request_id: Uuid::new_v4(),
@@ -500,7 +481,6 @@ pub async fn test_kv_for_service(
     // test set_kv
     let value = Vec::from("Hello, World!");
     to_service.send(InternalServiceRequest::LocalDBSetKV {
-        uuid,
         cid,
         peer_cid,
         key: "tmp".to_string(),
@@ -518,7 +498,6 @@ pub async fn test_kv_for_service(
 
     // test get_kv
     to_service.send(InternalServiceRequest::LocalDBGetKV {
-        uuid,
         cid,
         peer_cid,
         key: "tmp".to_string(),
@@ -536,7 +515,6 @@ pub async fn test_kv_for_service(
 
     // test get_all_kv
     to_service.send(InternalServiceRequest::LocalDBGetAllKV {
-        uuid,
         cid,
         peer_cid,
         request_id: Uuid::new_v4(),
@@ -558,7 +536,6 @@ pub async fn test_kv_for_service(
 
     // test delete_kv
     to_service.send(InternalServiceRequest::LocalDBDeleteKV {
-        uuid,
         cid,
         peer_cid,
         key: "tmp".to_string(),
