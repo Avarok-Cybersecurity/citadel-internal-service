@@ -159,6 +159,28 @@ pub struct PeerRegisterFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupChannelCreateSuccess {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupChannelCreateFailure {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupBroadcastHandleFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GroupCreateSuccess {
     pub cid: u64,
     pub group_key: MessageGroupKey,
@@ -284,6 +306,14 @@ pub struct GroupListGroupsForSuccess {
 pub struct GroupListGroupsForFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupJoinRequestReceived {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
 
@@ -446,6 +476,9 @@ pub enum InternalServiceResponse {
     PeerDisconnectFailure(PeerDisconnectFailure),
     PeerRegisterSuccess(PeerRegisterSuccess),
     PeerRegisterFailure(PeerRegisterFailure),
+    GroupChannelCreateSuccess(GroupChannelCreateSuccess),
+    GroupChannelCreateFailure(GroupChannelCreateFailure),
+    GroupBroadcastHandleFailure(GroupBroadcastHandleFailure),
     GroupCreateSuccess(GroupCreateSuccess),
     GroupCreateFailure(GroupCreateFailure),
     GroupLeaveSuccess(GroupLeaveSuccess),
@@ -464,6 +497,7 @@ pub enum InternalServiceResponse {
     GroupKickFailure(GroupKickFailure),
     GroupListGroupsForSuccess(GroupListGroupsForSuccess),
     GroupListGroupsForFailure(GroupListGroupsForFailure),
+    GroupJoinRequestReceived(GroupJoinRequestReceived),
     GroupRequestJoinAccepted(GroupRequestJoinAccepted),
     GroupRequestJoinSuccess(GroupRequestJoinSuccess),
     GroupRequestJoinFailure(GroupRequestJoinFailure),
