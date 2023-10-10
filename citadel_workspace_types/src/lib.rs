@@ -25,7 +25,6 @@ pub struct ConnectionFailure {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegisterSuccess {
-    pub id: Uuid,
     pub request_id: Option<Uuid>,
 }
 
@@ -36,10 +35,7 @@ pub struct RegisterFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceConnectionAccepted {
-    pub id: Uuid,
-    pub request_id: Option<Uuid>,
-}
+pub struct ServiceConnectionAccepted;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MessageSent {
@@ -411,6 +407,35 @@ pub struct LocalDBClearAllKVSuccess {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ListAllPeers {
+    pub cid: u64,
+    pub online_status: HashMap<u64, bool>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ListAllPeersFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ListRegisteredPeersFailure {
+    pub cid: u64,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ListRegisteredPeers {
+    pub cid: u64,
+    pub peers: HashMap<u64, PeerSessionInformation>,
+    pub online_status: HashMap<u64, bool>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalDBClearAllKVFailure {
     pub cid: u64,
     pub peer_cid: Option<u64>,
@@ -443,7 +468,6 @@ pub struct FileTransferStatus {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileTransferTick {
-    pub uuid: Uuid,
     pub cid: u64,
     pub peer_cid: u64,
     pub status: ObjectTransferStatus,
@@ -513,12 +537,15 @@ pub enum InternalServiceResponse {
     LocalDBClearAllKVFailure(LocalDBClearAllKVFailure),
     GetSessions(GetSessions),
     GetAccountInformation(Accounts),
+    ListAllPeers(ListAllPeers),
+    ListAllPeersFailure(ListAllPeersFailure),
+    ListRegisteredPeers(ListRegisteredPeers),
+    ListRegisteredPeersFailure(ListRegisteredPeersFailure),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum InternalServiceRequest {
     Connect {
-        uuid: Uuid,
         // A user-provided unique ID that will be returned in the response
         request_id: Uuid,
         username: String,
@@ -529,7 +556,6 @@ pub enum InternalServiceRequest {
         session_security_settings: SessionSecuritySettings,
     },
     Register {
-        uuid: Uuid,
         request_id: Uuid,
         server_addr: SocketAddr,
         full_name: String,
@@ -539,7 +565,6 @@ pub enum InternalServiceRequest {
         default_security_settings: SessionSecuritySettings,
     },
     Message {
-        uuid: Uuid,
         request_id: Uuid,
         message: Vec<u8>,
         cid: u64,
@@ -548,12 +573,10 @@ pub enum InternalServiceRequest {
         security_level: SecurityLevel,
     },
     Disconnect {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
     },
     SendFile {
-        uuid: Uuid,
         request_id: Uuid,
         source: PathBuf,
         cid: u64,
@@ -562,7 +585,6 @@ pub enum InternalServiceRequest {
         transfer_type: TransferType,
     },
     RespondFileTransfer {
-        uuid: Uuid,
         cid: u64,
         peer_cid: u64,
         object_id: u64,
@@ -576,48 +598,52 @@ pub enum InternalServiceRequest {
         delete_on_pull: bool,
         cid: u64,
         peer_cid: Option<u64>,
-        uuid: Uuid,
         request_id: Uuid,
     },
     DeleteVirtualFile {
         virtual_directory: PathBuf,
         cid: u64,
         peer_cid: Option<u64>,
-        uuid: Uuid,
         request_id: Uuid,
     },
-    PeerConnect {
-        uuid: Uuid,
+    StartGroup {
+        initial_users_to_invite: Option<Vec<UserIdentifier>>,
+        cid: u64,
+        request_id: Uuid,
+    },
+    ListAllPeers {
         request_id: Uuid,
         cid: u64,
-        username: String,
+    },
+    ListRegisteredPeers {
+        request_id: Uuid,
+        cid: u64,
+    },
+    PeerConnect {
+        request_id: Uuid,
+        cid: u64,
         peer_cid: u64,
-        peer_username: String,
         udp_mode: UdpMode,
         session_security_settings: SessionSecuritySettings,
     },
     PeerDisconnect {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: u64,
     },
     PeerRegister {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
-        peer_id: UserIdentifier,
+        peer_cid: u64,
         connect_after_register: bool,
     },
     LocalDBGetKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
         key: String,
     },
     LocalDBSetKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
@@ -625,89 +651,75 @@ pub enum InternalServiceRequest {
         value: Vec<u8>,
     },
     LocalDBDeleteKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
         key: String,
     },
     LocalDBGetAllKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
     },
     LocalDBClearAllKV {
-        uuid: Uuid,
         request_id: Uuid,
         cid: u64,
         peer_cid: Option<u64>,
     },
     GetSessions {
-        uuid: Uuid,
         request_id: Uuid,
     },
     GetAccountInformation {
-        uuid: Uuid,
         request_id: Uuid,
         // If specified, the command will reply with information for a specific account. Otherwise
         // the command will reply with information for all accounts
         cid: Option<u64>,
     },
     GroupCreate {
-        uuid: Uuid,
         cid: u64,
         request_id: Uuid,
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
     },
     GroupLeave {
-        uuid: Uuid,
         cid: u64,
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
     GroupEnd {
-        uuid: Uuid,
         cid: u64,
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
     GroupMessage {
-        uuid: Uuid,
         cid: u64,
         message: Vec<u8>,
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
     GroupInvite {
-        uuid: Uuid,
         cid: u64,
         peer_cid: u64,
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
     GroupRespondInviteRequest {
-        uuid: Uuid,
         cid: u64,
         group_key: MessageGroupKey,
         response: bool,
         request_id: Uuid,
     },
     GroupKick {
-        uuid: Uuid,
         cid: u64,
         peer_cid: u64,
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
     GroupListGroupsFor {
-        uuid: Uuid,
         cid: u64,
         peer_cid: u64,
         request_id: Uuid,
     },
     GroupRequestJoin {
-        uuid: Uuid,
         cid: u64,
         group_key: MessageGroupKey,
         request_id: Uuid,
