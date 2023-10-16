@@ -252,6 +252,7 @@ pub struct GroupMessageFailure {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GroupInvitation {
     pub cid: u64,
+    pub peer_cid: u64,
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }

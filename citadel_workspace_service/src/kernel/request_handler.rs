@@ -960,13 +960,13 @@ pub async fn handle_request(
         } => {
             let request = NodeRequest::PeerCommand(PeerCommand {
                 implicated_cid: cid,
-                command: PeerSignal::Disconnect(
-                    PeerConnectionType::LocalGroupPeer {
+                command: PeerSignal::Disconnect {
+                    peer_conn_type: PeerConnectionType::LocalGroupPeer {
                         implicated_cid: cid,
                         peer_cid,
                     },
-                    None,
-                ),
+                    disconnect_response: None,
+                },
             });
 
             match server_connection_map.lock().await.get_mut(&cid) {
@@ -1405,7 +1405,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                         Err(err) => {
                             send_response_to_tcp_client(
@@ -1417,7 +1417,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 } else {
@@ -1425,12 +1425,13 @@ pub async fn handle_request(
                         tcp_connection_map,
                         InternalServiceResponse::GroupLeaveFailure(GroupLeaveFailure {
                             cid,
-                            message: "Could Not Leave Group - Group Connection not found".to_string(),
+                            message: "Could Not Leave Group - Group Connection not found"
+                                .to_string(),
                             request_id: Some(request_id),
                         }),
                         uuid,
                     )
-                        .await;
+                    .await;
                 }
             } else {
                 send_response_to_tcp_client(
@@ -1442,7 +1443,7 @@ pub async fn handle_request(
                     }),
                     uuid,
                 )
-                    .await;
+                .await;
             }
         }
 
@@ -1465,7 +1466,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                         Err(err) => {
                             send_response_to_tcp_client(
@@ -1477,7 +1478,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 } else {
@@ -1485,12 +1486,13 @@ pub async fn handle_request(
                         tcp_connection_map,
                         InternalServiceResponse::GroupEndFailure(GroupEndFailure {
                             cid,
-                            message: "Could Not Leave Group - Group Connection not found".to_string(),
+                            message: "Could Not Leave Group - Group Connection not found"
+                                .to_string(),
                             request_id: Some(request_id),
                         }),
                         uuid,
                     )
-                        .await;
+                    .await;
                 }
             } else {
                 send_response_to_tcp_client(
@@ -1502,7 +1504,7 @@ pub async fn handle_request(
                     }),
                     uuid,
                 )
-                    .await;
+                .await;
             }
         }
 
@@ -1526,7 +1528,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                         Err(err) => {
                             send_response_to_tcp_client(
@@ -1538,7 +1540,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 } else {
@@ -1546,12 +1548,13 @@ pub async fn handle_request(
                         tcp_connection_map,
                         InternalServiceResponse::GroupMessageFailure(GroupMessageFailure {
                             cid,
-                            message: "Could Not Message Group - Group Connection not found".to_string(),
+                            message: "Could Not Message Group - Group Connection not found"
+                                .to_string(),
                             request_id: Some(request_id),
                         }),
                         uuid,
                     )
-                        .await;
+                    .await;
                 }
             } else {
                 send_response_to_tcp_client(
@@ -1563,7 +1566,7 @@ pub async fn handle_request(
                     }),
                     uuid,
                 )
-                    .await;
+                .await;
             }
         }
 
@@ -1587,7 +1590,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                         Err(err) => {
                             send_response_to_tcp_client(
@@ -1599,7 +1602,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 } else {
@@ -1613,20 +1616,19 @@ pub async fn handle_request(
                         }),
                         uuid,
                     )
-                        .await;
+                    .await;
                 }
             } else {
                 send_response_to_tcp_client(
                     tcp_connection_map,
                     InternalServiceResponse::GroupInviteFailure(GroupInviteFailure {
                         cid,
-                        message: "Could Not Invite to Group - Connection not found"
-                            .to_string(),
+                        message: "Could Not Invite to Group - Connection not found".to_string(),
                         request_id: Some(request_id),
                     }),
                     uuid,
                 )
-                    .await;
+                .await;
             }
         }
 
@@ -1650,7 +1652,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                         Err(err) => {
                             send_response_to_tcp_client(
@@ -1662,7 +1664,7 @@ pub async fn handle_request(
                                 }),
                                 uuid,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 } else {
@@ -1676,20 +1678,19 @@ pub async fn handle_request(
                         }),
                         uuid,
                     )
-                        .await;
+                    .await;
                 }
             } else {
                 send_response_to_tcp_client(
                     tcp_connection_map,
                     InternalServiceResponse::GroupKickFailure(GroupKickFailure {
                         cid,
-                        message: "Could Not Kick from Group - GroupChannel not found"
-                            .to_string(),
+                        message: "Could Not Kick from Group - GroupChannel not found".to_string(),
                         request_id: Some(request_id),
                     }),
                     uuid,
                 )
-                    .await;
+                .await;
             }
         }
 
@@ -1767,9 +1768,9 @@ pub async fn handle_request(
             request_id,
         } => {
             let group_request = if response {
-                GroupBroadcast::AcceptMembership(group_key)
+                GroupBroadcast::AcceptMembership { key: group_key }
             } else {
-                GroupBroadcast::DeclineMembership(group_key)
+                GroupBroadcast::DeclineMembership { key: group_key }
             };
             let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
                 implicated_cid: cid,
@@ -1783,10 +1784,10 @@ pub async fn handle_request(
                             if let NodeResult::GroupEvent(GroupEvent {
                                 implicated_cid: _,
                                 ticket: _,
-                                event: GroupBroadcast::AcceptMembershipResponse(_, status),
+                                event: GroupBroadcast::AcceptMembershipResponse { key: _, success },
                             }) = evt
                             {
-                                result = status;
+                                result = success;
                                 break;
                             }
                         }
@@ -1847,7 +1848,10 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(peer_connection) = connection.peers.get_mut(&group_key.cid) {
-                    let group_request = GroupBroadcast::RequestJoin(group_key);
+                    let group_request = GroupBroadcast::RequestJoin {
+                        sender: cid,
+                        key: group_key,
+                    };
                     let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
                         implicated_cid: cid,
                         command: group_request,
@@ -1863,7 +1867,10 @@ pub async fn handle_request(
                                 if let NodeResult::GroupEvent(GroupEvent {
                                     implicated_cid: _,
                                     ticket: _,
-                                    event: GroupBroadcast::SignalResponse(signal_result),
+                                    event:
+                                        GroupBroadcast::RequestJoinPending {
+                                            result: signal_result,
+                                        },
                                 }) = evt
                                 {
                                     result = signal_result;
