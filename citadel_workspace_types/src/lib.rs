@@ -3,7 +3,7 @@ pub use citadel_sdk::prelude::{
     ConnectMode, ObjectTransferStatus, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode,
     UserIdentifier,
 };
-use citadel_sdk::prelude::{MessageGroupKey, TransferType, VirtualObjectMetadata};
+use citadel_sdk::prelude::{MemberState, MessageGroupKey, TransferType, VirtualObjectMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -235,6 +235,14 @@ pub struct GroupMessageSuccess {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupMessageResponse {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub success: bool,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GroupMessageFailure {
     pub cid: u64,
     pub message: String,
@@ -331,6 +339,14 @@ pub struct GroupRequestJoinSuccess {
 pub struct GroupRequestJoinFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupMemberStateChanged {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub state: MemberState,
     pub request_id: Option<Uuid>,
 }
 
@@ -510,6 +526,7 @@ pub enum InternalServiceResponse {
     GroupEndSuccess(GroupEndSuccess),
     GroupEndFailure(GroupEndFailure),
     GroupMessageReceived(GroupMessageReceived),
+    GroupMessageResponse(GroupMessageResponse),
     GroupMessageSuccess(GroupMessageSuccess),
     GroupMessageFailure(GroupMessageFailure),
     GroupInvitation(GroupInvitation),
@@ -524,6 +541,7 @@ pub enum InternalServiceResponse {
     GroupJoinRequestReceived(GroupJoinRequestReceived),
     GroupRequestJoinAccepted(GroupRequestJoinAccepted),
     GroupRequestJoinSuccess(GroupRequestJoinSuccess),
+    GroupMemberStateChanged(GroupMemberStateChanged),
     GroupRequestJoinFailure(GroupRequestJoinFailure),
     LocalDBGetKVSuccess(LocalDBGetKVSuccess),
     LocalDBGetKVFailure(LocalDBGetKVFailure),
@@ -604,11 +622,6 @@ pub enum InternalServiceRequest {
         virtual_directory: PathBuf,
         cid: u64,
         peer_cid: Option<u64>,
-        request_id: Uuid,
-    },
-    StartGroup {
-        initial_users_to_invite: Option<Vec<UserIdentifier>>,
-        cid: u64,
         request_id: Uuid,
     },
     ListAllPeers {

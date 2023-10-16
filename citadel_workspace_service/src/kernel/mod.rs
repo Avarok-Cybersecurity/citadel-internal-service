@@ -24,7 +24,6 @@ pub struct CitadelWorkspaceService {
     pub bind_address: SocketAddr,
     pub server_connection_map: Arc<Mutex<HashMap<u64, Connection>>>,
     pub tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
-    pub group_map: Arc<Mutex<HashMap<MessageGroupKey, GroupConnection>>>,
 }
 
 impl CitadelWorkspaceService {
@@ -34,7 +33,6 @@ impl CitadelWorkspaceService {
             bind_address,
             server_connection_map: Arc::new(Mutex::new(Default::default())),
             tcp_connection_map: Arc::new(Mutex::new(Default::default())),
-            group_map: Arc::new(Mutex::new(Default::default())),
         }
     }
 }
@@ -367,14 +365,14 @@ impl NetKernel for CitadelWorkspaceService {
             NodeResult::GroupChannelCreated(group_channel_created) => {
                 let channel = group_channel_created.channel;
                 let cid = channel.cid();
-                let key = channel.key();
+                let group_key = channel.key();
                 let mut server_connection_map = self.server_connection_map.lock().await;
-                if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                    connection.add_group_channel(key, GroupConnection { channel });
+                if let Some(connection) = server_connection_map.get_mut(&cid) {
+                    connection.add_group_channel(group_key, GroupConnection { channel });
                     send_response_to_tcp_client(
                         &self.tcp_connection_map,
                         InternalServiceResponse::GroupChannelCreateSuccess(GroupChannelCreateSuccess {
-                            cid: implicated_cid,
+                            cid,
                             group_key,
                             request_id: None,
                         }),
@@ -406,10 +404,11 @@ impl NetKernel for CitadelWorkspaceService {
                     }
                 }
                 PeerSignal::BroadcastConnected(group_broadcast) => {
-                    let mut group_map = self.group_map.lock().await;
+                    let mut server_connection_map = self.server_connection_map.lock().await;
                     handle_group_broadcast(
                         group_broadcast,
-                        &mut group_map,
+                        0, // TODO: Use implicated_cid once PeerSignal allows it
+                        &mut server_connection_map,
                         self.tcp_connection_map.clone(),
                     )
                     .await;
@@ -418,9 +417,14 @@ impl NetKernel for CitadelWorkspaceService {
             },
 
             NodeResult::GroupEvent(group_event) => {
-                let mut group_map = self.group_map.lock().await;
                 let mut server_connection_map = self.server_connection_map.lock().await;
-                handle_group_broadcast(group_event.event, &mut group_map, &mut server_connection_map,self.tcp_connection_map.clone()).await;
+                handle_group_broadcast(
+                    group_event.event,
+                    group_event.implicated_cid,
+                    &mut server_connection_map,
+                    self.tcp_connection_map.clone(),
+                )
+                    .await;
             }
 
             _ => {}
@@ -534,118 +538,136 @@ fn handle_connection(
 
 async fn handle_group_broadcast(
     group_broadcast: GroupBroadcast,
-    group_map: &mut HashMap<MessageGroupKey, GroupConnection>,
+    implicated_cid: u64,
     server_connection_map: &mut HashMap<u64, Connection>,
     tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
-    let Some((response, cid)) = match group_broadcast {
-        GroupBroadcast::Invitation(group_key) => {
-            if let Some(group_connection) = group_map.get_mut(&group_key) {
-                let cid = group_connection.channel.cid();
+    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
+        let Some((response, cid)) = match group_broadcast {
+            GroupBroadcast::Invitation(group_key) => {
                 Some((
                     InternalServiceResponse::GroupInvitation(GroupInvitation {
-                        cid,
+                        cid: implicated_cid,
                         group_key,
                         request_id: None,
                     }),
-                    cid,
+                    implicated_cid,
                 ))
-            } else {
-                None
             }
-        }
 
-        GroupBroadcast::RequestJoin(group_key) => {
-            if let Some(group_connection) = group_map.get_mut(&group_key) {
-                let cid = group_connection.implicated_cid;
-                Some((
-                    InternalServiceResponse::GroupJoinRequest(GroupJoinRequest {
-                        cid,
-                        peer_cid,
-                        group_key,
-                        request_id: None,
-                    }),
-                    cid,
-                ))
-            } else {
-                None
+            GroupBroadcast::RequestJoin(group_key) => {
+                if let Some(_group_connection) = connection.groups.get_mut(&group_key) {
+                    Some((
+                        InternalServiceResponse::GroupJoinRequestReceived(GroupJoinRequestReceived {
+                            cid: implicated_cid,
+                            peer_cid,
+                            group_key,
+                            request_id: None,
+                        }),
+                        implicated_cid,
+                    ))
+                } else {
+                    None
+                }
             }
-        }
 
-        GroupBroadcast::AcceptMembership(group_key) => {
-            if let Some(group_connection) = group_map.get_mut(&group_key) {
-                let cid = group_connection.implicated_cid;
+            GroupBroadcast::AcceptMembership(group_key) => {
                 Some((
                     InternalServiceResponse::GroupRequestJoinAccepted(GroupRequestJoinAccepted {
-                        cid,
+                        cid: implicated_cid,
                         group_key,
                         request_id: None,
                     }),
-                    cid,
+                       implicated_cid,
                 ))
-            } else {
-                None
             }
+
+            GroupBroadcast::Message(peer_cid, group_key, message) => {
+                if let Some(_group_connection) = connection.groups.get_mut(&group_key) {
+                    Some((
+                        InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
+                            cid: implicated_cid,
+                            peer_cid,
+                            message: message.into_buffer().into(),
+                            group_key,
+                            request_id: None,
+                        }),
+                        implicated_cid,
+                    ))
+                } else {
+                    None
+                }
+            }
+
+            GroupBroadcast::MessageResponse(group_key, success) => {
+                if let Some(_group_connection) = connection.groups.get_mut(&group_key) {
+                    Some((
+                        InternalServiceResponse::GroupMessageResponse(GroupMessageResponse {
+                            cid: implicated_cid,
+                            success,
+                            group_key,
+                            request_id: None,
+                        }),
+                        implicated_cid,
+                    ))
+                } else {
+                    None
+                }
+            }
+
+            GroupBroadcast::MemberStateChanged(group_key, state) => {
+                if let Some(_group_connection) = connection.groups.get_mut(&group_key) {
+                    Some((
+                        InternalServiceResponse::GroupMemberStateChanged(GroupMemberStateChanged {
+                            cid: implicated_cid,
+                            group_key,
+                            state,
+                            request_id: None,
+                        }),
+                        implicated_cid,
+                    ))
+                } else {
+                    None
+                }
+            }
+
+            GroupBroadcast::LeaveRoomResponse(_group_key, _status, _message) => { None }
+
+            GroupBroadcast::EndResponse(_group_key, _status) => { None }
+
+            GroupBroadcast::Disconnected(_group_key) => { None }
+
+            GroupBroadcast::AddResponse(_group_key, _member_list) => { None }
+
+            GroupBroadcast::AcceptMembershipResponse(_group_key, _status) => { None }
+
+            GroupBroadcast::KickResponse(_group_key, _status) => { None }
+
+            GroupBroadcast::ListResponse(_group_list) => { None }
+
+            GroupBroadcast::CreateResponse(_group_key) => { None }
+
+            GroupBroadcast::GroupNonExists(_group_key) => { None }
+
+            GroupBroadcast::SignalResponse(_result) => { None }
+
+            _ => None
+        };
+        match Some((response, cid)) {
+            Some((internal_service_response, response_cid)) => {
+                if let Some(connection) = server_connection_map.get_mut(&response_cid) {
+                    send_response_to_tcp_client(
+                        &tcp_connection_map,
+                        internal_service_response,
+                        connection.associated_tcp_connection,
+                    )
+                        .await;
+                }
+            },
+            None => {
+                //TODO: Handle error properly, currently can't without CID
+            },
         }
-
-        GroupBroadcast::Message(peer_cid, group_key, message) => {
-            if let Some(group_connection) = group_map.get_mut(&group_key) {
-                let cid = group_connection.implicated_cid;
-                Some((
-                    InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
-                        cid,
-                        peer_cid,
-                        message: message.into(),
-                        group_key,
-                        request_id: None,
-                    }),
-                    cid,
-                ))
-            } else {
-                None
-            }
-        }
-
-        GroupBroadcast::LeaveRoomResponse(group_key, status, message) => {None},
-
-        GroupBroadcast::EndResponse(group_key, status) => {None},
-
-        GroupBroadcast::Disconnected(group_key) => {None},
-
-        GroupBroadcast::MessageResponse(group_key, status) => {None},
-
-        GroupBroadcast::AddResponse(group_key, member_list) => {None},
-
-        GroupBroadcast::AcceptMembershipResponse(group_key, status) => {None},
-
-        GroupBroadcast::KickResponse(group_key, status) => {None},
-
-        GroupBroadcast::ListResponse(group_list) => {None},
-
-        GroupBroadcast::CreateResponse(group_key) => {None},
-
-        GroupBroadcast::MemberStateChanged(group_key, member_state) => {None},
-
-        GroupBroadcast::GroupNonExists(group_key) => {None},
-
-        GroupBroadcast::SignalResponse(result) => {None},
-
-        _ => None,
-    };
-    match Some((response, cid)) {
-        Some((internal_service_response, response_cid)) => {
-            if let Some(connection) = server_connection_map.get_mut(&response_cid) {
-                send_response_to_tcp_client(
-                    &tcp_connection_map,
-                    internal_service_response,
-                    connection.associated_tcp_connection,
-                )
-                    .await;
-            }
-        },
-        None => {
-            //TODO: Handle error properly, currently can't without CID
-        },
     }
 }
 
