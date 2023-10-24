@@ -18,7 +18,9 @@ mod tests {
     use core::panic;
     use futures::StreamExt;
     use std::error::Error;
+    use std::future::Future;
     use std::net::SocketAddr;
+    use std::pin::Pin;
     use std::time::Duration;
     use tokio::net::TcpStream;
     use uuid::Uuid;
@@ -390,7 +392,22 @@ mod tests {
             ))
             .unwrap();
 
-        spawn_services(internal_service, server);
+        let mut internal_services: Vec<
+            Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
+        > = Vec::new();
+        internal_services.push(Box::pin(async move {
+            match internal_service.await {
+                Err(err) => Err(Box::try_from(err).unwrap()),
+                _ => Ok(()),
+            }
+        }));
+        internal_services.push(Box::pin(async move {
+            match server.await {
+                Err(err) => Err(Box::try_from(err).unwrap()),
+                _ => Ok(()),
+            }
+        }));
+        spawn_services(internal_services);
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
         let (to_service_a, mut from_service_a, cid) = register_and_connect_to_server(

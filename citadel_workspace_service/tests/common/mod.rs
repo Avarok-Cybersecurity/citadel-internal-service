@@ -20,6 +20,7 @@ use std::error::Error;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -122,7 +123,18 @@ pub async fn register_and_connect_to_server<
                     }
                 };
 
-                spawn_services(service_to_test, test_to_service);
+                let mut internal_services: Vec<
+                    Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
+                > = Vec::new();
+                internal_services.push(Box::pin(async move {
+                    test_to_service.await;
+                    Ok(())
+                }));
+                internal_services.push(Box::pin(async move {
+                    service_to_test.await;
+                    Ok(())
+                }));
+                spawn_services(internal_services);
 
                 Ok((to_service_sender, from_service, cid))
             } else {
@@ -167,7 +179,22 @@ pub async fn register_and_connect_to_server_then_peers(
         .build(internal_service_kernel_b)
         .unwrap();
 
-    spawn_services(internal_service_a, internal_service_b);
+    let mut internal_services: Vec<
+        Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
+    > = Vec::new();
+    internal_services.push(Box::pin(async move {
+        match internal_service_a.await {
+            Err(err) => Err(Box::try_from(err).unwrap()),
+            _ => Ok(()),
+        }
+    }));
+    internal_services.push(Box::pin(async move {
+        match internal_service_b.await {
+            Err(err) => Err(Box::try_from(err).unwrap()),
+            _ => Ok(()),
+        }
+    }));
+    spawn_services(internal_services);
 
     // give time for both the server and internal service to run
     tokio::time::sleep(Duration::from_millis(2000)).await;
@@ -313,24 +340,25 @@ pub fn generic_error<T: ToString>(msg: T) -> Box<dyn Error> {
     ))
 }
 
-pub fn spawn_services<F1, F2>(internal_service_a: F1, internal_service_b: F2)
-where
-    F1: Future + Send + 'static,
-    F2: Future + Send + 'static,
-    F1::Output: Send + 'static,
-    F2::Output: Send + 'static,
-{
-    let internal_services = async move {
-        tokio::select! {
-            _res0 = internal_service_a => (),
-            _res1 = internal_service_b => (),
+pub fn spawn_services(
+    futures_to_spawn: Vec<
+        Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
+    >,
+) {
+    let services_to_spawn = async move {
+        let (returned_future,_,_) = futures::future::select_all(futures_to_spawn).await;
+        match returned_future {
+            Ok(_) => {
+                info!(target: "citadel","Vital Internal Service Ended");
+            }
+            Err(err) => {
+                citadel_logging::error!(target: "citadel", "Internal service error: {err:?}");
+            }
         }
-
-        // citadel_logging::error!(target: "citadel", "Internal service error: vital service ended");
-        // std::process::exit(1);
+        //std::process::exit(1);
     };
 
-    tokio::task::spawn(internal_services);
+    tokio::task::spawn(services_to_spawn);
 }
 
 pub async fn send(
