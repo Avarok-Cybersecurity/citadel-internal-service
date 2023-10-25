@@ -5,7 +5,7 @@ mod tests {
     use crate::common::{
         register_and_connect_to_server, register_and_connect_to_server_then_peers, send,
         server_info_reactive_skip_cert_verification, server_info_skip_cert_verification,
-        spawn_services, test_kv_for_service,
+        spawn_services, test_kv_for_service, RegisterAndConnectItems,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
@@ -52,15 +52,17 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        let (to_service, mut from_service, cid) = register_and_connect_to_server(
-            bind_address_internal_service,
-            server_bind_address,
-            "John Doe",
-            "john.doe",
-            "secret",
-        )
-        .await
-        .unwrap();
+        let to_spawn = vec![RegisterAndConnectItems {
+            internal_service_addr: bind_address_internal_service,
+            server_addr: server_bind_address,
+            full_name: "John Doe",
+            username: "john.doe",
+            password: "secret",
+        }];
+        let returned_service_info = register_and_connect_to_server(to_spawn).await;
+        let (to_service, mut from_service, cid) =
+            returned_service_info.into_iter().next().unwrap().unwrap();
+
         let disconnect_command = InternalServiceRequest::Disconnect {
             cid,
             request_id: Uuid::new_v4(),
@@ -114,15 +116,16 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        let (to_service, mut from_service, cid) = register_and_connect_to_server(
-            bind_address_internal_service,
-            server_bind_address,
-            "John Doe",
-            "john.doe",
-            "secret",
-        )
-        .await
-        .unwrap();
+        let to_spawn = vec![RegisterAndConnectItems {
+            internal_service_addr: bind_address_internal_service,
+            server_addr: server_bind_address,
+            full_name: "John Doe",
+            username: "john.doe",
+            password: "secret",
+        }];
+        let returned_service_info = register_and_connect_to_server(to_spawn).await;
+        let (to_service, mut from_service, cid) =
+            returned_service_info.into_iter().next().unwrap().unwrap();
 
         let serialized_message = bincode2::serialize("Message Test").unwrap();
         let message_command = InternalServiceRequest::Message {
@@ -410,14 +413,16 @@ mod tests {
         spawn_services(internal_services);
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
-        let (to_service_a, mut from_service_a, cid) = register_and_connect_to_server(
-            bind_address_internal_service_a,
-            server_bind_address,
-            "peer a",
-            "peer.a",
-            "password",
-        )
-        .await?;
+        let to_spawn = vec![RegisterAndConnectItems {
+            internal_service_addr: bind_address_internal_service_a,
+            server_addr: server_bind_address,
+            full_name: "peer a",
+            username: "peer.a",
+            password: "password",
+        }];
+        let returned_service_info = register_and_connect_to_server(to_spawn).await;
+        let (to_service_a, mut from_service_a, cid) =
+            returned_service_info.into_iter().next().unwrap().unwrap();
 
         test_kv_for_service(&to_service_a, &mut from_service_a, cid, None).await
     }

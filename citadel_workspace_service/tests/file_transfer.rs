@@ -4,7 +4,7 @@ mod common;
 mod tests {
     use crate::common::{
         register_and_connect_to_server, register_and_connect_to_server_then_peers,
-        server_info_file_transfer,
+        server_info_file_transfer, RegisterAndConnectItems,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
@@ -62,15 +62,16 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        let (to_service, mut from_service, cid) = register_and_connect_to_server(
-            bind_address_internal_service,
-            server_bind_address,
-            "John Doe",
-            "john.doe",
-            "secret",
-        )
-        .await
-        .unwrap();
+        let to_spawn = vec![RegisterAndConnectItems {
+            internal_service_addr: bind_address_internal_service,
+            server_addr: server_bind_address,
+            full_name: "John Doe",
+            username: "john.doe",
+            password: "secret",
+        }];
+        let returned_service_info = register_and_connect_to_server(to_spawn).await;
+        let (to_service, mut from_service, cid) =
+            returned_service_info.into_iter().next().unwrap().unwrap();
 
         let cmp_path = PathBuf::from("../resources/test.txt");
 
@@ -202,15 +203,16 @@ mod tests {
 
         info!(target: "citadel", "about to connect to internal service");
 
-        let (to_service, mut from_service, cid) = register_and_connect_to_server(
-            bind_address_internal_service,
-            server_bind_address,
-            "John Doe",
-            "john.doe",
-            "secret",
-        )
-        .await
-        .unwrap();
+        let to_spawn = vec![RegisterAndConnectItems {
+            internal_service_addr: bind_address_internal_service,
+            server_addr: server_bind_address,
+            full_name: "John Doe",
+            username: "john.doe",
+            password: "secret",
+        }];
+        let returned_service_info = register_and_connect_to_server(to_spawn).await;
+        let (to_service, mut from_service, cid) =
+            returned_service_info.into_iter().next().unwrap().unwrap();
 
         // Push file to REVFS
         let file_to_send = PathBuf::from("../resources/test.txt");
