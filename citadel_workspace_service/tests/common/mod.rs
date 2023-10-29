@@ -43,26 +43,19 @@ pub async fn register_and_connect_to_server<
     S: Into<SecBuffer>,
 >(
     services_to_create: Vec<RegisterAndConnectItems<T, R, S>>,
-) -> Vec<
-    Result<
-        (
-            UnboundedSender<InternalServiceRequest>,
-            UnboundedReceiver<InternalServiceResponse>,
-            u64,
-        ),
-        Box<dyn Error>,
-    >,
+) -> Result<
+    Vec<(
+        UnboundedSender<InternalServiceRequest>,
+        UnboundedReceiver<InternalServiceResponse>,
+        u64,
+    )>,
+    Box<dyn Error>,
 > {
-    let mut return_results: Vec<
-        Result<
-            (
-                UnboundedSender<InternalServiceRequest>,
-                UnboundedReceiver<InternalServiceResponse>,
-                u64,
-            ),
-            Box<dyn Error>,
-        >,
-    > = Vec::new();
+    let mut return_results: Vec<(
+        UnboundedSender<InternalServiceRequest>,
+        UnboundedReceiver<InternalServiceResponse>,
+        u64,
+    )> = Vec::new();
 
     for item in services_to_create {
         let conn = TcpStream::connect(item.internal_service_addr)
@@ -157,207 +150,189 @@ pub async fn register_and_connect_to_server<
                         Ok(())
                     }));
                     spawn_services(internal_services);
-                    return_results.push(Ok((to_service_sender, from_service, cid)));
+                    return_results.push((to_service_sender, from_service, cid));
                 } else {
-                    return_results
-                        .push(Err(generic_error("Connection to server was not a success")));
+                    panic!("Connection to server was not a success");
                 }
             } else {
-                return_results.push(Err(generic_error(
-                    "Registration to server was not a success",
-                )));
+                panic!("Registration to server was not a success");
             }
         } else {
-            return_results.push(Err(generic_error("Wrong packet type")));
+            panic!("Wrong packet type");
         }
     }
-    return_results
+    Ok(return_results)
 }
 
 pub async fn register_and_connect_to_server_then_peers(
-    a_int_svc_addr: SocketAddr,
-    b_int_svc_addr: SocketAddr,
-) -> Result<PeerReturnHandle, Box<dyn Error>> {
-    // internal service for peer A
-    let bind_address_internal_service_a = a_int_svc_addr;
-    // internal service for peer B
-    let bind_address_internal_service_b = b_int_svc_addr;
-
+    int_svc_addrs: Vec<SocketAddr>,
+) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
     let (server, server_bind_address) = server_info_skip_cert_verification();
-
     tokio::task::spawn(server);
-    info!(target: "citadel", "sub server spawn");
-    let internal_service_kernel_a = CitadelWorkspaceService::new(bind_address_internal_service_a);
-    let internal_service_a = NodeBuilder::default()
-        .with_node_type(NodeType::Peer)
-        // .with_backend(BackendType::InMemory) We need a filesystem backend for this test
-        .with_insecure_skip_cert_verification()
-        .build(internal_service_kernel_a)
-        .unwrap();
-
-    let internal_service_kernel_b = CitadelWorkspaceService::new(bind_address_internal_service_b);
-
-    let internal_service_b = NodeBuilder::default()
-        .with_node_type(NodeType::Peer)
-        // .with_backend(BackendType::InMemory) We need a filesystem backend for this test
-        .with_insecure_skip_cert_verification()
-        .build(internal_service_kernel_b)
-        .unwrap();
-
     let mut internal_services: Vec<
         Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
     > = Vec::new();
-    internal_services.push(Box::pin(async move {
-        match internal_service_a.await {
-            Err(err) => Err(Box::try_from(err).unwrap()),
-            _ => Ok(()),
-        }
-    }));
-    internal_services.push(Box::pin(async move {
-        match internal_service_b.await {
-            Err(err) => Err(Box::try_from(err).unwrap()),
-            _ => Ok(()),
-        }
-    }));
-    spawn_services(internal_services);
 
+    for int_svc_addr_iter in int_svc_addrs.clone() {
+        let bind_address_internal_service = int_svc_addr_iter;
+
+        info!(target: "citadel", "sub server spawn");
+        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            // .with_backend(BackendType::InMemory) We need a filesystem backend for this test
+            .with_insecure_skip_cert_verification()
+            .build(internal_service_kernel)
+            .unwrap();
+
+        internal_services.push(Box::pin(async move {
+            match internal_service.await {
+                Err(err) => Err(Box::try_from(err).unwrap()),
+                _ => Ok(()),
+            }
+        }));
+    }
+    spawn_services(internal_services);
     // give time for both the server and internal service to run
     tokio::time::sleep(Duration::from_millis(2000)).await;
     info!(target: "citadel", "about to connect to internal service");
-    let to_spawn = vec![
-        RegisterAndConnectItems {
-            internal_service_addr: bind_address_internal_service_a,
+
+    let mut to_spawn: Vec<RegisterAndConnectItems<String, String, Vec<u8>>> = Vec::new();
+    for (peer_number, int_svc_addr_iter) in int_svc_addrs.clone().iter().enumerate() {
+        let bind_address_internal_service = *int_svc_addr_iter;
+        to_spawn.push(RegisterAndConnectItems {
+            internal_service_addr: bind_address_internal_service,
             server_addr: server_bind_address,
-            full_name: "Peer A",
-            username: "peer.a",
-            password: "secret_a",
-        },
-        RegisterAndConnectItems {
-            internal_service_addr: bind_address_internal_service_b,
-            server_addr: server_bind_address,
-            full_name: "Peer B",
-            username: "peer.b",
-            password: "secret_b",
-        },
-    ];
-    let returned_service_info = register_and_connect_to_server(to_spawn).await;
-    let mut service_iter = returned_service_info.into_iter();
-    let (to_service_a, mut from_service_a, cid_a) = service_iter.next().unwrap().unwrap();
-    let (to_service_b, mut from_service_b, cid_b) = service_iter.next().unwrap().unwrap();
-
-    // now, both peers are connected and registered to the central server. Now, we
-    // need to have them peer-register to each other
-    to_service_a
-        .send(InternalServiceRequest::PeerRegister {
-            request_id: Uuid::new_v4(),
-            cid: cid_a,
-            peer_cid: cid_b.into(),
-            connect_after_register: false,
-        })
-        .unwrap();
-
-    to_service_b
-        .send(InternalServiceRequest::PeerRegister {
-            request_id: Uuid::new_v4(),
-            cid: cid_b,
-            peer_cid: cid_a.into(),
-            connect_after_register: false,
-        })
-        .unwrap();
-
-    let item = from_service_b.recv().await.unwrap();
-
-    match item {
-        InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-            cid,
-            peer_cid,
-            peer_username,
-            request_id: _,
-        }) => {
-            assert_eq!(cid, cid_b);
-            assert_eq!(peer_cid, cid_b);
-            assert_eq!(peer_username, "peer.a");
-        }
-        _ => {
-            panic!("Didn't get the PeerRegisterSuccess");
-        }
+            full_name: format!("Peer {}", peer_number),
+            username: format!("peer.{}", peer_number),
+            password: format!("secret_{}", peer_number).into_bytes().to_owned(),
+        });
     }
 
-    let item = from_service_a.recv().await.unwrap();
-    match item {
-        InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-            cid,
-            peer_cid,
-            peer_username,
-            request_id: _,
-        }) => {
-            assert_eq!(cid, cid_a);
-            assert_eq!(peer_cid, cid_a);
-            assert_eq!(peer_username, "peer.b");
-        }
-        _ => {
-            panic!("Didn't get the PeerRegisterSuccess");
+    let mut returned_service_info = register_and_connect_to_server(to_spawn).await.unwrap();
+
+    for service_index in 0..returned_service_info.len() {
+        let (item, neighbor_items) = {
+            let (_, second) = returned_service_info.split_at_mut(service_index);
+            let (element, remainder) = second.split_at_mut(1);
+            (&mut element[0], remainder)
+        };
+
+        let (ref mut to_service_a, ref mut from_service_a, cid_a) = item;
+        for neighbor in neighbor_items {
+            let (ref mut to_service_b, ref mut from_service_b, cid_b) = neighbor;
+
+            // now, both peers are connected and registered to the central server. Now, we
+            // need to have them peer-register to each other
+            to_service_a
+                .send(InternalServiceRequest::PeerRegister {
+                    request_id: Uuid::new_v4(),
+                    cid: *cid_a,
+                    peer_cid: (*cid_b).into(),
+                    connect_after_register: false,
+                })
+                .unwrap();
+
+            to_service_b
+                .send(InternalServiceRequest::PeerRegister {
+                    request_id: Uuid::new_v4(),
+                    cid: *cid_b,
+                    peer_cid: (*cid_a).into(),
+                    connect_after_register: false,
+                })
+                .unwrap();
+
+            let item = from_service_b.recv().await.unwrap();
+
+            match item {
+                InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
+                    cid,
+                    peer_cid,
+                    peer_username: _,
+                    request_id: _,
+                }) => {
+                    assert_eq!(cid, *cid_b);
+                    assert_eq!(peer_cid, *cid_b);
+                    //assert_eq!(peer_username, "peer.0");
+                }
+                _ => {
+                    panic!("Didn't get the PeerRegisterSuccess");
+                }
+            }
+
+            let item = from_service_a.recv().await.unwrap();
+            match item {
+                InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
+                    cid,
+                    peer_cid,
+                    peer_username: _,
+                    request_id: _,
+                }) => {
+                    assert_eq!(cid, *cid_a);
+                    assert_eq!(peer_cid, *cid_a);
+                    //assert_eq!(peer_username, "peer.b");
+                }
+                _ => {
+                    panic!("Didn't get the PeerRegisterSuccess");
+                }
+            }
+
+            to_service_a
+                .send(InternalServiceRequest::PeerConnect {
+                    request_id: Uuid::new_v4(),
+                    cid: *cid_a,
+                    peer_cid: *cid_b,
+                    udp_mode: Default::default(),
+                    session_security_settings: Default::default(),
+                })
+                .unwrap();
+
+            to_service_b
+                .send(InternalServiceRequest::PeerConnect {
+                    request_id: Uuid::new_v4(),
+                    cid: *cid_b,
+                    peer_cid: *cid_a,
+                    udp_mode: Default::default(),
+                    session_security_settings: Default::default(),
+                })
+                .unwrap();
+
+            let item = from_service_b.recv().await.unwrap();
+            match item {
+                InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+                    cid,
+                    request_id: _,
+                }) => {
+                    assert_eq!(cid, *cid_b);
+                }
+                _ => {
+                    info!(target = "citadel", "{:?}", item);
+                    panic!("Didn't get the PeerConnectSuccess");
+                }
+            }
+
+            let item = from_service_a.recv().await.unwrap();
+            match item {
+                InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
+                    cid,
+                    request_id: _,
+                }) => {
+                    assert_eq!(cid, *cid_a);
+                }
+                _ => {
+                    info!(target = "citadel", "{:?}", item);
+                    panic!("Didn't get the PeerConnectSuccess");
+                }
+            }
         }
     }
-
-    to_service_a
-        .send(InternalServiceRequest::PeerConnect {
-            request_id: Uuid::new_v4(),
-            cid: cid_a,
-            peer_cid: cid_b,
-            udp_mode: Default::default(),
-            session_security_settings: Default::default(),
-        })
-        .unwrap();
-
-    to_service_b
-        .send(InternalServiceRequest::PeerConnect {
-            request_id: Uuid::new_v4(),
-            cid: cid_b,
-            peer_cid: cid_a,
-            udp_mode: Default::default(),
-            session_security_settings: Default::default(),
-        })
-        .unwrap();
-
-    let item = from_service_b.recv().await.unwrap();
-    match item {
-        InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid, request_id: _ }) => {
-            assert_eq!(cid, cid_b);
-        }
-        _ => {
-            info!(target = "citadel", "{:?}", item);
-            panic!("Didn't get the PeerConnectSuccess");
-        }
-    }
-
-    let item = from_service_a.recv().await.unwrap();
-    match item {
-        InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid, request_id: _ }) => {
-            assert_eq!(cid, cid_a);
-            Ok((
-                to_service_a,
-                from_service_a,
-                to_service_b,
-                from_service_b,
-                cid_a,
-                cid_b,
-            ))
-        }
-        _ => {
-            info!(target = "citadel", "{:?}", item);
-            panic!("Didn't get the PeerConnectSuccess");
-        }
-    }
+    Ok(returned_service_info)
 }
 
 pub type PeerReturnHandle = (
     UnboundedSender<InternalServiceRequest>,
     UnboundedReceiver<InternalServiceResponse>,
-    UnboundedSender<InternalServiceRequest>,
-    UnboundedReceiver<InternalServiceResponse>,
-    u64,
     u64,
 );
 
