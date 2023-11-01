@@ -76,6 +76,10 @@ pub async fn register_and_connect_to_server<
         let username = item.username.into();
         let full_name = item.full_name.into();
         let password = item.password.into();
+        let session_security_settings = SessionSecuritySettingsBuilder::default()
+            // .with_crypto_params(EncryptionAlgorithm::AES_GCM_256 + KemAlgorithm::Kyber + SigAlgorithm::None)
+            .build()
+            .unwrap();
 
         if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted) =
             greeter_packet
@@ -86,7 +90,7 @@ pub async fn register_and_connect_to_server<
                 full_name,
                 username: username.clone(),
                 proposed_password: password.clone(),
-                default_security_settings: Default::default(),
+                session_security_settings,
                 connect_after_register: false,
             };
             send(&mut sink, register_command).await.unwrap();
@@ -105,7 +109,7 @@ pub async fn register_and_connect_to_server<
                     connect_mode: Default::default(),
                     udp_mode: Default::default(),
                     keep_alive_timeout: None,
-                    session_security_settings: Default::default(),
+                    session_security_settings,
                     request_id: Uuid::new_v4(),
                 };
 
@@ -222,6 +226,10 @@ pub async fn register_and_connect_to_server_then_peers(
         let (ref mut to_service_a, ref mut from_service_a, cid_a) = item;
         for neighbor in neighbor_items {
             let (ref mut to_service_b, ref mut from_service_b, cid_b) = neighbor;
+            let session_security_settings = SessionSecuritySettingsBuilder::default()
+                // .with_crypto_params(EncryptionAlgorithm::AES_GCM_256 + KemAlgorithm::Kyber + SigAlgorithm::None)
+                .build()
+                .unwrap();
 
             // now, both peers are connected and registered to the central server. Now, we
             // need to have them peer-register to each other
@@ -230,6 +238,7 @@ pub async fn register_and_connect_to_server_then_peers(
                     request_id: Uuid::new_v4(),
                     cid: *cid_a,
                     peer_cid: (*cid_b).into(),
+                    session_security_settings,
                     connect_after_register: false,
                 })
                 .unwrap();
@@ -239,6 +248,7 @@ pub async fn register_and_connect_to_server_then_peers(
                     request_id: Uuid::new_v4(),
                     cid: *cid_b,
                     peer_cid: (*cid_a).into(),
+                    session_security_settings,
                     connect_after_register: false,
                 })
                 .unwrap();
@@ -284,7 +294,7 @@ pub async fn register_and_connect_to_server_then_peers(
                     cid: *cid_a,
                     peer_cid: *cid_b,
                     udp_mode: Default::default(),
-                    session_security_settings: Default::default(),
+                    session_security_settings,
                 })
                 .unwrap();
 
@@ -294,7 +304,7 @@ pub async fn register_and_connect_to_server_then_peers(
                     cid: *cid_b,
                     peer_cid: *cid_a,
                     udp_mode: Default::default(),
-                    session_security_settings: Default::default(),
+                    session_security_settings,
                 })
                 .unwrap();
 

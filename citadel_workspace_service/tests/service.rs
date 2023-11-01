@@ -240,7 +240,7 @@ mod tests {
                 full_name: String::from("John"),
                 username: String::from("john_doe"),
                 proposed_password: String::from("test12345").into_bytes().into(),
-                default_security_settings: Default::default(),
+                session_security_settings: Default::default(),
                 connect_after_register: true,
                 request_id: Uuid::new_v4(),
             };

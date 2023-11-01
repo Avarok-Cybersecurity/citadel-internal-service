@@ -461,8 +461,9 @@ async fn send_response_to_tcp_client(
 fn create_client_server_remote(
     conn_type: VirtualTargetType,
     remote: NodeRemote,
+    security_settings: SessionSecuritySettings,
 ) -> ClientServerRemote {
-    ClientServerRemote::new(conn_type, remote)
+    ClientServerRemote::new(conn_type, remote, security_settings)
 }
 
 async fn sink_send_payload(
