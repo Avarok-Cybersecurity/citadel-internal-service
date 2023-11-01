@@ -385,7 +385,7 @@ mod tests {
             }
             _ => {
                 info!(target = "citadel", "{:?}", delete_file_response);
-                panic!("Didn't get the REVFS DownloadFileSuccess");
+                panic!("Didn't get the REVFS DeleteVirtualFileSuccess");
             }
         }
         info!(target: "citadel","{delete_file_response:?}");
