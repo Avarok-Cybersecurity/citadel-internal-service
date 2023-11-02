@@ -344,13 +344,14 @@ impl NetKernel for CitadelWorkspaceService {
                 }
             }
             NodeResult::PeerEvent(event) => {
-                if let PeerSignal::Disconnect(
-                    PeerConnectionType::LocalGroupPeer {
-                        implicated_cid,
-                        peer_cid,
-                    },
-                    _,
-                ) = event.event
+                if let PeerSignal::Disconnect {
+                    peer_conn_type:
+                        PeerConnectionType::LocalGroupPeer {
+                            implicated_cid,
+                            peer_cid,
+                        },
+                    disconnect_response: _,
+                } = event.event
                 {
                     if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
                         let response = InternalServiceResponse::Disconnected(Disconnected {
@@ -367,7 +368,6 @@ impl NetKernel for CitadelWorkspaceService {
                     }
                 }
             }
-
             _ => {}
         }
         // TODO: handle disconnect properly by removing entries from the hashmap

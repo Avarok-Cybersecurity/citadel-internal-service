@@ -404,6 +404,7 @@ pub enum InternalServiceRequest {
     StartGroup {
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
         cid: u64,
+        session_security_settings: SessionSecuritySettings,
         request_id: Uuid,
     },
     ListAllPeers {

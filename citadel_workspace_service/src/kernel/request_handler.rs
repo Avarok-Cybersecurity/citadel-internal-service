@@ -768,6 +768,7 @@ pub async fn handle_request(
         InternalServiceRequest::StartGroup {
             initial_users_to_invite,
             cid,
+            session_security_settings,
             request_id: _,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
@@ -775,6 +776,7 @@ pub async fn handle_request(
                     implicated_cid: cid,
                 },
                 remote.clone(),
+                session_security_settings,
             );
             match client_to_server_remote
                 .create_group(initial_users_to_invite)
@@ -991,13 +993,13 @@ pub async fn handle_request(
         } => {
             let request = NodeRequest::PeerCommand(PeerCommand {
                 implicated_cid: cid,
-                command: PeerSignal::Disconnect(
-                    PeerConnectionType::LocalGroupPeer {
+                command: PeerSignal::Disconnect {
+                    peer_conn_type: PeerConnectionType::LocalGroupPeer {
                         implicated_cid: cid,
                         peer_cid,
                     },
-                    None,
-                ),
+                    disconnect_response: None,
+                },
             });
 
             match server_connection_map.lock().await.get_mut(&cid) {

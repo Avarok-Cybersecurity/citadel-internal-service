@@ -59,45 +59,45 @@ pub async fn register_and_connect_to_server<
 
     info!(target: "citadel", "Greeter packet {greeter_packet:?}");
 
-        let username = item.username.into();
-        let full_name = item.full_name.into();
-        let password = item.password.into();
-        let session_security_settings = SessionSecuritySettingsBuilder::default()
-            // .with_crypto_params(EncryptionAlgorithm::AES_GCM_256 + KemAlgorithm::Kyber + SigAlgorithm::None)
-            .build()
-            .unwrap();
+    let username = username.into();
+    let full_name = full_name.into();
+    let password = password.into();
+    let session_security_settings = SessionSecuritySettingsBuilder::default()
+        // .with_crypto_params(EncryptionAlgorithm::AES_GCM_256 + KemAlgorithm::Kyber + SigAlgorithm::None)
+        .build()
+        .unwrap();
 
-        if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted) =
-            greeter_packet
+    if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted) =
+        greeter_packet
+    {
+        let register_command = InternalServiceRequest::Register {
+            request_id: Uuid::new_v4(),
+            server_addr,
+            full_name,
+            username: username.clone(),
+            proposed_password: password.clone(),
+            session_security_settings,
+            connect_after_register: false,
+        };
+        send(&mut sink, register_command).await.unwrap();
+
+        let second_packet = stream.next().await.unwrap().unwrap();
+        let response_packet: InternalServiceResponse =
+            bincode2::deserialize(&second_packet).unwrap();
+        if let InternalServiceResponse::RegisterSuccess(
+            citadel_workspace_types::RegisterSuccess { request_id: _ },
+        ) = response_packet
         {
-            let register_command = InternalServiceRequest::Register {
-                request_id: Uuid::new_v4(),
-                server_addr: item.server_addr,
-                full_name,
-                username: username.clone(),
-                proposed_password: password.clone(),
+            // now, connect to the server
+            let command = InternalServiceRequest::Connect {
+                username,
+                password,
+                connect_mode: Default::default(),
+                udp_mode: Default::default(),
+                keep_alive_timeout: None,
                 session_security_settings,
-                connect_after_register: false,
+                request_id: Uuid::new_v4(),
             };
-            send(&mut sink, register_command).await.unwrap();
-
-            let second_packet = stream.next().await.unwrap().unwrap();
-            let response_packet: InternalServiceResponse =
-                bincode2::deserialize(&second_packet).unwrap();
-            if let InternalServiceResponse::RegisterSuccess(
-                citadel_workspace_types::RegisterSuccess { request_id: _ },
-            ) = response_packet
-            {
-                // now, connect to the server
-                let command = InternalServiceRequest::Connect {
-                    username,
-                    password,
-                    connect_mode: Default::default(),
-                    udp_mode: Default::default(),
-                    keep_alive_timeout: None,
-                    session_security_settings,
-                    request_id: Uuid::new_v4(),
-                };
 
             send(&mut sink, command).await?;
 
@@ -200,27 +200,27 @@ pub async fn register_and_connect_to_server_then_peers(
         .build()
         .unwrap();
 
-            // now, both peers are connected and registered to the central server. Now, we
-            // need to have them peer-register to each other
-            to_service_a
-                .send(InternalServiceRequest::PeerRegister {
-                    request_id: Uuid::new_v4(),
-                    cid: *cid_a,
-                    peer_cid: (*cid_b).into(),
-                    session_security_settings,
-                    connect_after_register: false,
-                })
-                .unwrap();
+    // now, both peers are connected and registered to the central server. Now, we
+    // need to have them peer-register to each other
+    to_service_a
+        .send(InternalServiceRequest::PeerRegister {
+            request_id: Uuid::new_v4(),
+            cid: cid_a,
+            peer_cid: cid_b,
+            session_security_settings,
+            connect_after_register: false,
+        })
+        .unwrap();
 
-            to_service_b
-                .send(InternalServiceRequest::PeerRegister {
-                    request_id: Uuid::new_v4(),
-                    cid: *cid_b,
-                    peer_cid: (*cid_a).into(),
-                    session_security_settings,
-                    connect_after_register: false,
-                })
-                .unwrap();
+    to_service_b
+        .send(InternalServiceRequest::PeerRegister {
+            request_id: Uuid::new_v4(),
+            cid: cid_b,
+            peer_cid: cid_a,
+            session_security_settings,
+            connect_after_register: false,
+        })
+        .unwrap();
 
     let item = from_service_b.recv().await.unwrap();
 
@@ -257,25 +257,25 @@ pub async fn register_and_connect_to_server_then_peers(
         }
     }
 
-            to_service_a
-                .send(InternalServiceRequest::PeerConnect {
-                    request_id: Uuid::new_v4(),
-                    cid: *cid_a,
-                    peer_cid: *cid_b,
-                    udp_mode: Default::default(),
-                    session_security_settings,
-                })
-                .unwrap();
+    to_service_a
+        .send(InternalServiceRequest::PeerConnect {
+            request_id: Uuid::new_v4(),
+            cid: cid_a,
+            peer_cid: cid_b,
+            udp_mode: Default::default(),
+            session_security_settings,
+        })
+        .unwrap();
 
-            to_service_b
-                .send(InternalServiceRequest::PeerConnect {
-                    request_id: Uuid::new_v4(),
-                    cid: *cid_b,
-                    peer_cid: *cid_a,
-                    udp_mode: Default::default(),
-                    session_security_settings,
-                })
-                .unwrap();
+    to_service_b
+        .send(InternalServiceRequest::PeerConnect {
+            request_id: Uuid::new_v4(),
+            cid: cid_b,
+            peer_cid: cid_a,
+            udp_mode: Default::default(),
+            session_security_settings,
+        })
+        .unwrap();
 
     let item = from_service_b.recv().await.unwrap();
     match item {
