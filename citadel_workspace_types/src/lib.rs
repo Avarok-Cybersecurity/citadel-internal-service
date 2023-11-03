@@ -357,7 +357,7 @@ pub enum InternalServiceRequest {
         username: String,
         proposed_password: SecBuffer,
         connect_after_register: bool,
-        default_security_settings: SessionSecuritySettings,
+        session_security_settings: SessionSecuritySettings,
     },
     Message {
         request_id: Uuid,
@@ -404,6 +404,7 @@ pub enum InternalServiceRequest {
     StartGroup {
         initial_users_to_invite: Option<Vec<UserIdentifier>>,
         cid: u64,
+        session_security_settings: SessionSecuritySettings,
         request_id: Uuid,
     },
     ListAllPeers {
@@ -430,6 +431,7 @@ pub enum InternalServiceRequest {
         request_id: Uuid,
         cid: u64,
         peer_cid: u64,
+        session_security_settings: SessionSecuritySettings,
         connect_after_register: bool,
     },
     LocalDBGetKV {

@@ -245,8 +245,11 @@ pub async fn handle_request(
                     let cid = conn_success.cid;
 
                     let (sink, mut stream) = conn_success.channel.split();
-                    let client_server_remote =
-                        create_client_server_remote(stream.vconn_type, remote.clone());
+                    let client_server_remote = create_client_server_remote(
+                        stream.vconn_type,
+                        remote.clone(),
+                        session_security_settings,
+                    );
                     let connection_struct = Connection::new(sink, client_server_remote, uuid);
                     server_connection_map
                         .lock()
@@ -302,7 +305,7 @@ pub async fn handle_request(
             username,
             proposed_password,
             connect_after_register,
-            default_security_settings,
+            session_security_settings,
             request_id,
         } => {
             info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
@@ -312,7 +315,7 @@ pub async fn handle_request(
                     full_name,
                     username.clone(),
                     proposed_password.clone(),
-                    default_security_settings,
+                    session_security_settings,
                 )
                 .await
             {
@@ -332,7 +335,7 @@ pub async fn handle_request(
                             keep_alive_timeout: None,
                             udp_mode: Default::default(),
                             connect_mode: Default::default(),
-                            session_security_settings: default_security_settings,
+                            session_security_settings,
                             request_id,
                         };
 
@@ -689,18 +692,28 @@ pub async fn handle_request(
             match server_connection_map.lock().await.get_mut(&cid) {
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
-                        if let Some(peer_remote) = conn.peers.get_mut(&peer_cid) {
-                            peer_remote
-                                .remote
-                                .remote_encrypted_virtual_filesystem_delete(virtual_directory)
-                                .await
+                        if let Some(_peer_remote) = conn.peers.get_mut(&peer_cid) {
+                            let request = NodeRequest::DeleteObject(DeleteObject {
+                                v_conn: VirtualTargetType::LocalGroupPeer {
+                                    implicated_cid: cid,
+                                    peer_cid,
+                                },
+                                virtual_dir: virtual_directory,
+                                security_level: Default::default(),
+                            });
+                            remote.send(request).await
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        conn.client_server_remote
-                            .remote_encrypted_virtual_filesystem_delete(virtual_directory)
-                            .await
+                        let request = NodeRequest::DeleteObject(DeleteObject {
+                            v_conn: VirtualTargetType::LocalGroupServer {
+                                implicated_cid: cid,
+                            },
+                            virtual_dir: virtual_directory,
+                            security_level: Default::default(),
+                        });
+                        remote.send(request).await
                     };
 
                     match result {
@@ -755,6 +768,7 @@ pub async fn handle_request(
         InternalServiceRequest::StartGroup {
             initial_users_to_invite,
             cid,
+            session_security_settings,
             request_id: _,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
@@ -762,6 +776,7 @@ pub async fn handle_request(
                     implicated_cid: cid,
                 },
                 remote.clone(),
+                session_security_settings,
             );
             match client_to_server_remote
                 .create_group(initial_users_to_invite)
@@ -777,6 +792,7 @@ pub async fn handle_request(
             cid,
             peer_cid,
             connect_after_register,
+            session_security_settings,
             request_id,
         } => {
             let client_to_server_remote = ClientServerRemote::new(
@@ -784,6 +800,7 @@ pub async fn handle_request(
                     implicated_cid: cid,
                 },
                 remote.clone(),
+                session_security_settings,
             );
 
             match client_to_server_remote.propose_target(cid, peer_cid).await {
@@ -801,7 +818,7 @@ pub async fn handle_request(
                                             cid,
                                             peer_cid,
                                             udp_mode: Default::default(),
-                                            session_security_settings: Default::default(),
+                                            session_security_settings,
                                             request_id,
                                         };
 
@@ -880,6 +897,7 @@ pub async fn handle_request(
                     peer_cid,
                 },
                 remote.clone(),
+                session_security_settings,
             );
             match client_to_server_remote.find_target(cid, peer_cid).await {
                 Ok(symmetric_identifier_handle_ref) => {
@@ -975,13 +993,13 @@ pub async fn handle_request(
         } => {
             let request = NodeRequest::PeerCommand(PeerCommand {
                 implicated_cid: cid,
-                command: PeerSignal::Disconnect(
-                    PeerConnectionType::LocalGroupPeer {
+                command: PeerSignal::Disconnect {
+                    peer_conn_type: PeerConnectionType::LocalGroupPeer {
                         implicated_cid: cid,
                         peer_cid,
                     },
-                    None,
-                ),
+                    disconnect_response: None,
+                },
             });
 
             match server_connection_map.lock().await.get_mut(&cid) {

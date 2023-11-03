@@ -62,6 +62,10 @@ pub async fn register_and_connect_to_server<
     let username = username.into();
     let full_name = full_name.into();
     let password = password.into();
+    let session_security_settings = SessionSecuritySettingsBuilder::default()
+        // .with_crypto_params(EncryptionAlgorithm::AES_GCM_256 + KemAlgorithm::Kyber + SigAlgorithm::None)
+        .build()
+        .unwrap();
 
     if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted) =
         greeter_packet
@@ -72,13 +76,14 @@ pub async fn register_and_connect_to_server<
             full_name,
             username: username.clone(),
             proposed_password: password.clone(),
-            default_security_settings: Default::default(),
+            session_security_settings,
             connect_after_register: false,
         };
-        send(&mut sink, register_command).await?;
+        send(&mut sink, register_command).await.unwrap();
 
-        let second_packet = stream.next().await.unwrap()?;
-        let response_packet: InternalServiceResponse = bincode2::deserialize(&second_packet)?;
+        let second_packet = stream.next().await.unwrap().unwrap();
+        let response_packet: InternalServiceResponse =
+            bincode2::deserialize(&second_packet).unwrap();
         if let InternalServiceResponse::RegisterSuccess(
             citadel_workspace_types::RegisterSuccess { request_id: _ },
         ) = response_packet
@@ -90,7 +95,7 @@ pub async fn register_and_connect_to_server<
                 connect_mode: Default::default(),
                 udp_mode: Default::default(),
                 keep_alive_timeout: None,
-                session_security_settings: Default::default(),
+                session_security_settings,
                 request_id: Uuid::new_v4(),
             };
 
@@ -190,6 +195,10 @@ pub async fn register_and_connect_to_server_then_peers(
     )
     .await
     .unwrap();
+    let session_security_settings = SessionSecuritySettingsBuilder::default()
+        // .with_crypto_params(EncryptionAlgorithm::AES_GCM_256 + KemAlgorithm::Kyber + SigAlgorithm::None)
+        .build()
+        .unwrap();
 
     // now, both peers are connected and registered to the central server. Now, we
     // need to have them peer-register to each other
@@ -197,7 +206,8 @@ pub async fn register_and_connect_to_server_then_peers(
         .send(InternalServiceRequest::PeerRegister {
             request_id: Uuid::new_v4(),
             cid: cid_a,
-            peer_cid: cid_b.into(),
+            peer_cid: cid_b,
+            session_security_settings,
             connect_after_register: false,
         })
         .unwrap();
@@ -206,7 +216,8 @@ pub async fn register_and_connect_to_server_then_peers(
         .send(InternalServiceRequest::PeerRegister {
             request_id: Uuid::new_v4(),
             cid: cid_b,
-            peer_cid: cid_a.into(),
+            peer_cid: cid_a,
+            session_security_settings,
             connect_after_register: false,
         })
         .unwrap();
@@ -252,7 +263,7 @@ pub async fn register_and_connect_to_server_then_peers(
             cid: cid_a,
             peer_cid: cid_b,
             udp_mode: Default::default(),
-            session_security_settings: Default::default(),
+            session_security_settings,
         })
         .unwrap();
 
@@ -262,7 +273,7 @@ pub async fn register_and_connect_to_server_then_peers(
             cid: cid_b,
             peer_cid: cid_a,
             udp_mode: Default::default(),
-            session_security_settings: Default::default(),
+            session_security_settings,
         })
         .unwrap();
 
