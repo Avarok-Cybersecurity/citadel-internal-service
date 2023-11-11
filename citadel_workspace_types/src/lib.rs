@@ -719,6 +719,7 @@ pub enum InternalServiceRequest {
     },
     GroupRespondInviteRequest {
         cid: u64,
+        peer_cid: u64,
         group_key: MessageGroupKey,
         response: bool,
         request_id: Uuid,

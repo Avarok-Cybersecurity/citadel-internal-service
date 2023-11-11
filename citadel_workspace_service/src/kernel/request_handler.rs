@@ -1780,6 +1780,7 @@ pub async fn handle_request(
 
         InternalServiceRequest::GroupRespondInviteRequest {
             cid,
+            peer_cid,
             group_key,
             response,
             request_id,
@@ -1793,44 +1794,79 @@ pub async fn handle_request(
                 implicated_cid: cid,
                 command: group_request,
             });
-            match remote.send_callback_subscription(request).await {
-                Ok(mut subscription) => {
-                    let mut result = false;
-                    if response {
-                        while let Some(evt) = subscription.next().await {
-                            if let NodeResult::GroupEvent(GroupEvent {
-                                implicated_cid: _,
-                                ticket: _,
-                                event: GroupBroadcast::AcceptMembershipResponse { key: _, success },
-                            }) = evt
-                            {
-                                result = success;
-                                break;
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
+                if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
+                    match peer_connection
+                        .remote
+                        .send_callback_subscription(request)
+                        .await
+                    {
+                        Ok(mut subscription) => {
+                            let mut result = false;
+                            if response {
+                                if let Some(evt) = subscription.next().await {
+                                    result = match evt {
+                                        // When accepting an invite, we expect a GroupChannelCreated in response
+                                        NodeResult::GroupChannelCreated(GroupChannelCreated {
+                                            ticket: _,
+                                            channel,
+                                        }) => {
+                                            connection.add_group_channel(
+                                                channel.key(),
+                                                GroupConnection { channel },
+                                            );
+                                            true
+                                        }
+                                        // When declining an invite, we should get a DeclineMembership in response
+                                        NodeResult::GroupEvent(GroupEvent {
+                                            implicated_cid: _,
+                                            ticket: _,
+                                            event: GroupBroadcast::DeclineMembership { key: _ },
+                                        }) => true,
+                                        _ => false,
+                                    }
+                                }
+                            }
+                            match result {
+                                true => {
+                                    send_response_to_tcp_client(
+                                        tcp_connection_map,
+                                        InternalServiceResponse::GroupRespondInviteRequestSuccess(
+                                            GroupRespondInviteRequestSuccess {
+                                                cid,
+                                                group_key,
+                                                request_id: Some(request_id),
+                                            },
+                                        ),
+                                        uuid,
+                                    )
+                                    .await;
+                                }
+                                false => {
+                                    send_response_to_tcp_client(
+                                        tcp_connection_map,
+                                        InternalServiceResponse::GroupRespondInviteRequestFailure(
+                                            GroupRespondInviteRequestFailure {
+                                                cid,
+                                                message: "Group Invite Response Failed."
+                                                    .to_string(),
+                                                request_id: Some(request_id),
+                                            },
+                                        ),
+                                        uuid,
+                                    )
+                                    .await;
+                                }
                             }
                         }
-                    }
-                    match result {
-                        true => {
-                            send_response_to_tcp_client(
-                                tcp_connection_map,
-                                InternalServiceResponse::GroupRespondInviteRequestSuccess(
-                                    GroupRespondInviteRequestSuccess {
-                                        cid,
-                                        group_key,
-                                        request_id: Some(request_id),
-                                    },
-                                ),
-                                uuid,
-                            )
-                            .await;
-                        }
-                        false => {
+                        Err(err) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
                                 InternalServiceResponse::GroupRespondInviteRequestFailure(
                                     GroupRespondInviteRequestFailure {
                                         cid,
-                                        message: "Group Invite Response Failed.".to_string(),
+                                        message: err.to_string(),
                                         request_id: Some(request_id),
                                     },
                                 ),
@@ -1839,20 +1875,6 @@ pub async fn handle_request(
                             .await;
                         }
                     }
-                }
-                Err(err) => {
-                    send_response_to_tcp_client(
-                        tcp_connection_map,
-                        InternalServiceResponse::GroupRespondInviteRequestFailure(
-                            GroupRespondInviteRequestFailure {
-                                cid,
-                                message: err.to_string(),
-                                request_id: Some(request_id),
-                            },
-                        ),
-                        uuid,
-                    )
-                    .await;
                 }
             }
         }
