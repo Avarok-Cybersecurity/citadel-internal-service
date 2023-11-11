@@ -61,7 +61,7 @@ mod tests {
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
-        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0 as usize) {
+        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0_usize) {
             let disconnect_command = InternalServiceRequest::Disconnect {
                 cid: *cid,
                 request_id: Uuid::new_v4(),
@@ -127,7 +127,7 @@ mod tests {
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
-        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0 as usize) {
+        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0_usize) {
             let serialized_message = bincode2::serialize("Message Test").unwrap();
             let message_command = InternalServiceRequest::Message {
                 message: serialized_message,
@@ -324,16 +324,14 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
+        let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
 
         // Test that service A views the right information
-        test_list_peers(*cid_a, *cid_b, &to_service_a, from_service_a).await;
+        test_list_peers(*cid_a, *cid_b, to_service_a, from_service_a).await;
         // Test that service B views the right information
-        test_list_peers(*cid_b, *cid_a, &to_service_b, from_service_b).await;
+        test_list_peers(*cid_b, *cid_a, to_service_b, from_service_b).await;
 
         Ok(())
     }
@@ -352,11 +350,9 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (_to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
+        let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (_to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
 
         let service_a_message = Vec::from("Hello World");
         let service_a_message_payload = InternalServiceRequest::Message {
@@ -436,8 +432,8 @@ mod tests {
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
-        if let Some((to_service_a, from_service_a, cid)) = service_vec.get_mut(0 as usize) {
-            test_kv_for_service(&to_service_a, from_service_a, *cid, None).await
+        if let Some((to_service_a, from_service_a, cid)) = service_vec.get_mut(0_usize) {
+            test_kv_for_service(to_service_a, from_service_a, *cid, None).await
         } else {
             panic!("Service Spawn Error")
         }
@@ -457,11 +453,9 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
+        let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
 
         test_kv_for_service(to_service_a, from_service_a, *cid_a, Some(*cid_b)).await?;
         test_kv_for_service(to_service_b, from_service_b, *cid_b, Some(*cid_a)).await?;

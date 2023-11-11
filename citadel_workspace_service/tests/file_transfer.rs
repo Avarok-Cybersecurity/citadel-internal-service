@@ -71,7 +71,7 @@ mod tests {
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
-        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0 as usize) {
+        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0_usize) {
             let cmp_path = PathBuf::from("../resources/test.txt");
 
             let file_transfer_command = InternalServiceRequest::SendFile {
@@ -106,11 +106,9 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
+        let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
 
         let file_to_send = PathBuf::from("../resources/test.txt");
 
@@ -219,7 +217,7 @@ mod tests {
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
-        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0 as usize) {
+        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0_usize) {
             // Push file to REVFS
             let file_to_send = PathBuf::from("../resources/test.txt");
             let virtual_path = PathBuf::from("/vfs/test.txt");
@@ -318,11 +316,9 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
+        let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
+        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
+        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0_usize).unwrap();
 
         // Push file to REVFS on peer
         let file_to_send = PathBuf::from("../resources/test.txt");
