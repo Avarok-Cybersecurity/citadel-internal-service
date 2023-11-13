@@ -237,7 +237,7 @@ pub async fn register_and_connect_to_server_then_peers(
                 .send(InternalServiceRequest::PeerRegister {
                     request_id: Uuid::new_v4(),
                     cid: *cid_a,
-                    peer_cid: (*cid_b).into(),
+                    peer_cid: (*cid_b),
                     session_security_settings,
                     connect_after_register: false,
                 })
@@ -247,7 +247,7 @@ pub async fn register_and_connect_to_server_then_peers(
                 .send(InternalServiceRequest::PeerRegister {
                     request_id: Uuid::new_v4(),
                     cid: *cid_b,
-                    peer_cid: (*cid_a).into(),
+                    peer_cid: (*cid_a),
                     session_security_settings,
                     connect_after_register: false,
                 })

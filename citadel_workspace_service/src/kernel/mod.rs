@@ -432,7 +432,6 @@ impl NetKernel for CitadelWorkspaceService {
                 )
                 .await;
             }
-
             _ => {}
         }
         // TODO: handle disconnect properly by removing entries from the hashmap
