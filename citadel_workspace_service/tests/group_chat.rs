@@ -6,8 +6,8 @@ mod tests {
     use citadel_logging::info;
     use citadel_sdk::prelude::UserIdentifier;
     use citadel_workspace_types::{
-        GroupCreateSuccess, GroupInvitation, GroupRespondInviteRequestSuccess,
-        InternalServiceRequest, InternalServiceResponse,
+        GroupCreateSuccess, GroupInvitation, GroupRespondInviteRequestFailure,
+        GroupRespondInviteRequestSuccess, InternalServiceRequest, InternalServiceResponse,
     };
     use std::error::Error;
     use std::net::SocketAddr;
@@ -72,7 +72,7 @@ mod tests {
                     cid: *cid_b,
                     peer_cid: *peer_cid,
                     group_key: *group_key,
-                    response: true,
+                    response: false,
                     request_id: Uuid::new_v4(),
                 };
                 info!(target: "citadel","Service B Sending Invite Response");
@@ -88,9 +88,16 @@ mod tests {
                 ) = &deserialized_service_b_payload_response
                 {
                     assert_eq!(*group_key, owner_group_key.clone());
-                    info!(target: "citadel","Service B: Successfully Accepted Group Invite");
-                } else {
-                    panic!("Service B Failed Upon Responding to Group Invite");
+                    info!(target: "citadel","Service B: Successfully Declined Group Invite");
+                } else if let InternalServiceResponse::GroupRespondInviteRequestFailure(
+                    GroupRespondInviteRequestFailure {
+                        cid: _,
+                        message,
+                        request_id: _,
+                    },
+                ) = &deserialized_service_b_payload_response
+                {
+                    panic!("Service B Failed Upon Responding to Group Invite: {message:?}");
                 }
                 info!(target: "citadel","{deserialized_service_b_payload_response:?}");
             } else {
@@ -128,10 +135,17 @@ mod tests {
                 {
                     assert_eq!(*group_key, owner_group_key.clone());
                     info!(target: "citadel","Service C: Successfully Accepted Group Invite");
-                } else {
-                    panic!("Service C Failed Upon Responding to Group Invite");
+                } else if let InternalServiceResponse::GroupRespondInviteRequestFailure(
+                    GroupRespondInviteRequestFailure {
+                        cid: _,
+                        message,
+                        request_id: _,
+                    },
+                ) = &deserialized_service_c_payload_response
+                {
+                    panic!("Service C Failed Upon Responding to Group Invite: {message:?}");
                 }
-                info!(target: "citadel", "{deserialized_service_c_payload_response:?}");
+                info!(target: "citadel","{deserialized_service_c_payload_response:?}");
             } else {
                 panic!("Service C Invitation Not Received");
             }

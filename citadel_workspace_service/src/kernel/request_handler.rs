@@ -1804,29 +1804,49 @@ pub async fn handle_request(
                     {
                         Ok(mut subscription) => {
                             let mut result = false;
-                            if response {
-                                if let Some(evt) = subscription.next().await {
-                                    result = match evt {
-                                        // When accepting an invite, we expect a GroupChannelCreated in response
-                                        NodeResult::GroupChannelCreated(GroupChannelCreated {
-                                            ticket: _,
-                                            channel,
-                                        }) => {
-                                            connection.add_group_channel(
-                                                channel.key(),
-                                                GroupConnection { channel },
-                                            );
-                                            true
-                                        }
-                                        // When declining an invite, we should get a DeclineMembership in response
-                                        NodeResult::GroupEvent(GroupEvent {
-                                            implicated_cid: _,
-                                            ticket: _,
-                                            event: GroupBroadcast::DeclineMembership { key: _ },
-                                        }) => true,
-                                        _ => false,
+                            while let Some(evt) = subscription.next().await {
+                                println!("{evt:?}");
+                                match evt {
+                                    // When accepting an invite, we expect a GroupChannelCreated in response
+                                    NodeResult::GroupChannelCreated(GroupChannelCreated {
+                                        ticket: _,
+                                        channel,
+                                    }) => {
+                                        connection.add_group_channel(
+                                            channel.key(),
+                                            GroupConnection { channel },
+                                        );
+                                        result = true;
+                                        break;
                                     }
-                                }
+                                    NodeResult::GroupEvent(GroupEvent {
+                                        implicated_cid: _,
+                                        ticket: _,
+                                        event:
+                                            GroupBroadcast::AcceptMembershipResponse { key: _, success },
+                                    }) => {
+                                        result = success;
+                                        if !result {
+                                            break;
+                                        }
+                                    }
+                                    NodeResult::GroupEvent(GroupEvent {
+                                        implicated_cid: _,
+                                        ticket: _,
+                                        event:
+                                            GroupBroadcast::DeclineMembershipResponse {
+                                                key: _,
+                                                success,
+                                            },
+                                    }) => {
+                                        result = success;
+                                        break;
+                                    }
+                                    _ => {
+                                        result = false;
+                                        break;
+                                    }
+                                };
                             }
                             match result {
                                 true => {
