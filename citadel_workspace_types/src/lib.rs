@@ -315,6 +315,13 @@ pub struct GroupListGroupsForFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupListGroupsResponse {
+    pub cid: u64,
+    pub group_list: Option<Vec<MessageGroupKey>>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GroupJoinRequestReceived {
     pub cid: u64,
     pub peer_cid: u64,
@@ -539,6 +546,7 @@ pub enum InternalServiceResponse {
     GroupKickFailure(GroupKickFailure),
     GroupListGroupsForSuccess(GroupListGroupsForSuccess),
     GroupListGroupsForFailure(GroupListGroupsForFailure),
+    GroupListGroupsResponse(GroupListGroupsResponse),
     GroupJoinRequestReceived(GroupJoinRequestReceived),
     GroupRequestJoinAccepted(GroupRequestJoinAccepted),
     GroupRequestJoinSuccess(GroupRequestJoinSuccess),

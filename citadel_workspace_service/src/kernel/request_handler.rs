@@ -1719,29 +1719,57 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
-                    match peer_connection.remote.list_owned_groups().await {
-                        Ok(group_list) => {
-                            send_response_to_tcp_client(
-                                tcp_connection_map,
-                                InternalServiceResponse::GroupListGroupsForSuccess(
-                                    GroupListGroupsForSuccess {
-                                        cid,
-                                        peer_cid,
-                                        group_list: Some(group_list),
-                                        request_id: Some(request_id),
-                                    },
-                                ),
-                                uuid,
-                            )
-                            .await;
-                        }
-                        Err(err) => {
+                    let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
+                        implicated_cid: cid,
+                        command: GroupBroadcast::ListGroupsFor { cid: peer_cid },
+                    });
+                    if let Ok(mut subscription) = peer_connection
+                        .remote
+                        .send_callback_subscription(request)
+                        .await
+                    {
+                        if let Some(evt) = subscription.next().await {
+                            if let NodeResult::GroupEvent(GroupEvent {
+                                implicated_cid: _,
+                                ticket: _,
+                                event: GroupBroadcast::ListResponse { groups },
+                            }) = evt
+                            {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::GroupListGroupsForSuccess(
+                                        GroupListGroupsForSuccess {
+                                            cid,
+                                            peer_cid,
+                                            group_list: Some(groups),
+                                            request_id: Some(request_id),
+                                        },
+                                    ),
+                                    uuid,
+                                )
+                                .await;
+                            } else {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::GroupListGroupsForFailure(
+                                        GroupListGroupsForFailure {
+                                            cid,
+                                            message: "Could Not List Groups - Failed".to_string(),
+                                            request_id: Some(request_id),
+                                        },
+                                    ),
+                                    uuid,
+                                )
+                                .await;
+                            }
+                        } else {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
                                 InternalServiceResponse::GroupListGroupsForFailure(
                                     GroupListGroupsForFailure {
                                         cid,
-                                        message: err.to_string(),
+                                        message: "Could Not List Groups - Subscription Error"
+                                            .to_string(),
                                         request_id: Some(request_id),
                                     },
                                 ),
@@ -1749,6 +1777,20 @@ pub async fn handle_request(
                             )
                             .await;
                         }
+                    } else {
+                        send_response_to_tcp_client(
+                            tcp_connection_map,
+                            InternalServiceResponse::GroupListGroupsForFailure(
+                                GroupListGroupsForFailure {
+                                    cid,
+                                    message: "Could Not List Groups - Subscription Error"
+                                        .to_string(),
+                                    request_id: Some(request_id),
+                                },
+                            ),
+                            uuid,
+                        )
+                        .await;
                     }
                 } else {
                     send_response_to_tcp_client(
@@ -1805,7 +1847,6 @@ pub async fn handle_request(
                         Ok(mut subscription) => {
                             let mut result = false;
                             while let Some(evt) = subscription.next().await {
-                                println!("{evt:?}");
                                 match evt {
                                     // When accepting an invite, we expect a GroupChannelCreated in response
                                     NodeResult::GroupChannelCreated(GroupChannelCreated {
@@ -1906,7 +1947,8 @@ pub async fn handle_request(
         } => {
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
-                if let Some(peer_connection) = connection.peers.get_mut(&group_key.cid) {
+                let target_cid = group_key.cid;
+                if let Some(peer_connection) = connection.peers.get_mut(&target_cid) {
                     let group_request = GroupBroadcast::RequestJoin {
                         sender: cid,
                         key: group_key,
