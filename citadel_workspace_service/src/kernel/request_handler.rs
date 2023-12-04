@@ -10,23 +10,24 @@ use citadel_workspace_types::{
     AccountInformation, Accounts, ConnectionFailure, DeleteVirtualFileFailure,
     DeleteVirtualFileSuccess, DisconnectFailure, Disconnected, DownloadFileFailure,
     DownloadFileSuccess, FileTransferStatus, GetSessions, GroupCreateFailure, GroupCreateSuccess,
-    GroupEndFailure, GroupEndSuccess, GroupInviteFailure, GroupInviteSuccess, GroupKickFailure,
-    GroupKickSuccess, GroupLeaveFailure, GroupLeaveSuccess, GroupListGroupsForFailure,
-    GroupListGroupsForSuccess, GroupMessageFailure, GroupMessageSuccess, GroupRequestJoinFailure,
-    GroupRequestJoinSuccess, GroupRespondInviteRequestFailure, GroupRespondInviteRequestSuccess,
-    InternalServiceRequest, InternalServiceResponse, ListAllPeers, ListAllPeersFailure,
-    ListRegisteredPeers, ListRegisteredPeersFailure, LocalDBClearAllKVFailure,
-    LocalDBClearAllKVSuccess, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess,
-    LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess, LocalDBGetKVFailure, LocalDBGetKVSuccess,
-    LocalDBSetKVFailure, LocalDBSetKVSuccess, MessageReceived, MessageSendError, MessageSent,
-    PeerConnectFailure, PeerConnectSuccess, PeerDisconnectFailure, PeerDisconnectSuccess,
-    PeerRegisterFailure, PeerRegisterSuccess, PeerSessionInformation, SendFileFailure,
-    SendFileRequestSent, SessionInformation,
+    GroupEndFailure, GroupEndSuccess, GroupInviteFailure, GroupInviteSuccess,
+    GroupJoinRequestReceived, GroupKickFailure, GroupKickSuccess, GroupLeaveFailure,
+    GroupLeaveSuccess, GroupListGroupsForFailure, GroupListGroupsForSuccess, GroupMessageFailure,
+    GroupMessageReceived, GroupMessageSuccess, GroupRequestJoinFailure, GroupRequestJoinSuccess,
+    GroupRespondInviteRequestFailure, GroupRespondInviteRequestSuccess, InternalServiceRequest,
+    InternalServiceResponse, ListAllPeers, ListAllPeersFailure, ListRegisteredPeers,
+    ListRegisteredPeersFailure, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
+    LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
+    LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
+    MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
+    PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
+    PeerSessionInformation, SendFileFailure, SendFileRequestSent, SessionInformation,
 };
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 
 use uuid::Uuid;
@@ -1369,6 +1370,22 @@ pub async fn handle_request(
                                 },
                             );
 
+                            // TODO: Successfully spawn group_channel receiver
+
+                            // let uuid = conn.associated_tcp_connection;
+                            //
+                            // if let Some(group_broadcast_handler) = spawn_group_channel_receiver(
+                            //     group_key,
+                            //     cid,
+                            //     uuid,
+                            //     group_channel,
+                            //     tcp_connection_map.clone(),
+                            // )
+                            // .await
+                            // {
+                            //     tokio::task::spawn(group_broadcast_handler);
+                            // }
+
                             // Relay success to TCP client
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -2264,4 +2281,66 @@ async fn backend_handler_clear_all(
             .await;
         }
     }
+}
+
+async fn spawn_group_channel_receiver(
+    group_key: MessageGroupKey,
+    implicated_cid: u64,
+    uuid: Uuid,
+    mut group_channel: GroupChannel,
+    tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+) -> Option<impl Future<Output = ()>> {
+    // TODO: Successfully create group channel receiver
+
+    // Handler/Receiver for Group Channel Broadcasts that aren't handled in on_node_event_received in Kernel
+    let group_channel_receiver = async move {
+        while let Some(inbound_group_broadcast) = group_channel.recv().await {
+            // Gets UnboundedSender to the TCP client to forward Broadcasts
+            match tcp_connection_map.lock().await.get(&uuid) {
+                Some(entry) => {
+                    let mut message: Option<InternalServiceResponse> = None;
+                    match inbound_group_broadcast {
+                        GroupBroadcastPayload::Message { payload, sender } => {
+                            message = Some(InternalServiceResponse::GroupMessageReceived(
+                                GroupMessageReceived {
+                                    cid: implicated_cid,
+                                    peer_cid: sender,
+                                    message: payload.into_buffer().into(),
+                                    group_key,
+                                    request_id: None,
+                                },
+                            ));
+                        }
+                        GroupBroadcastPayload::Event { payload } => {
+                            if let GroupBroadcast::RequestJoin { sender, key: _ } = payload {
+                                message = Some(InternalServiceResponse::GroupJoinRequestReceived(
+                                    GroupJoinRequestReceived {
+                                        cid: implicated_cid,
+                                        peer_cid: sender,
+                                        group_key,
+                                        request_id: None,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+
+                    // Forward Group Broadcast to TCP Client if it was one of the handled broadcasts
+                    if let Some(message) = message {
+                        if let Err(err) = entry.send(message.clone()) {
+                            info!(target: "citadel", "Group Channel Forward To TCP Client Failed: {err:?}");
+                        }
+                    }
+                }
+                None => {
+                    info!(target:"citadel","Connection not found when Group Channel Broadcast Received");
+                }
+            }
+        }
+    };
+
+    // Spawns the above Handler for Group Channel Broadcasts not handled in Node Events
+    //tokio::task::spawn(group_channel_receiver);
+    Some(group_channel_receiver)
+    //None
 }

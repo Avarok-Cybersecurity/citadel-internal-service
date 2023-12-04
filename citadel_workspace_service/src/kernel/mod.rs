@@ -236,6 +236,7 @@ impl NetKernel for CitadelWorkspaceService {
     }
 
     async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
+        info!(target: "citadel", "NODE EVENT RECEIVED WITH MESSAGE: {message:?}");
         match message {
             NodeResult::Disconnect(disconnect) => {
                 if let Some(conn) = disconnect.v_conn_type {
