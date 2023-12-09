@@ -4,12 +4,13 @@ mod common;
 mod tests {
     use crate::common::*;
     use citadel_logging::info;
-    use citadel_sdk::prelude::UserIdentifier;
+    use citadel_sdk::prelude::{MemberState, UserIdentifier};
     use citadel_workspace_types::{
-        GroupCreateSuccess, GroupInvitation, GroupInviteSuccess, GroupJoinRequestReceived,
-        GroupLeaveSuccess, GroupListGroupsForSuccess, GroupRequestJoinAccepted,
-        GroupRequestJoinFailure, GroupRequestJoinSuccess, GroupRespondInviteRequestFailure,
-        GroupRespondInviteRequestSuccess, InternalServiceRequest, InternalServiceResponse,
+        GroupCreateSuccess, GroupEndSuccess, GroupEnded, GroupInvitation, GroupInviteSuccess,
+        GroupJoinRequestReceived, GroupLeaveSuccess, GroupLeft, GroupListGroupsForSuccess,
+        GroupMemberStateChanged, GroupRequestJoinFailure, GroupRequestJoinSuccess,
+        GroupRespondRequestFailure, GroupRespondRequestSuccess, InternalServiceRequest,
+        InternalServiceResponse,
     };
     use std::error::Error;
     use std::net::SocketAddr;
@@ -71,19 +72,20 @@ mod tests {
             {
                 assert_eq!(peer_cid, cid_a);
                 assert_eq!(*group_key, owner_group_key.clone());
-                let group_invite_response = InternalServiceRequest::GroupRespondInviteRequest {
+                let group_invite_response = InternalServiceRequest::GroupRespondRequest {
                     cid: *cid_b,
                     peer_cid: *peer_cid,
                     group_key: *group_key,
                     response: false,
                     request_id: Uuid::new_v4(),
+                    invitation: true,
                 };
                 info!(target: "citadel","Service B Sending Invite Response");
                 to_service_b.send(group_invite_response).unwrap();
                 let deserialized_service_b_payload_response = from_service_b.recv().await.unwrap();
                 info!(target: "citadel","Service B Response Sent");
-                if let InternalServiceResponse::GroupRespondInviteRequestSuccess(
-                    GroupRespondInviteRequestSuccess {
+                if let InternalServiceResponse::GroupRespondRequestSuccess(
+                    GroupRespondRequestSuccess {
                         cid: _,
                         group_key,
                         request_id: _,
@@ -92,8 +94,8 @@ mod tests {
                 {
                     assert_eq!(*group_key, owner_group_key.clone());
                     info!(target: "citadel","Service B: Successfully Declined Group Invite");
-                } else if let InternalServiceResponse::GroupRespondInviteRequestFailure(
-                    GroupRespondInviteRequestFailure {
+                } else if let InternalServiceResponse::GroupRespondRequestFailure(
+                    GroupRespondRequestFailure {
                         cid: _,
                         message,
                         request_id: _,
@@ -117,19 +119,20 @@ mod tests {
             }) = &service_c_group_create_invite
             {
                 assert_eq!(*group_key, owner_group_key.clone());
-                let group_invite_response = InternalServiceRequest::GroupRespondInviteRequest {
+                let group_invite_response = InternalServiceRequest::GroupRespondRequest {
                     cid: *cid_c,
                     peer_cid: *peer_cid,
                     group_key: *group_key,
                     response: true,
                     request_id: Uuid::new_v4(),
+                    invitation: true,
                 };
                 info!(target: "citadel","Service C Sending Invite Response");
                 to_service_c.send(group_invite_response).unwrap();
                 let deserialized_service_c_payload_response = from_service_c.recv().await.unwrap();
                 info!(target: "citadel","Service C Response Sent");
-                if let InternalServiceResponse::GroupRespondInviteRequestSuccess(
-                    GroupRespondInviteRequestSuccess {
+                if let InternalServiceResponse::GroupRespondRequestSuccess(
+                    GroupRespondRequestSuccess {
                         cid: _,
                         group_key,
                         request_id: _,
@@ -138,8 +141,8 @@ mod tests {
                 {
                     assert_eq!(*group_key, owner_group_key.clone());
                     info!(target: "citadel","Service C: Successfully Accepted Group Invite");
-                } else if let InternalServiceResponse::GroupRespondInviteRequestFailure(
-                    GroupRespondInviteRequestFailure {
+                } else if let InternalServiceResponse::GroupRespondRequestFailure(
+                    GroupRespondRequestFailure {
                         cid: _,
                         message,
                         request_id: _,
@@ -223,21 +226,21 @@ mod tests {
                     request_id: _,
                 }) = &service_b_group_inbound
                 {
-                    let service_b_group_outbound =
-                        InternalServiceRequest::GroupRespondInviteRequest {
-                            cid: *cid_b,
-                            peer_cid: *peer_cid,
-                            group_key: *group_key,
-                            response: true,
-                            request_id: Uuid::new_v4(),
-                        };
+                    let service_b_group_outbound = InternalServiceRequest::GroupRespondRequest {
+                        cid: *cid_b,
+                        peer_cid: *peer_cid,
+                        group_key: *group_key,
+                        response: true,
+                        request_id: Uuid::new_v4(),
+                        invitation: true,
+                    };
                     info!(target: "citadel","Service B Sending Invite Response");
                     to_service_b.send(service_b_group_outbound).unwrap();
                     let deserialized_service_b_payload_response =
                         from_service_b.recv().await.unwrap();
                     info!(target: "citadel","Service B Response Sent");
-                    if let InternalServiceResponse::GroupRespondInviteRequestSuccess(
-                        GroupRespondInviteRequestSuccess {
+                    if let InternalServiceResponse::GroupRespondRequestSuccess(
+                        GroupRespondRequestSuccess {
                             cid: _,
                             group_key,
                             request_id: _,
@@ -246,8 +249,8 @@ mod tests {
                     {
                         assert_eq!(*group_key, owner_group_key.clone());
                         info!(target: "citadel","Service B: Successfully Accepted Group Invite");
-                    } else if let InternalServiceResponse::GroupRespondInviteRequestFailure(
-                        GroupRespondInviteRequestFailure {
+                    } else if let InternalServiceResponse::GroupRespondRequestFailure(
+                        GroupRespondRequestFailure {
                             cid: _,
                             message,
                             request_id: _,
@@ -321,6 +324,7 @@ mod tests {
                         panic!("Service C Group Request Join Failure: {message:?}");
                     }
 
+                    let _ = from_service_a.recv().await.unwrap(); // Receive MemberStateChanged Response that isn't required here
                     let service_a_group_inbound = from_service_a.recv().await.unwrap();
                     if let InternalServiceResponse::GroupJoinRequestReceived(
                         GroupJoinRequestReceived {
@@ -332,28 +336,39 @@ mod tests {
                     ) = &service_a_group_inbound
                     {
                         let service_a_group_outbound =
-                            InternalServiceRequest::GroupRespondInviteRequest {
+                            InternalServiceRequest::GroupRespondRequest {
                                 cid: *cid_a,
                                 peer_cid: *cid_c,
                                 group_key: *group_key,
                                 response: true,
                                 request_id: Uuid::new_v4(),
+                                invitation: false,
                             };
                         to_service_a.send(service_a_group_outbound).unwrap();
                         info!(target: "citadel","Service A Accepted Join Request");
                         let service_c_group_inbound = from_service_c.recv().await.unwrap();
-                        if let InternalServiceResponse::GroupRequestJoinAccepted(
-                            GroupRequestJoinAccepted {
+                        if let InternalServiceResponse::GroupMemberStateChanged(
+                            GroupMemberStateChanged {
                                 cid: _,
-                                group_key: _,
+                                group_key: joined_group,
+                                state,
                                 request_id: _,
                             },
                         ) = &service_c_group_inbound
                         {
-                            info!(target: "citadel","Service C Joined Group");
+                            match state {
+                                MemberState::EnteredGroup { cids } => {
+                                    info!(target: "citadel","Service C {cids:?} Joined Group {joined_group:?}");
+                                }
+                                _ => {
+                                    panic!("Service C Group Join Fatal Error")
+                                }
+                            }
+                        } else {
+                            info!(target: "citadel","Service C Waiting for MemberStateChanged - Received {service_c_group_inbound:?}");
                         }
                     } else {
-                        panic!("Service A Did Not Receive Join Request");
+                        info!(target: "citadel","Service A Waiting for GroupJoinRequestReceived - Received {service_a_group_inbound:?}");
                     }
                 }
             } else {
@@ -423,19 +438,20 @@ mod tests {
             {
                 assert_eq!(peer_cid, cid_a);
                 assert_eq!(*group_key, owner_group_key.clone());
-                let group_invite_response = InternalServiceRequest::GroupRespondInviteRequest {
+                let group_invite_response = InternalServiceRequest::GroupRespondRequest {
                     cid: *cid_b,
                     peer_cid: *peer_cid,
                     group_key: *group_key,
                     response: true,
                     request_id: Uuid::new_v4(),
+                    invitation: true,
                 };
                 info!(target: "citadel","Service B Sending Invite Response");
                 to_service_b.send(group_invite_response).unwrap();
                 let deserialized_service_b_payload_response = from_service_b.recv().await.unwrap();
                 info!(target: "citadel","Service B Response Sent");
-                if let InternalServiceResponse::GroupRespondInviteRequestSuccess(
-                    GroupRespondInviteRequestSuccess {
+                if let InternalServiceResponse::GroupRespondRequestSuccess(
+                    GroupRespondRequestSuccess {
                         cid: _,
                         group_key,
                         request_id: _,
@@ -444,8 +460,8 @@ mod tests {
                 {
                     assert_eq!(*group_key, owner_group_key.clone());
                     info!(target: "citadel","Service B: Successfully Declined Group Invite");
-                } else if let InternalServiceResponse::GroupRespondInviteRequestFailure(
-                    GroupRespondInviteRequestFailure {
+                } else if let InternalServiceResponse::GroupRespondRequestFailure(
+                    GroupRespondRequestFailure {
                         cid: _,
                         message,
                         request_id: _,
@@ -454,7 +470,6 @@ mod tests {
                 {
                     panic!("Service B Failed Upon Responding to Group Invite: {message:?}");
                 }
-                info!(target: "citadel","{deserialized_service_b_payload_response:?}");
             } else {
                 panic!("Service B Invitation Not Received");
             }
@@ -470,19 +485,20 @@ mod tests {
             }) = &service_c_group_create_invite
             {
                 assert_eq!(*group_key, owner_group_key.clone());
-                let group_invite_response = InternalServiceRequest::GroupRespondInviteRequest {
+                let group_invite_response = InternalServiceRequest::GroupRespondRequest {
                     cid: *cid_c,
                     peer_cid: *peer_cid,
                     group_key: *group_key,
                     response: true,
                     request_id: Uuid::new_v4(),
+                    invitation: true,
                 };
                 info!(target: "citadel","Service C Sending Invite Response");
                 to_service_c.send(group_invite_response).unwrap();
                 let deserialized_service_c_payload_response = from_service_c.recv().await.unwrap();
                 info!(target: "citadel","Service C Response Sent");
-                if let InternalServiceResponse::GroupRespondInviteRequestSuccess(
-                    GroupRespondInviteRequestSuccess {
+                if let InternalServiceResponse::GroupRespondRequestSuccess(
+                    GroupRespondRequestSuccess {
                         cid: _,
                         group_key,
                         request_id: _,
@@ -491,8 +507,8 @@ mod tests {
                 {
                     assert_eq!(*group_key, owner_group_key.clone());
                     info!(target: "citadel","Service C: Successfully Accepted Group Invite");
-                } else if let InternalServiceResponse::GroupRespondInviteRequestFailure(
-                    GroupRespondInviteRequestFailure {
+                } else if let InternalServiceResponse::GroupRespondRequestFailure(
+                    GroupRespondRequestFailure {
                         cid: _,
                         message,
                         request_id: _,
@@ -501,50 +517,79 @@ mod tests {
                 {
                     panic!("Service C Failed Upon Responding to Group Invite: {message:?}");
                 }
-                info!(target: "citadel","{deserialized_service_c_payload_response:?}");
             } else {
                 panic!("Service C Invitation Not Received");
             }
 
             // Service C Leaves Group
-            let group_invite_response = InternalServiceRequest::GroupLeave {
+            let service_c_outbound = InternalServiceRequest::GroupLeave {
                 cid: *cid_c,
                 group_key: owner_group_key,
                 request_id: Uuid::new_v4(),
             };
             info!(target: "citadel","Service C Leaving Group");
-            to_service_c.send(group_invite_response).unwrap();
-            let deserialized_service_c_payload_response = from_service_c.recv().await.unwrap();
+            to_service_c.send(service_c_outbound).unwrap();
+            let service_c_inbound = from_service_c.recv().await.unwrap();
             if let InternalServiceResponse::GroupLeaveSuccess(GroupLeaveSuccess {
                 cid: _,
-                group_key,
+                group_key: _,
                 request_id: _,
-            }) = &deserialized_service_c_payload_response
+            }) = &service_c_inbound
             {
-                info!(target: "citadel","Service C Successfully Left Group");
+                info!(target: "citadel","Service C Successfully Requested to Leave Group");
             } else {
                 panic!("Service C panicked while attempting to leave group");
             }
+            let service_c_inbound = from_service_c.recv().await.unwrap();
+            if let InternalServiceResponse::GroupLeft(GroupLeft {
+                cid: _,
+                group_key: _,
+                success,
+                message: _,
+                request_id: _,
+            }) = &service_c_inbound
+            {
+                assert!(success);
+                info!(target: "citadel","Service C Successfully Left Group");
+            } else {
+                panic!("Service C Failed to Leave Group");
+            }
 
             // Service A Ends Group
-            let send_group_create_payload = InternalServiceRequest::GroupEnd {
+            let service_a_outbound = InternalServiceRequest::GroupEnd {
                 cid: *cid_a,
                 group_key: owner_group_key,
                 request_id: Uuid::new_v4(),
             };
             info!(target: "citadel","Service A Ending Group");
-            to_service_a.send(send_group_create_payload).unwrap();
-            let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
-
-            if let InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess {
+            to_service_a.send(service_a_outbound).unwrap();
+            for _ in 0..4 {
+                // Receive the four MemberStateChanged Responses that are not needed here
+                let _ = from_service_a.recv().await.unwrap();
+            }
+            let service_a_inbound = from_service_a.recv().await.unwrap();
+            if let InternalServiceResponse::GroupEndSuccess(GroupEndSuccess {
                 cid: _,
-                group_key,
+                group_key: _,
                 request_id: _,
-            }) = &deserialized_service_a_payload_response
+            }) = &service_a_inbound
             {
-                info!(target: "citadel","Service A Successfully Ended Group");
+                let service_a_inbound = from_service_a.recv().await.unwrap();
+                if let InternalServiceResponse::GroupEnded(GroupEnded {
+                    cid: _,
+                    group_key: ended_group,
+                    success,
+                    request_id: _,
+                }) = &service_a_inbound
+                {
+                    assert_eq!(ended_group, group_key);
+                    assert!(success);
+                    info!(target: "citadel","Service A Successfully Ended Group");
+                } else {
+                    info!(target: "citadel", "Service A Waiting GroupEndSuccess and Received {service_a_inbound:?}");
+                }
             } else {
-                panic!("Service A Panicked while ending group")
+                info!(target: "citadel", "Service A Waiting For GroupEnded Confirmation - Received {service_a_inbound:?}");
             }
         } else {
             panic! {"Group Creation Error: Service A did not receive success response"};

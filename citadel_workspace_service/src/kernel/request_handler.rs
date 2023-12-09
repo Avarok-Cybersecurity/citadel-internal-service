@@ -6,28 +6,11 @@ use async_recursion::async_recursion;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{
-    AccountInformation, Accounts, ConnectionFailure, DeleteVirtualFileFailure,
-    DeleteVirtualFileSuccess, DisconnectFailure, Disconnected, DownloadFileFailure,
-    DownloadFileSuccess, FileTransferStatus, GetSessions, GroupCreateFailure, GroupCreateSuccess,
-    GroupEndFailure, GroupEndSuccess, GroupInviteFailure, GroupInviteSuccess,
-    GroupJoinRequestReceived, GroupKickFailure, GroupKickSuccess, GroupLeaveFailure,
-    GroupLeaveSuccess, GroupListGroupsForFailure, GroupListGroupsForSuccess, GroupMessageFailure,
-    GroupMessageReceived, GroupMessageSuccess, GroupRequestJoinFailure, GroupRequestJoinSuccess,
-    GroupRespondInviteRequestFailure, GroupRespondInviteRequestSuccess, InternalServiceRequest,
-    InternalServiceResponse, ListAllPeers, ListAllPeersFailure, ListRegisteredPeers,
-    ListRegisteredPeersFailure, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
-    LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
-    LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
-    MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
-    PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
-    PeerSessionInformation, SendFileFailure, SendFileRequestSent, SessionInformation,
-};
+use citadel_workspace_types::*;
 use futures::StreamExt;
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::Arc;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
 
 use uuid::Uuid;
@@ -1360,38 +1343,35 @@ pub async fn handle_request(
             {
                 Ok(group_channel) => {
                     //Store the group connection in map
-                    let group_key = group_channel.key();
+                    let key = group_channel.key();
+                    let group_cid = group_channel.cid();
+                    let (tx, rx) = group_channel.split();
                     match server_connection_map.lock().await.get_mut(&cid) {
                         Some(conn) => {
                             conn.add_group_channel(
-                                group_key,
+                                key,
                                 GroupConnection {
-                                    channel: group_channel,
+                                    key,
+                                    cid: group_cid,
+                                    tx,
                                 },
                             );
 
-                            // TODO: Successfully spawn group_channel receiver
-
-                            // let uuid = conn.associated_tcp_connection;
-                            //
-                            // if let Some(group_broadcast_handler) = spawn_group_channel_receiver(
-                            //     group_key,
-                            //     cid,
-                            //     uuid,
-                            //     group_channel,
-                            //     tcp_connection_map.clone(),
-                            // )
-                            // .await
-                            // {
-                            //     tokio::task::spawn(group_broadcast_handler);
-                            // }
+                            let uuid = conn.associated_tcp_connection;
+                            spawn_group_channel_receiver(
+                                key,
+                                cid,
+                                uuid,
+                                rx,
+                                tcp_connection_map.clone(),
+                            );
 
                             // Relay success to TCP client
                             send_response_to_tcp_client(
                                 tcp_connection_map,
                                 InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess {
                                     cid,
-                                    group_key,
+                                    group_key: key,
                                     request_id: Some(request_id),
                                 }),
                                 uuid,
@@ -1428,7 +1408,7 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.channel.leave().await {
+                    match group_connection.tx.leave().await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1489,7 +1469,7 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.channel.end().await {
+                    match group_connection.tx.end().await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1551,7 +1531,7 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.channel.send_message(message.into()).await {
+                    match group_connection.tx.send_message(message.into()).await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1613,7 +1593,7 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.channel.invite(peer_cid).await {
+                    match group_connection.tx.invite(peer_cid).await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1675,7 +1655,7 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.channel.kick(peer_cid).await {
+                    match group_connection.tx.kick(peer_cid).await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1837,20 +1817,27 @@ pub async fn handle_request(
             }
         }
 
-        InternalServiceRequest::GroupRespondInviteRequest {
+        InternalServiceRequest::GroupRespondRequest {
             cid,
             peer_cid,
             group_key,
             response,
             request_id,
+            invitation,
         } => {
             let group_request = if response {
-                GroupBroadcast::AcceptMembership { key: group_key }
+                GroupBroadcast::AcceptMembership {
+                    target: if invitation { cid } else { peer_cid },
+                    key: group_key,
+                }
             } else {
-                GroupBroadcast::DeclineMembership { key: group_key }
+                GroupBroadcast::DeclineMembership {
+                    target: if invitation { cid } else { peer_cid },
+                    key: group_key,
+                }
             };
             let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
-                implicated_cid: cid,
+                implicated_cid: cid, //if invitation { cid } else { peer_cid },
                 command: group_request,
             });
             let mut server_connection_map = server_connection_map.lock().await;
@@ -1870,10 +1857,27 @@ pub async fn handle_request(
                                         ticket: _,
                                         channel,
                                     }) => {
+                                        let key = channel.key();
+                                        let group_cid = channel.cid();
+                                        let (tx, rx) = channel.split();
                                         connection.add_group_channel(
-                                            channel.key(),
-                                            GroupConnection { channel },
+                                            key,
+                                            GroupConnection {
+                                                key,
+                                                tx,
+                                                cid: group_cid,
+                                            },
                                         );
+
+                                        let uuid = connection.associated_tcp_connection;
+                                        spawn_group_channel_receiver(
+                                            key,
+                                            cid,
+                                            uuid,
+                                            rx,
+                                            tcp_connection_map.clone(),
+                                        );
+
                                         result = true;
                                         break;
                                     }
@@ -1884,9 +1888,10 @@ pub async fn handle_request(
                                             GroupBroadcast::AcceptMembershipResponse { key: _, success },
                                     }) => {
                                         result = success;
-                                        if !result {
-                                            break;
-                                        }
+                                        // if !result {
+                                        //     break;
+                                        // }
+                                        break;
                                     }
                                     NodeResult::GroupEvent(GroupEvent {
                                         implicated_cid: _,
@@ -1900,18 +1905,15 @@ pub async fn handle_request(
                                         result = success;
                                         break;
                                     }
-                                    _ => {
-                                        result = false;
-                                        break;
-                                    }
+                                    _ => {}
                                 };
                             }
                             match result {
                                 true => {
                                     send_response_to_tcp_client(
                                         tcp_connection_map,
-                                        InternalServiceResponse::GroupRespondInviteRequestSuccess(
-                                            GroupRespondInviteRequestSuccess {
+                                        InternalServiceResponse::GroupRespondRequestSuccess(
+                                            GroupRespondRequestSuccess {
                                                 cid,
                                                 group_key,
                                                 request_id: Some(request_id),
@@ -1924,8 +1926,8 @@ pub async fn handle_request(
                                 false => {
                                     send_response_to_tcp_client(
                                         tcp_connection_map,
-                                        InternalServiceResponse::GroupRespondInviteRequestFailure(
-                                            GroupRespondInviteRequestFailure {
+                                        InternalServiceResponse::GroupRespondRequestFailure(
+                                            GroupRespondRequestFailure {
                                                 cid,
                                                 message: "Group Invite Response Failed."
                                                     .to_string(),
@@ -1941,8 +1943,8 @@ pub async fn handle_request(
                         Err(err) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::GroupRespondInviteRequestFailure(
-                                    GroupRespondInviteRequestFailure {
+                                InternalServiceResponse::GroupRespondRequestFailure(
+                                    GroupRespondRequestFailure {
                                         cid,
                                         message: err.to_string(),
                                         request_id: Some(request_id),
@@ -1988,6 +1990,7 @@ pub async fn handle_request(
                                     event:
                                         GroupBroadcast::RequestJoinPending {
                                             result: signal_result,
+                                            key: _key,
                                         },
                                 }) = evt
                                 {
@@ -2283,51 +2286,94 @@ async fn backend_handler_clear_all(
     }
 }
 
-async fn spawn_group_channel_receiver(
+pub(crate) fn spawn_group_channel_receiver(
     group_key: MessageGroupKey,
     implicated_cid: u64,
     uuid: Uuid,
-    mut group_channel: GroupChannel,
+    mut rx: GroupChannelRecvHalf,
     tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
-) -> Option<impl Future<Output = ()>> {
+) {
+    //-> Option<impl Future<Output = ()>>
     // TODO: Successfully create group channel receiver
 
     // Handler/Receiver for Group Channel Broadcasts that aren't handled in on_node_event_received in Kernel
     let group_channel_receiver = async move {
-        while let Some(inbound_group_broadcast) = group_channel.recv().await {
+        while let Some(inbound_group_broadcast) = rx.next().await {
             // Gets UnboundedSender to the TCP client to forward Broadcasts
             match tcp_connection_map.lock().await.get(&uuid) {
                 Some(entry) => {
-                    let mut message: Option<InternalServiceResponse> = None;
-                    match inbound_group_broadcast {
-                        GroupBroadcastPayload::Message { payload, sender } => {
-                            message = Some(InternalServiceResponse::GroupMessageReceived(
-                                GroupMessageReceived {
-                                    cid: implicated_cid,
-                                    peer_cid: sender,
-                                    message: payload.into_buffer().into(),
-                                    group_key,
-                                    request_id: None,
-                                },
-                            ));
-                        }
-                        GroupBroadcastPayload::Event { payload } => {
-                            if let GroupBroadcast::RequestJoin { sender, key: _ } = payload {
-                                message = Some(InternalServiceResponse::GroupJoinRequestReceived(
+                    info!(target:"citadel", "User {implicated_cid:?} Received Group Broadcast: {inbound_group_broadcast:?}");
+                    let message = match inbound_group_broadcast {
+                        GroupBroadcastPayload::Message { payload, sender } => Some(
+                            InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
+                                cid: implicated_cid,
+                                peer_cid: sender,
+                                message: payload.into_buffer().into(),
+                                group_key,
+                                request_id: None,
+                            }),
+                        ),
+                        GroupBroadcastPayload::Event { payload } => match payload {
+                            GroupBroadcast::RequestJoin { sender, key: _ } => {
+                                Some(InternalServiceResponse::GroupJoinRequestReceived(
                                     GroupJoinRequestReceived {
                                         cid: implicated_cid,
                                         peer_cid: sender,
                                         group_key,
                                         request_id: None,
                                     },
-                                ));
+                                ))
                             }
-                        }
-                    }
+                            GroupBroadcast::MemberStateChanged { key: _, state } => {
+                                Some(InternalServiceResponse::GroupMemberStateChanged(
+                                    GroupMemberStateChanged {
+                                        cid: implicated_cid,
+                                        group_key,
+                                        state,
+                                        request_id: None,
+                                    },
+                                ))
+                            }
+                            GroupBroadcast::EndResponse { key, success } => {
+                                Some(InternalServiceResponse::GroupEnded(GroupEnded {
+                                    cid: implicated_cid,
+                                    group_key: key,
+                                    success,
+                                    request_id: None,
+                                }))
+                            }
+                            GroupBroadcast::Disconnected { key } => Some(
+                                InternalServiceResponse::GroupDisconnected(GroupDisconnected {
+                                    cid: implicated_cid,
+                                    group_key: key,
+                                    request_id: None,
+                                }),
+                            ),
+
+                            // GroupBroadcast::Create { .. } => {},
+                            // GroupBroadcast::LeaveRoom { .. } => {},
+                            // GroupBroadcast::End { .. } => {},
+                            // GroupBroadcast::MessageResponse { .. } => {},
+                            // GroupBroadcast::Add { .. } => {},
+                            // GroupBroadcast::AddResponse { .. } => {},
+                            // GroupBroadcast::AcceptMembership { .. } => {},
+                            // GroupBroadcast::DeclineMembership { .. } => {},
+                            // GroupBroadcast::AcceptMembershipResponse { .. } => {},
+                            // GroupBroadcast::DeclineMembershipResponse { .. } => {},
+                            // GroupBroadcast::Kick { .. } => {},
+                            // GroupBroadcast::KickResponse { .. } => {},
+                            // GroupBroadcast::ListGroupsFor { .. } => {},
+                            // GroupBroadcast::ListResponse { .. } => {},
+                            // GroupBroadcast::Invitation { .. } => {},
+                            // GroupBroadcast::CreateResponse { .. } => {},
+                            // GroupBroadcast::RequestJoinPending { .. } => {},
+                            _ => None,
+                        },
+                    };
 
                     // Forward Group Broadcast to TCP Client if it was one of the handled broadcasts
                     if let Some(message) = message {
-                        if let Err(err) = entry.send(message.clone()) {
+                        if let Err(err) = entry.send(message) {
                             info!(target: "citadel", "Group Channel Forward To TCP Client Failed: {err:?}");
                         }
                     }
@@ -2340,7 +2386,7 @@ async fn spawn_group_channel_receiver(
     };
 
     // Spawns the above Handler for Group Channel Broadcasts not handled in Node Events
-    //tokio::task::spawn(group_channel_receiver);
-    Some(group_channel_receiver)
+    tokio::task::spawn(group_channel_receiver);
+    //Some(group_channel_receiver)
     //None
 }

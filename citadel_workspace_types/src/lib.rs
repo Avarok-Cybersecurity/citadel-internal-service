@@ -219,6 +219,23 @@ pub struct GroupEndFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupEnded {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub success: bool,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupLeft {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub success: bool,
+    pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GroupMessageReceived {
     pub cid: u64,
     pub peer_cid: u64,
@@ -272,16 +289,39 @@ pub struct GroupInviteFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupRespondInviteRequestSuccess {
+pub struct GroupRespondRequestSuccess {
     pub cid: u64,
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupRespondInviteRequestFailure {
+pub struct GroupRespondRequestFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupMembershipResponse {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub success: bool,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupRequestJoinPending {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub result: Result<(), String>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupDisconnected {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
 
@@ -531,8 +571,10 @@ pub enum InternalServiceResponse {
     GroupCreateFailure(GroupCreateFailure),
     GroupLeaveSuccess(GroupLeaveSuccess),
     GroupLeaveFailure(GroupLeaveFailure),
+    GroupLeft(GroupLeft),
     GroupEndSuccess(GroupEndSuccess),
     GroupEndFailure(GroupEndFailure),
+    GroupEnded(GroupEnded),
     GroupMessageReceived(GroupMessageReceived),
     GroupMessageResponse(GroupMessageResponse),
     GroupMessageSuccess(GroupMessageSuccess),
@@ -540,8 +582,11 @@ pub enum InternalServiceResponse {
     GroupInvitation(GroupInvitation),
     GroupInviteSuccess(GroupInviteSuccess),
     GroupInviteFailure(GroupInviteFailure),
-    GroupRespondInviteRequestSuccess(GroupRespondInviteRequestSuccess),
-    GroupRespondInviteRequestFailure(GroupRespondInviteRequestFailure),
+    GroupRespondRequestSuccess(GroupRespondRequestSuccess),
+    GroupRespondRequestFailure(GroupRespondRequestFailure),
+    GroupMembershipResponse(GroupMembershipResponse),
+    GroupRequestJoinPending(GroupRequestJoinPending),
+    GroupDisconnected(GroupDisconnected),
     GroupKickSuccess(GroupKickSuccess),
     GroupKickFailure(GroupKickFailure),
     GroupListGroupsForSuccess(GroupListGroupsForSuccess),
@@ -725,12 +770,13 @@ pub enum InternalServiceRequest {
         group_key: MessageGroupKey,
         request_id: Uuid,
     },
-    GroupRespondInviteRequest {
+    GroupRespondRequest {
         cid: u64,
         peer_cid: u64,
         group_key: MessageGroupKey,
         response: bool,
         request_id: Uuid,
+        invitation: bool,
     },
     GroupKick {
         cid: u64,

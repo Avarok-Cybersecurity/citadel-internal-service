@@ -57,7 +57,10 @@ struct PeerConnection {
 
 #[allow(dead_code)]
 pub struct GroupConnection {
-    channel: GroupChannel,
+    //channel: GroupChannel,
+    key: MessageGroupKey,
+    tx: GroupChannelSendHalf,
+    cid: u64,
 }
 
 impl Connection {
@@ -366,16 +369,30 @@ impl NetKernel for CitadelWorkspaceService {
             NodeResult::GroupChannelCreated(group_channel_created) => {
                 let channel = group_channel_created.channel;
                 let cid = channel.cid();
-                let group_key = channel.key();
+                let key = channel.key();
+                let (tx, rx) = channel.split();
+
+                // TODO: Add handler for RX
+
                 let mut server_connection_map = self.server_connection_map.lock().await;
                 if let Some(connection) = server_connection_map.get_mut(&cid) {
-                    connection.add_group_channel(group_key, GroupConnection { channel });
+                    connection.add_group_channel(key, GroupConnection { key, tx, cid });
+
+                    let uuid = connection.associated_tcp_connection;
+                    request_handler::spawn_group_channel_receiver(
+                        key,
+                        cid,
+                        uuid,
+                        rx,
+                        self.tcp_connection_map.clone(),
+                    );
+
                     send_response_to_tcp_client(
                         &self.tcp_connection_map,
                         InternalServiceResponse::GroupChannelCreateSuccess(
                             GroupChannelCreateSuccess {
                                 cid,
-                                group_key,
+                                group_key: key,
                                 request_id: None,
                             },
                         ),
@@ -576,13 +593,7 @@ async fn handle_group_broadcast(
                     })
                 }),
 
-            GroupBroadcast::AcceptMembership { key: group_key } => Some(
-                InternalServiceResponse::GroupRequestJoinAccepted(GroupRequestJoinAccepted {
-                    cid: implicated_cid,
-                    group_key,
-                    request_id: None,
-                }),
-            ),
+            GroupBroadcast::AcceptMembership { target: _, key: _ } => None,
 
             GroupBroadcast::Message {
                 sender: peer_cid,
@@ -619,40 +630,73 @@ async fn handle_group_broadcast(
             GroupBroadcast::MemberStateChanged {
                 key: group_key,
                 state,
-            } => connection
+            } => Some(InternalServiceResponse::GroupMemberStateChanged(
+                GroupMemberStateChanged {
+                    cid: implicated_cid,
+                    group_key,
+                    state,
+                    request_id: None,
+                },
+            )),
+            // connection
+            // .groups
+            // .get_mut(&group_key)
+            // .map(|_group_connection| {
+            //      InternalServiceResponse::GroupMemberStateChanged(GroupMemberStateChanged {
+            //                                                           cid: implicated_cid,
+            //                                                           group_key,
+            //                                                           state,
+            //                                                           request_id: None,
+            //                                                       })
+            //      }),
+            GroupBroadcast::LeaveRoomResponse {
+                key: group_key,
+                success,
+                message,
+            } => Some(InternalServiceResponse::GroupLeft(GroupLeft {
+                cid: implicated_cid,
+                group_key,
+                success,
+                message,
+                request_id: None,
+            })),
+
+            GroupBroadcast::EndResponse {
+                key: group_key,
+                success,
+            } => Some(InternalServiceResponse::GroupEnded(GroupEnded {
+                cid: implicated_cid,
+                group_key,
+                success,
+                request_id: None,
+            })),
+
+            GroupBroadcast::Disconnected { key: group_key } => connection
                 .groups
                 .get_mut(&group_key)
                 .map(|_group_connection| {
-                    InternalServiceResponse::GroupMemberStateChanged(GroupMemberStateChanged {
+                    InternalServiceResponse::GroupDisconnected(GroupDisconnected {
                         cid: implicated_cid,
                         group_key,
-                        state,
                         request_id: None,
                     })
                 }),
-
-            GroupBroadcast::LeaveRoomResponse {
-                key: _group_key,
-                success: _success,
-                message: _message,
-            } => None,
-
-            GroupBroadcast::EndResponse {
-                key: _group_key,
-                success: _success,
-            } => None,
-
-            GroupBroadcast::Disconnected { key: _group_key } => None,
 
             GroupBroadcast::AddResponse {
                 key: _group_key,
                 failed_to_invite_list: _failed_to_invite_list,
             } => None,
 
-            GroupBroadcast::AcceptMembershipResponse {
-                key: _group_key,
-                success: _success,
-            } => None,
+            GroupBroadcast::AcceptMembershipResponse { key, success } => {
+                connection.groups.get_mut(&key).map(|_group_connection| {
+                    InternalServiceResponse::GroupMembershipResponse(GroupMembershipResponse {
+                        cid: implicated_cid,
+                        group_key: key,
+                        success,
+                        request_id: None,
+                    })
+                })
+            }
 
             GroupBroadcast::KickResponse {
                 key: _group_key,
@@ -667,7 +711,14 @@ async fn handle_group_broadcast(
 
             GroupBroadcast::GroupNonExists { key: _group_key } => None,
 
-            GroupBroadcast::RequestJoinPending { result: _result } => None,
+            GroupBroadcast::RequestJoinPending { result, key } => Some(
+                InternalServiceResponse::GroupRequestJoinPending(GroupRequestJoinPending {
+                    cid: implicated_cid,
+                    group_key: key,
+                    result,
+                    request_id: None,
+                }),
+            ),
 
             _ => None,
         };
