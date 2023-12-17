@@ -947,6 +947,15 @@ mod tests {
             }) = &service_b_inbound
             {
                 assert_eq!(group_key, disconnected_group);
+            } else if let InternalServiceResponse::GroupLeft(GroupLeft {
+                cid: _,
+                group_key: group_left,
+                success: _,
+                message: _,
+                request_id: _,
+            }) = &service_b_inbound
+            {
+                assert_eq!(group_key, group_left);
             } else {
                 panic! {"Service B did not received expected kick notification - instead received {service_b_inbound:?}"};
             }
@@ -962,6 +971,15 @@ mod tests {
             }) = &service_c_inbound
             {
                 assert_eq!(group_key, disconnected_group);
+            } else if let InternalServiceResponse::GroupLeft(GroupLeft {
+                cid: _,
+                group_key: group_left,
+                success: _,
+                message: _,
+                request_id: _,
+            }) = &service_c_inbound
+            {
+                assert_eq!(group_key, group_left);
             } else {
                 panic! {"Service C did not received expected kick notification - instead received {service_c_inbound:?}"};
             }
