@@ -1849,64 +1849,73 @@ pub async fn handle_request(
                         .await
                     {
                         Ok(mut subscription) => {
+                            // TODO: RequestJoin doesn't get an AcceptMembershipResponse as expected from callback subscription - instead in GroupChannel
                             let mut result = false;
-                            while let Some(evt) = subscription.next().await {
-                                match evt {
-                                    // When accepting an invite, we expect a GroupChannelCreated in response
-                                    NodeResult::GroupChannelCreated(GroupChannelCreated {
-                                        ticket: _,
-                                        channel,
-                                    }) => {
-                                        let key = channel.key();
-                                        let group_cid = channel.cid();
-                                        let (tx, rx) = channel.split();
-                                        connection.add_group_channel(
-                                            key,
-                                            GroupConnection {
+                            if invitation {
+                                while let Some(evt) = subscription.next().await {
+                                    match evt {
+                                        // When accepting an invite, we expect a GroupChannelCreated in response
+                                        NodeResult::GroupChannelCreated(GroupChannelCreated {
+                                            ticket: _,
+                                            channel,
+                                        }) => {
+                                            let key = channel.key();
+                                            let group_cid = channel.cid();
+                                            let (tx, rx) = channel.split();
+                                            connection.add_group_channel(
                                                 key,
-                                                tx,
-                                                cid: group_cid,
-                                            },
-                                        );
+                                                GroupConnection {
+                                                    key,
+                                                    tx,
+                                                    cid: group_cid,
+                                                },
+                                            );
 
-                                        let uuid = connection.associated_tcp_connection;
-                                        spawn_group_channel_receiver(
-                                            key,
-                                            cid,
-                                            uuid,
-                                            rx,
-                                            tcp_connection_map.clone(),
-                                        );
+                                            let uuid = connection.associated_tcp_connection;
+                                            spawn_group_channel_receiver(
+                                                key,
+                                                cid,
+                                                uuid,
+                                                rx,
+                                                tcp_connection_map.clone(),
+                                            );
 
-                                        result = true;
-                                        break;
-                                    }
-                                    NodeResult::GroupEvent(GroupEvent {
-                                        implicated_cid: _,
-                                        ticket: _,
-                                        event:
-                                            GroupBroadcast::AcceptMembershipResponse { key: _, success },
-                                    }) => {
-                                        result = success;
-                                        // if !result {
-                                        //     break;
-                                        // }
-                                        break;
-                                    }
-                                    NodeResult::GroupEvent(GroupEvent {
-                                        implicated_cid: _,
-                                        ticket: _,
-                                        event:
-                                            GroupBroadcast::DeclineMembershipResponse {
-                                                key: _,
-                                                success,
-                                            },
-                                    }) => {
-                                        result = success;
-                                        break;
-                                    }
-                                    _ => {}
-                                };
+                                            result = true;
+                                            break;
+                                        }
+                                        NodeResult::GroupEvent(GroupEvent {
+                                            implicated_cid: _,
+                                            ticket: _,
+                                            event:
+                                                GroupBroadcast::AcceptMembershipResponse {
+                                                    key: _,
+                                                    success,
+                                                },
+                                        }) => {
+                                            result = success;
+                                            // if !result {
+                                            //     break;
+                                            // }
+                                            break;
+                                        }
+                                        NodeResult::GroupEvent(GroupEvent {
+                                            implicated_cid: _,
+                                            ticket: _,
+                                            event:
+                                                GroupBroadcast::DeclineMembershipResponse {
+                                                    key: _,
+                                                    success,
+                                                },
+                                        }) => {
+                                            result = success;
+                                            break;
+                                        }
+                                        _ => {}
+                                    };
+                                }
+                            } else {
+                                // For now we return a Success response - we did, in fact, receive the KernelStreamSubscription
+                                result = true;
                             }
                             match result {
                                 true => {
@@ -2293,9 +2302,6 @@ pub(crate) fn spawn_group_channel_receiver(
     mut rx: GroupChannelRecvHalf,
     tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
-    //-> Option<impl Future<Output = ()>>
-    // TODO: Successfully create group channel receiver
-
     // Handler/Receiver for Group Channel Broadcasts that aren't handled in on_node_event_received in Kernel
     let group_channel_receiver = async move {
         while let Some(inbound_group_broadcast) = rx.next().await {
@@ -2349,11 +2355,19 @@ pub(crate) fn spawn_group_channel_receiver(
                                     request_id: None,
                                 }),
                             ),
-
+                            GroupBroadcast::MessageResponse { key, success } => {
+                                Some(InternalServiceResponse::GroupMessageResponse(
+                                    GroupMessageResponse {
+                                        cid: implicated_cid,
+                                        group_key: key,
+                                        success,
+                                        request_id: None,
+                                    },
+                                ))
+                            }
                             // GroupBroadcast::Create { .. } => {},
                             // GroupBroadcast::LeaveRoom { .. } => {},
                             // GroupBroadcast::End { .. } => {},
-                            // GroupBroadcast::MessageResponse { .. } => {},
                             // GroupBroadcast::Add { .. } => {},
                             // GroupBroadcast::AddResponse { .. } => {},
                             // GroupBroadcast::AcceptMembership { .. } => {},
@@ -2387,6 +2401,4 @@ pub(crate) fn spawn_group_channel_receiver(
 
     // Spawns the above Handler for Group Channel Broadcasts not handled in Node Events
     tokio::task::spawn(group_channel_receiver);
-    //Some(group_channel_receiver)
-    //None
 }

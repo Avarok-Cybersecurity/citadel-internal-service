@@ -377,6 +377,13 @@ pub struct GroupRequestJoinAccepted {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupRequestDeclined {
+    pub cid: u64,
+    pub group_key: MessageGroupKey,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GroupRequestJoinSuccess {
     pub cid: u64,
     pub group_key: MessageGroupKey,
@@ -594,6 +601,7 @@ pub enum InternalServiceResponse {
     GroupListGroupsResponse(GroupListGroupsResponse),
     GroupJoinRequestReceived(GroupJoinRequestReceived),
     GroupRequestJoinAccepted(GroupRequestJoinAccepted),
+    GroupRequestDeclined(GroupRequestDeclined),
     GroupRequestJoinSuccess(GroupRequestJoinSuccess),
     GroupMemberStateChanged(GroupMemberStateChanged),
     GroupRequestJoinFailure(GroupRequestJoinFailure),

@@ -595,6 +595,14 @@ async fn handle_group_broadcast(
 
             GroupBroadcast::AcceptMembership { target: _, key: _ } => None,
 
+            GroupBroadcast::DeclineMembership { target: _, key } => Some(
+                InternalServiceResponse::GroupRequestDeclined(GroupRequestDeclined {
+                    cid: implicated_cid,
+                    group_key: key,
+                    request_id: None,
+                }),
+            ),
+
             GroupBroadcast::Message {
                 sender: peer_cid,
                 key: group_key,
@@ -638,17 +646,7 @@ async fn handle_group_broadcast(
                     request_id: None,
                 },
             )),
-            // connection
-            // .groups
-            // .get_mut(&group_key)
-            // .map(|_group_connection| {
-            //      InternalServiceResponse::GroupMemberStateChanged(GroupMemberStateChanged {
-            //                                                           cid: implicated_cid,
-            //                                                           group_key,
-            //                                                           state,
-            //                                                           request_id: None,
-            //                                                       })
-            //      }),
+
             GroupBroadcast::LeaveRoomResponse {
                 key: group_key,
                 success,
