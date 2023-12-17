@@ -266,6 +266,8 @@ mod tests {
                 panic!("Service A Panicked When looking for Group Invite Response for Service B");
             }
 
+            let _ = from_service_a.recv().await.unwrap(); // Receive unnecessary MemberStateChanged
+
             // Invite Service C and Decline it
             let send_group_payload = InternalServiceRequest::GroupInvite {
                 cid: *cid_a,
@@ -274,7 +276,6 @@ mod tests {
                 request_id: Uuid::new_v4(),
             };
             to_service_a.send(send_group_payload).unwrap();
-            let _ = from_service_a.recv().await.unwrap(); // Receive unnecessary MemberStateChanged
             let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
             if let InternalServiceResponse::GroupInviteSuccess(GroupInviteSuccess { .. }) =
                 &deserialized_service_a_payload_response
@@ -874,6 +875,9 @@ mod tests {
                 panic!("Service C Invitation Not Received");
             }
 
+            let _ = from_service_a.recv().await.unwrap(); // Receive unnecessary MemberStateChanged
+            let _ = from_service_a.recv().await.unwrap(); // responses from Service B and C joining
+
             // Service A Kicks the other group members
             let service_a_outbound = InternalServiceRequest::GroupKick {
                 cid: *cid_a,
@@ -883,8 +887,6 @@ mod tests {
             };
             to_service_a.send(service_a_outbound).unwrap();
 
-            let _ = from_service_a.recv().await.unwrap(); // Receive unnecessary MemberStateChanged
-            let _ = from_service_a.recv().await.unwrap(); // responses from Service B and C joining
             let service_a_inbound = from_service_a.recv().await.unwrap();
             if let InternalServiceResponse::GroupKickSuccess(GroupKickSuccess {
                 cid,
