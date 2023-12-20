@@ -57,7 +57,6 @@ struct PeerConnection {
 
 #[allow(dead_code)]
 pub struct GroupConnection {
-    //channel: GroupChannel,
     key: MessageGroupKey,
     tx: GroupChannelSendHalf,
     cid: u64,
@@ -124,23 +123,6 @@ impl Connection {
     ) {
         self.groups.insert(group_key, group_channel);
     }
-
-    // fn clear_group_connection(&mut self, group_key: MessageGroupKey) -> Option<GroupConnection> {
-    //     self.groups.remove(&group_key)
-    // }
-
-    // fn remove_object_transfer_handler(&mut self, peer_cid: u64, object_id: u32) -> Option<Option<ObjectTransferHandler>> {
-    //     if self.implicated_cid() == peer_cid {
-    //         // C2S
-    //         self.c2s_file_transfer_handlers.remove(&object_id)
-    //     } else {
-    //         // P2P
-    //         if let Some(peer_connection) = self.peers.get_mut(&peer_cid) {
-    //             peer_connection.handler_map.remove(&object_id)
-    //         }
-    //         else{None}
-    //     }
-    // }
 
     fn take_file_transfer_handle(
         &mut self,
@@ -371,8 +353,6 @@ impl NetKernel for CitadelWorkspaceService {
                 let cid = channel.cid();
                 let key = channel.key();
                 let (tx, rx) = channel.split();
-
-                // TODO: Add handler for RX
 
                 let mut server_connection_map = self.server_connection_map.lock().await;
                 if let Some(connection) = server_connection_map.get_mut(&cid) {
@@ -614,7 +594,7 @@ async fn handle_group_broadcast(
                     InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
                         cid: implicated_cid,
                         peer_cid,
-                        message: message.into_buffer().into(),
+                        message: message.into_buffer(),
                         group_key,
                         request_id: None,
                     })

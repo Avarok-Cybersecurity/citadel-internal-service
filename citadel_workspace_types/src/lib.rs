@@ -239,7 +239,7 @@ pub struct GroupLeft {
 pub struct GroupMessageReceived {
     pub cid: u64,
     pub peer_cid: u64,
-    pub message: Vec<u8>,
+    pub message: BytesMut,
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
@@ -768,7 +768,7 @@ pub enum InternalServiceRequest {
     },
     GroupMessage {
         cid: u64,
-        message: Vec<u8>,
+        message: BytesMut,
         group_key: MessageGroupKey,
         request_id: Uuid,
     },

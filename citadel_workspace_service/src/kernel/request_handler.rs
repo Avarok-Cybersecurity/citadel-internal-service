@@ -3,6 +3,7 @@ use crate::kernel::{
     GroupConnection,
 };
 use async_recursion::async_recursion;
+use citadel_logging::tracing::log;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
@@ -1342,7 +1343,7 @@ pub async fn handle_request(
                 .await
             {
                 Ok(group_channel) => {
-                    //Store the group connection in map
+                    // Store the group connection in map
                     let key = group_channel.key();
                     let group_cid = group_channel.cid();
                     let (tx, rx) = group_channel.split();
@@ -1408,7 +1409,8 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.tx.leave().await {
+                    let group_sender = group_connection.tx.clone();
+                    match group_sender.leave().await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1469,7 +1471,8 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.tx.end().await {
+                    let group_sender = group_connection.tx.clone();
+                    match group_sender.end().await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1531,7 +1534,8 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.tx.send_message(message.into()).await {
+                    let group_sender = group_connection.tx.clone();
+                    match group_sender.send_message(message.into()).await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1593,7 +1597,8 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.tx.invite(peer_cid).await {
+                    let group_sender = group_connection.tx.clone();
+                    match group_sender.invite(peer_cid).await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1655,7 +1660,8 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
-                    match group_connection.tx.kick(peer_cid).await {
+                    let group_sender = group_connection.tx.clone();
+                    match group_sender.kick(peer_cid).await {
                         Ok(_) => {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
@@ -1716,14 +1722,13 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
+                    let peer_remote = peer_connection.remote.clone();
                     let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
                         implicated_cid: cid,
                         command: GroupBroadcast::ListGroupsFor { cid: peer_cid },
                     });
-                    if let Ok(mut subscription) = peer_connection
-                        .remote
-                        .send_callback_subscription(request)
-                        .await
+                    if let Ok(mut subscription) =
+                        peer_remote.send_callback_subscription(request).await
                     {
                         if let Some(evt) = subscription.next().await {
                             if let NodeResult::GroupEvent(GroupEvent {
@@ -1843,13 +1848,9 @@ pub async fn handle_request(
             let mut server_connection_map = server_connection_map.lock().await;
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
-                    match peer_connection
-                        .remote
-                        .send_callback_subscription(request)
-                        .await
-                    {
+                    let peer_remote = peer_connection.remote.clone();
+                    match peer_remote.send_callback_subscription(request).await {
                         Ok(mut subscription) => {
-                            // TODO: RequestJoin doesn't get an AcceptMembershipResponse as expected from callback subscription - instead in GroupChannel
                             let mut result = false;
                             if invitation {
                                 while let Some(evt) = subscription.next().await {
@@ -1977,6 +1978,7 @@ pub async fn handle_request(
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 let target_cid = group_key.cid;
                 if let Some(peer_connection) = connection.peers.get_mut(&target_cid) {
+                    let peer_remote = peer_connection.remote.clone();
                     let group_request = GroupBroadcast::RequestJoin {
                         sender: cid,
                         key: group_key,
@@ -1985,11 +1987,7 @@ pub async fn handle_request(
                         implicated_cid: cid,
                         command: group_request,
                     });
-                    match peer_connection
-                        .remote
-                        .send_callback_subscription(request)
-                        .await
-                    {
+                    match peer_remote.send_callback_subscription(request).await {
                         Ok(mut subscription) => {
                             let mut result = Err("Group Request Join Failed".to_string());
                             while let Some(evt) = subscription.next().await {
@@ -2308,13 +2306,13 @@ pub(crate) fn spawn_group_channel_receiver(
             // Gets UnboundedSender to the TCP client to forward Broadcasts
             match tcp_connection_map.lock().await.get(&uuid) {
                 Some(entry) => {
-                    info!(target:"citadel", "User {implicated_cid:?} Received Group Broadcast: {inbound_group_broadcast:?}");
+                    log::trace!(target:"citadel", "User {implicated_cid:?} Received Group Broadcast: {inbound_group_broadcast:?}");
                     let message = match inbound_group_broadcast {
                         GroupBroadcastPayload::Message { payload, sender } => Some(
                             InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
                                 cid: implicated_cid,
                                 peer_cid: sender,
-                                message: payload.into_buffer().into(),
+                                message: payload.into_buffer(),
                                 group_key,
                                 request_id: None,
                             }),

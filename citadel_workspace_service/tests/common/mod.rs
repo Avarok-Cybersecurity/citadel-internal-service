@@ -37,6 +37,29 @@ pub struct RegisterAndConnectItems<T: Into<String>, R: Into<String>, S: Into<Sec
     pub password: S,
 }
 
+pub type PeerReturnHandle = (
+    UnboundedSender<InternalServiceRequest>,
+    UnboundedReceiver<InternalServiceResponse>,
+    u64,
+);
+
+pub trait PeerServiceHandles {
+    fn take_first_service_handle(&mut self) -> PeerReturnHandle;
+}
+
+impl PeerServiceHandles for Vec<PeerReturnHandle> {
+    fn take_first_service_handle(&mut self) -> PeerReturnHandle {
+        self.remove(0)
+    }
+}
+
+pub fn generic_error<T: ToString>(msg: T) -> Box<dyn Error> {
+    Box::new(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        msg.to_string(),
+    ))
+}
+
 pub async fn register_and_connect_to_server<
     T: Into<String>,
     R: Into<String>,
@@ -185,7 +208,6 @@ pub async fn register_and_connect_to_server_then_peers(
         let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
-            // .with_backend(BackendType::InMemory) We need a filesystem backend for this test
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)
             .unwrap();
@@ -338,19 +360,6 @@ pub async fn register_and_connect_to_server_then_peers(
         }
     }
     Ok(returned_service_info)
-}
-
-pub type PeerReturnHandle = (
-    UnboundedSender<InternalServiceRequest>,
-    UnboundedReceiver<InternalServiceResponse>,
-    u64,
-);
-
-pub fn generic_error<T: ToString>(msg: T) -> Box<dyn Error> {
-    Box::new(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        msg.to_string(),
-    ))
 }
 
 pub fn spawn_services(

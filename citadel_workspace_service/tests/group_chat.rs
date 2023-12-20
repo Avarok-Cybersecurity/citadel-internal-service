@@ -3,8 +3,9 @@ mod common;
 #[cfg(test)]
 mod tests {
     use crate::common::*;
+    use bytes::BytesMut;
     use citadel_logging::info;
-    use citadel_sdk::prelude::{MemberState, SyncIO, UserIdentifier};
+    use citadel_sdk::prelude::{MemberState, UserIdentifier};
     use citadel_workspace_types::{
         GroupCreateSuccess, GroupDisconnected, GroupEndSuccess, GroupEnded, GroupInvitation,
         GroupInviteSuccess, GroupJoinRequestReceived, GroupKickFailure, GroupKickSuccess,
@@ -34,19 +35,18 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (peer_two, peer_three) = peer_two.split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
-        let (to_service_c, from_service_c, cid_c) = peer_three.get_mut(0 as usize).unwrap();
+        let (to_service_a, mut from_service_a, cid_a) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_b, mut from_service_b, cid_b) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_c, mut from_service_c, cid_c) =
+            peer_return_handle_vec.take_first_service_handle();
 
         let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
-        initial_users_to_invite.push(UserIdentifier::from(*cid_b));
-        initial_users_to_invite.push(UserIdentifier::from(*cid_c));
+        initial_users_to_invite.push(UserIdentifier::from(cid_b));
+        initial_users_to_invite.push(UserIdentifier::from(cid_c));
         let send_group_create_payload = InternalServiceRequest::GroupCreate {
-            cid: *cid_a,
+            cid: cid_a,
             request_id: Uuid::new_v4(),
             initial_users_to_invite: Some(initial_users_to_invite),
         };
@@ -72,10 +72,10 @@ mod tests {
                 request_id: _,
             }) = &service_b_group_create_invite
             {
-                assert_eq!(peer_cid, cid_a);
+                assert_eq!(*peer_cid, cid_a);
                 assert_eq!(*group_key, owner_group_key.clone());
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
-                    cid: *cid_b,
+                    cid: cid_b,
                     peer_cid: *peer_cid,
                     group_key: *group_key,
                     response: false,
@@ -123,7 +123,7 @@ mod tests {
             {
                 assert_eq!(*group_key, owner_group_key.clone());
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
-                    cid: *cid_c,
+                    cid: cid_c,
                     peer_cid: *peer_cid,
                     group_key: *group_key,
                     response: true,
@@ -182,16 +182,15 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (peer_two, peer_three) = peer_two.split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
-        let (to_service_c, from_service_c, cid_c) = peer_three.get_mut(0 as usize).unwrap();
+        let (to_service_a, mut from_service_a, cid_a) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_b, mut from_service_b, cid_b) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_c, mut from_service_c, cid_c) =
+            peer_return_handle_vec.take_first_service_handle();
 
         let send_group_payload = InternalServiceRequest::GroupCreate {
-            cid: *cid_a,
+            cid: cid_a,
             request_id: Uuid::new_v4(),
             initial_users_to_invite: None,
         };
@@ -207,8 +206,8 @@ mod tests {
         {
             // Invite Service B and Accept it
             let send_group_payload = InternalServiceRequest::GroupInvite {
-                cid: *cid_a,
-                peer_cid: *cid_b,
+                cid: cid_a,
+                peer_cid: cid_b,
                 group_key: *group_key,
                 request_id: Uuid::new_v4(),
             };
@@ -228,7 +227,7 @@ mod tests {
                 }) = &service_b_group_inbound
                 {
                     let service_b_group_outbound = InternalServiceRequest::GroupRespondRequest {
-                        cid: *cid_b,
+                        cid: cid_b,
                         peer_cid: *peer_cid,
                         group_key: *group_key,
                         response: true,
@@ -270,8 +269,8 @@ mod tests {
 
             // Invite Service C and Decline it
             let send_group_payload = InternalServiceRequest::GroupInvite {
-                cid: *cid_a,
-                peer_cid: *cid_c,
+                cid: cid_a,
+                peer_cid: cid_c,
                 group_key: *group_key,
                 request_id: Uuid::new_v4(),
             };
@@ -291,7 +290,7 @@ mod tests {
                 }) = &service_c_group_inbound
                 {
                     let service_c_group_outbound = InternalServiceRequest::GroupRespondRequest {
-                        cid: *cid_c,
+                        cid: cid_c,
                         peer_cid: *peer_cid,
                         group_key: *group_key,
                         response: false,
@@ -352,16 +351,15 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (peer_two, peer_three) = peer_two.split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
-        let (to_service_c, from_service_c, cid_c) = peer_three.get_mut(0 as usize).unwrap();
+        let (to_service_a, mut from_service_a, cid_a) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_b, mut from_service_b, cid_b) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_c, mut from_service_c, cid_c) =
+            peer_return_handle_vec.take_first_service_handle();
 
         let send_group_payload = InternalServiceRequest::GroupCreate {
-            cid: *cid_a,
+            cid: cid_a,
             request_id: Uuid::new_v4(),
             initial_users_to_invite: None,
         };
@@ -374,8 +372,8 @@ mod tests {
         {
             // Service B Requests to Join and Service A Accepts
             let service_b_group_outbound = InternalServiceRequest::GroupListGroupsFor {
-                cid: *cid_b,
-                peer_cid: *cid_a,
+                cid: cid_b,
+                peer_cid: cid_a,
                 request_id: Uuid::new_v4(),
             };
             to_service_b.send(service_b_group_outbound).unwrap();
@@ -392,7 +390,7 @@ mod tests {
                 if let Some(&group_to_join) = group_list.clone().unwrap().first() {
                     info!(target: "citadel","Service B Found Group {group_to_join:?} for Service A");
                     let service_b_group_outbound = InternalServiceRequest::GroupRequestJoin {
-                        cid: *cid_b,
+                        cid: cid_b,
                         group_key: group_to_join,
                         request_id: Uuid::new_v4(),
                     };
@@ -432,8 +430,8 @@ mod tests {
                     {
                         let service_a_group_outbound =
                             InternalServiceRequest::GroupRespondRequest {
-                                cid: *cid_a,
-                                peer_cid: *cid_b,
+                                cid: cid_a,
+                                peer_cid: cid_b,
                                 group_key: *group_key,
                                 response: true,
                                 request_id: Uuid::new_v4(),
@@ -476,8 +474,8 @@ mod tests {
 
             // Service C Requests to Join and Service A Declines
             let service_c_group_outbound = InternalServiceRequest::GroupListGroupsFor {
-                cid: *cid_c,
-                peer_cid: *cid_a,
+                cid: cid_c,
+                peer_cid: cid_a,
                 request_id: Uuid::new_v4(),
             };
             to_service_c.send(service_c_group_outbound).unwrap();
@@ -494,7 +492,7 @@ mod tests {
                 if let Some(&group_to_join) = group_list.clone().unwrap().first() {
                     info!(target: "citadel","Service C Found Group {group_to_join:?} for Service A: {cid_a:?}");
                     let service_c_group_outbound = InternalServiceRequest::GroupRequestJoin {
-                        cid: *cid_c,
+                        cid: cid_c,
                         group_key: group_to_join,
                         request_id: Uuid::new_v4(),
                     };
@@ -522,7 +520,6 @@ mod tests {
                         panic!("Service C Group Request Join Failure: {message:?}");
                     }
 
-                    //let _ = from_service_a.recv().await.unwrap(); // Receive MemberStateChanged Response that isn't required here
                     let service_a_group_inbound = from_service_a.recv().await.unwrap();
                     if let InternalServiceResponse::GroupJoinRequestReceived(
                         GroupJoinRequestReceived {
@@ -535,8 +532,8 @@ mod tests {
                     {
                         let service_a_group_outbound =
                             InternalServiceRequest::GroupRespondRequest {
-                                cid: *cid_a,
-                                peer_cid: *cid_c,
+                                cid: cid_a,
+                                peer_cid: cid_c,
                                 group_key: *group_key,
                                 response: false,
                                 request_id: Uuid::new_v4(),
@@ -586,19 +583,18 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (peer_two, peer_three) = peer_two.split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
-        let (to_service_c, from_service_c, cid_c) = peer_three.get_mut(0 as usize).unwrap();
+        let (to_service_a, mut from_service_a, cid_a) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_b, mut from_service_b, cid_b) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_c, mut from_service_c, cid_c) =
+            peer_return_handle_vec.take_first_service_handle();
 
         let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
-        initial_users_to_invite.push(UserIdentifier::from(*cid_b));
-        initial_users_to_invite.push(UserIdentifier::from(*cid_c));
+        initial_users_to_invite.push(UserIdentifier::from(cid_b));
+        initial_users_to_invite.push(UserIdentifier::from(cid_c));
         let send_group_create_payload = InternalServiceRequest::GroupCreate {
-            cid: *cid_a,
+            cid: cid_a,
             request_id: Uuid::new_v4(),
             initial_users_to_invite: Some(initial_users_to_invite),
         };
@@ -624,10 +620,10 @@ mod tests {
                 request_id: _,
             }) = &service_b_group_create_invite
             {
-                assert_eq!(peer_cid, cid_a);
+                assert_eq!(*peer_cid, cid_a);
                 assert_eq!(*group_key, owner_group_key.clone());
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
-                    cid: *cid_b,
+                    cid: cid_b,
                     peer_cid: *peer_cid,
                     group_key: *group_key,
                     response: true,
@@ -674,7 +670,7 @@ mod tests {
             {
                 assert_eq!(*group_key, owner_group_key.clone());
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
-                    cid: *cid_c,
+                    cid: cid_c,
                     peer_cid: *peer_cid,
                     group_key: *group_key,
                     response: true,
@@ -711,7 +707,7 @@ mod tests {
 
             // Service C Leaves Group
             let service_c_outbound = InternalServiceRequest::GroupLeave {
-                cid: *cid_c,
+                cid: cid_c,
                 group_key: owner_group_key,
                 request_id: Uuid::new_v4(),
             };
@@ -742,7 +738,7 @@ mod tests {
 
             // Service A Ends Group
             let service_a_outbound = InternalServiceRequest::GroupEnd {
-                cid: *cid_a,
+                cid: cid_a,
                 group_key: owner_group_key,
                 request_id: Uuid::new_v4(),
             };
@@ -797,19 +793,18 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (peer_two, peer_three) = peer_two.split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
-        let (to_service_c, from_service_c, cid_c) = peer_three.get_mut(0 as usize).unwrap();
+        let (to_service_a, mut from_service_a, cid_a) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_b, mut from_service_b, cid_b) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_c, mut from_service_c, cid_c) =
+            peer_return_handle_vec.take_first_service_handle();
 
         let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
-        initial_users_to_invite.push(UserIdentifier::from(*cid_b));
-        initial_users_to_invite.push(UserIdentifier::from(*cid_c));
+        initial_users_to_invite.push(UserIdentifier::from(cid_b));
+        initial_users_to_invite.push(UserIdentifier::from(cid_c));
         let send_group_create_payload = InternalServiceRequest::GroupCreate {
-            cid: *cid_a,
+            cid: cid_a,
             request_id: Uuid::new_v4(),
             initial_users_to_invite: Some(initial_users_to_invite),
         };
@@ -827,8 +822,8 @@ mod tests {
             let service_b_group_create_invite = from_service_b.recv().await.unwrap();
             if let InternalServiceResponse::GroupInvitation(..) = &service_b_group_create_invite {
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
-                    cid: *cid_b,
-                    peer_cid: *cid_a,
+                    cid: cid_b,
+                    peer_cid: cid_a,
                     group_key: *group_key,
                     response: true,
                     request_id: Uuid::new_v4(),
@@ -853,8 +848,8 @@ mod tests {
             let service_c_group_create_invite = from_service_c.recv().await.unwrap();
             if let InternalServiceResponse::GroupInvitation(..) = &service_c_group_create_invite {
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
-                    cid: *cid_c,
-                    peer_cid: *cid_a,
+                    cid: cid_c,
+                    peer_cid: cid_a,
                     group_key: *group_key,
                     response: true,
                     request_id: Uuid::new_v4(),
@@ -880,8 +875,8 @@ mod tests {
 
             // Service A Kicks the other group members
             let service_a_outbound = InternalServiceRequest::GroupKick {
-                cid: *cid_a,
-                peer_cid: *cid_b,
+                cid: cid_a,
+                peer_cid: cid_b,
                 group_key: *group_key,
                 request_id: Uuid::new_v4(),
             };
@@ -894,7 +889,7 @@ mod tests {
                 request_id: _,
             }) = &service_a_inbound
             {
-                assert_eq!(cid, cid_a);
+                assert_eq!(*cid, cid_a);
                 assert_eq!(kick_group, group_key);
                 info!(target: "citadel", "Service B was successfully kicked from the group {kick_group:?}");
             } else if let InternalServiceResponse::GroupKickFailure(GroupKickFailure {
@@ -909,8 +904,8 @@ mod tests {
             }
 
             let service_a_outbound = InternalServiceRequest::GroupKick {
-                cid: *cid_a,
-                peer_cid: *cid_c,
+                cid: cid_a,
+                peer_cid: cid_c,
                 group_key: *group_key,
                 request_id: Uuid::new_v4(),
             };
@@ -923,7 +918,7 @@ mod tests {
                 request_id: _,
             }) = &service_a_inbound
             {
-                assert_eq!(cid, cid_a);
+                assert_eq!(*cid, cid_a);
                 assert_eq!(kick_group, group_key);
                 info!(target: "citadel", "Service C was successfully kicked from the group {kick_group:?}");
             } else if let InternalServiceResponse::GroupKickFailure(GroupKickFailure {
@@ -1007,19 +1002,18 @@ mod tests {
         ])
         .await?;
 
-        let (peer_one, peer_two) = peer_return_handle_vec
-            .as_mut_slice()
-            .split_at_mut(1 as usize);
-        let (peer_two, peer_three) = peer_two.split_at_mut(1 as usize);
-        let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0 as usize).unwrap();
-        let (to_service_b, from_service_b, cid_b) = peer_two.get_mut(0 as usize).unwrap();
-        let (to_service_c, from_service_c, cid_c) = peer_three.get_mut(0 as usize).unwrap();
+        let (to_service_a, mut from_service_a, cid_a) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_b, mut from_service_b, cid_b) =
+            peer_return_handle_vec.take_first_service_handle();
+        let (to_service_c, mut from_service_c, cid_c) =
+            peer_return_handle_vec.take_first_service_handle();
 
         let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
-        initial_users_to_invite.push(UserIdentifier::from(*cid_b));
-        initial_users_to_invite.push(UserIdentifier::from(*cid_c));
+        initial_users_to_invite.push(UserIdentifier::from(cid_b));
+        initial_users_to_invite.push(UserIdentifier::from(cid_c));
         let send_group_create_payload = InternalServiceRequest::GroupCreate {
-            cid: *cid_a,
+            cid: cid_a,
             request_id: Uuid::new_v4(),
             initial_users_to_invite: Some(initial_users_to_invite),
         };
@@ -1037,8 +1031,8 @@ mod tests {
             let service_b_group_create_invite = from_service_b.recv().await.unwrap();
             if let InternalServiceResponse::GroupInvitation(..) = &service_b_group_create_invite {
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
-                    cid: *cid_b,
-                    peer_cid: *cid_a,
+                    cid: cid_b,
+                    peer_cid: cid_a,
                     group_key: *group_key,
                     response: true,
                     request_id: Uuid::new_v4(),
@@ -1063,8 +1057,8 @@ mod tests {
             let service_c_group_create_invite = from_service_c.recv().await.unwrap();
             if let InternalServiceResponse::GroupInvitation(..) = &service_c_group_create_invite {
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
-                    cid: *cid_c,
-                    peer_cid: *cid_a,
+                    cid: cid_c,
+                    peer_cid: cid_a,
                     group_key: *group_key,
                     response: true,
                     request_id: Uuid::new_v4(),
@@ -1089,12 +1083,12 @@ mod tests {
             let _ = from_service_a.recv().await.unwrap(); // from Service B and Service C Joining Group
             let _ = from_service_b.recv().await.unwrap();
 
-            let service_a_message = "Service A Test Message".serialize_to_vector().unwrap();
-            let service_b_message = "Service B Test Message".serialize_to_vector().unwrap();
+            let service_a_message = BytesMut::from("Service A Test Message");
+            let service_b_message = BytesMut::from("Service B Test Message");
 
             // Service A Sends a Message
             let service_a_outbound = InternalServiceRequest::GroupMessage {
-                cid: *cid_a,
+                cid: cid_a,
                 message: service_a_message.clone(),
                 group_key: *group_key,
                 request_id: Uuid::new_v4(),
@@ -1157,7 +1151,7 @@ mod tests {
 
             // Service B Sends a Message
             let service_b_outbound = InternalServiceRequest::GroupMessage {
-                cid: *cid_b,
+                cid: cid_b,
                 message: service_b_message.clone(),
                 group_key: *group_key,
                 request_id: Uuid::new_v4(),
