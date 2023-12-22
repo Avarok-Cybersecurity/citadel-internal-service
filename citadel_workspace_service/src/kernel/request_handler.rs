@@ -1410,6 +1410,7 @@ pub async fn handle_request(
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
                     let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
                     match group_sender.leave().await {
                         Ok(_) => {
                             send_response_to_tcp_client(
@@ -1472,6 +1473,7 @@ pub async fn handle_request(
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
                     let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
                     match group_sender.end().await {
                         Ok(_) => {
                             send_response_to_tcp_client(
@@ -1535,6 +1537,7 @@ pub async fn handle_request(
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
                     let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
                     match group_sender.send_message(message.into()).await {
                         Ok(_) => {
                             send_response_to_tcp_client(
@@ -1598,6 +1601,7 @@ pub async fn handle_request(
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
                     let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
                     match group_sender.invite(peer_cid).await {
                         Ok(_) => {
                             send_response_to_tcp_client(
@@ -1661,6 +1665,7 @@ pub async fn handle_request(
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(group_connection) = connection.groups.get_mut(&group_key) {
                     let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
                     match group_sender.kick(peer_cid).await {
                         Ok(_) => {
                             send_response_to_tcp_client(
@@ -1723,6 +1728,7 @@ pub async fn handle_request(
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
                     let peer_remote = peer_connection.remote.clone();
+                    drop(server_connection_map);
                     let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
                         implicated_cid: cid,
                         command: GroupBroadcast::ListGroupsFor { cid: peer_cid },
@@ -1842,7 +1848,7 @@ pub async fn handle_request(
                 }
             };
             let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
-                implicated_cid: cid, //if invitation { cid } else { peer_cid },
+                implicated_cid: cid,
                 command: group_request,
             });
             let mut server_connection_map = server_connection_map.lock().await;
@@ -1914,6 +1920,7 @@ pub async fn handle_request(
                                         _ => {}
                                     };
                                 }
+                                drop(server_connection_map);
                             } else {
                                 // For now we return a Success response - we did, in fact, receive the KernelStreamSubscription
                                 result = true;
@@ -1979,6 +1986,7 @@ pub async fn handle_request(
                 let target_cid = group_key.cid;
                 if let Some(peer_connection) = connection.peers.get_mut(&target_cid) {
                     let peer_remote = peer_connection.remote.clone();
+                    drop(server_connection_map);
                     let group_request = GroupBroadcast::RequestJoin {
                         sender: cid,
                         key: group_key,

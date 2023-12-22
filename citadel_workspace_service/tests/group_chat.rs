@@ -36,11 +36,11 @@ mod tests {
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_b, mut from_service_b, cid_b) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_c, mut from_service_c, cid_c) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
 
         let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
         initial_users_to_invite.push(UserIdentifier::from(cid_b));
@@ -183,11 +183,11 @@ mod tests {
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_b, mut from_service_b, cid_b) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_c, mut from_service_c, cid_c) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
 
         let send_group_payload = InternalServiceRequest::GroupCreate {
             cid: cid_a,
@@ -352,11 +352,11 @@ mod tests {
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_b, mut from_service_b, cid_b) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_c, mut from_service_c, cid_c) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
 
         let send_group_payload = InternalServiceRequest::GroupCreate {
             cid: cid_a,
@@ -584,11 +584,11 @@ mod tests {
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_b, mut from_service_b, cid_b) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_c, mut from_service_c, cid_c) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
 
         let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
         initial_users_to_invite.push(UserIdentifier::from(cid_b));
@@ -794,11 +794,11 @@ mod tests {
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_b, mut from_service_b, cid_b) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_c, mut from_service_c, cid_c) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
 
         let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
         initial_users_to_invite.push(UserIdentifier::from(cid_b));
@@ -1003,11 +1003,11 @@ mod tests {
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_b, mut from_service_b, cid_b) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
         let (to_service_c, mut from_service_c, cid_c) =
-            peer_return_handle_vec.take_first_service_handle();
+            peer_return_handle_vec.take_next_service_handle();
 
         let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
         initial_users_to_invite.push(UserIdentifier::from(cid_b));

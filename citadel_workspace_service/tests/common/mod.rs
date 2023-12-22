@@ -44,11 +44,11 @@ pub type PeerReturnHandle = (
 );
 
 pub trait PeerServiceHandles {
-    fn take_first_service_handle(&mut self) -> PeerReturnHandle;
+    fn take_next_service_handle(&mut self) -> PeerReturnHandle;
 }
 
 impl PeerServiceHandles for Vec<PeerReturnHandle> {
-    fn take_first_service_handle(&mut self) -> PeerReturnHandle {
+    fn take_next_service_handle(&mut self) -> PeerReturnHandle {
         self.remove(0)
     }
 }
