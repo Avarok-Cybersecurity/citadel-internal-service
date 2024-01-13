@@ -1,22 +1,13 @@
 use crate::kernel::{
     create_client_server_remote, send_response_to_tcp_client, spawn_tick_updater, Connection,
+    GroupConnection,
 };
 use async_recursion::async_recursion;
+use citadel_logging::tracing::log;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::{
-    AccountInformation, Accounts, ConnectionFailure, DeleteVirtualFileFailure,
-    DeleteVirtualFileSuccess, DisconnectFailure, Disconnected, DownloadFileFailure,
-    DownloadFileSuccess, FileTransferStatus, GetSessions, InternalServiceRequest,
-    InternalServiceResponse, ListAllPeers, ListAllPeersFailure, ListRegisteredPeers,
-    ListRegisteredPeersFailure, LocalDBClearAllKVFailure, LocalDBClearAllKVSuccess,
-    LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess, LocalDBGetAllKVFailure, LocalDBGetAllKVSuccess,
-    LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
-    MessageReceived, MessageSendError, MessageSent, PeerConnectFailure, PeerConnectSuccess,
-    PeerDisconnectFailure, PeerDisconnectSuccess, PeerRegisterFailure, PeerRegisterSuccess,
-    PeerSessionInformation, SendFileFailure, SendFileRequestSent, SessionInformation,
-};
+use citadel_workspace_types::*;
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -765,29 +756,6 @@ pub async fn handle_request(
             };
         }
 
-        InternalServiceRequest::StartGroup {
-            initial_users_to_invite,
-            cid,
-            session_security_settings,
-            request_id: _,
-        } => {
-            let client_to_server_remote = ClientServerRemote::new(
-                VirtualTargetType::LocalGroupServer {
-                    implicated_cid: cid,
-                },
-                remote.clone(),
-                session_security_settings,
-            );
-            match client_to_server_remote
-                .create_group(initial_users_to_invite)
-                .await
-            {
-                Ok(_group_channel) => {}
-
-                Err(_err) => {}
-            }
-        }
-
         InternalServiceRequest::PeerRegister {
             cid,
             peer_cid,
@@ -1357,6 +1325,766 @@ pub async fn handle_request(
                 }
             }
         },
+
+        InternalServiceRequest::GroupCreate {
+            cid,
+            request_id,
+            initial_users_to_invite,
+        } => {
+            let client_to_server_remote = ClientServerRemote::new(
+                VirtualTargetType::LocalGroupServer {
+                    implicated_cid: cid,
+                },
+                remote.clone(),
+                Default::default(),
+            );
+            match client_to_server_remote
+                .create_group(initial_users_to_invite)
+                .await
+            {
+                Ok(group_channel) => {
+                    // Store the group connection in map
+                    let key = group_channel.key();
+                    let group_cid = group_channel.cid();
+                    let (tx, rx) = group_channel.split();
+                    match server_connection_map.lock().await.get_mut(&cid) {
+                        Some(conn) => {
+                            conn.add_group_channel(
+                                key,
+                                GroupConnection {
+                                    key,
+                                    cid: group_cid,
+                                    tx,
+                                },
+                            );
+
+                            let uuid = conn.associated_tcp_connection;
+                            spawn_group_channel_receiver(
+                                key,
+                                cid,
+                                uuid,
+                                rx,
+                                tcp_connection_map.clone(),
+                            );
+
+                            // Relay success to TCP client
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupCreateSuccess(GroupCreateSuccess {
+                                    cid,
+                                    group_key: key,
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+
+                        None => {
+                            todo!()
+                        }
+                    }
+                }
+
+                Err(err) => {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupCreateFailure(GroupCreateFailure {
+                            cid,
+                            message: err.into_string(),
+                            request_id: Some(request_id),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+            }
+        }
+
+        InternalServiceRequest::GroupLeave {
+            cid,
+            group_key,
+            request_id,
+        } => {
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
+                if let Some(group_connection) = connection.groups.get_mut(&group_key) {
+                    let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
+                    match group_sender.leave().await {
+                        Ok(_) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupLeaveSuccess(GroupLeaveSuccess {
+                                    cid,
+                                    group_key,
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                        Err(err) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupLeaveFailure(GroupLeaveFailure {
+                                    cid,
+                                    message: err.into_string(),
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupLeaveFailure(GroupLeaveFailure {
+                            cid,
+                            message: "Could Not Leave Group - Group Connection not found"
+                                .to_string(),
+                            request_id: Some(request_id),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+            } else {
+                send_response_to_tcp_client(
+                    tcp_connection_map,
+                    InternalServiceResponse::GroupLeaveFailure(GroupLeaveFailure {
+                        cid,
+                        message: "Could Not Leave Group - Connection not found".to_string(),
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                )
+                .await;
+            }
+        }
+
+        InternalServiceRequest::GroupEnd {
+            cid,
+            group_key,
+            request_id,
+        } => {
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
+                if let Some(group_connection) = connection.groups.get_mut(&group_key) {
+                    let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
+                    match group_sender.end().await {
+                        Ok(_) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupEndSuccess(GroupEndSuccess {
+                                    cid,
+                                    group_key,
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                        Err(err) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupEndFailure(GroupEndFailure {
+                                    cid,
+                                    message: err.into_string(),
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupEndFailure(GroupEndFailure {
+                            cid,
+                            message: "Could Not Leave Group - Group Connection not found"
+                                .to_string(),
+                            request_id: Some(request_id),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+            } else {
+                send_response_to_tcp_client(
+                    tcp_connection_map,
+                    InternalServiceResponse::GroupEndFailure(GroupEndFailure {
+                        cid,
+                        message: "Could Not Leave Group - Connection not found".to_string(),
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                )
+                .await;
+            }
+        }
+
+        InternalServiceRequest::GroupMessage {
+            cid,
+            message,
+            group_key,
+            request_id,
+        } => {
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
+                if let Some(group_connection) = connection.groups.get_mut(&group_key) {
+                    let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
+                    match group_sender.send_message(message.into()).await {
+                        Ok(_) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupMessageSuccess(GroupMessageSuccess {
+                                    cid,
+                                    group_key,
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                        Err(err) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupMessageFailure(GroupMessageFailure {
+                                    cid,
+                                    message: err.to_string(),
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupMessageFailure(GroupMessageFailure {
+                            cid,
+                            message: "Could Not Message Group - Group Connection not found"
+                                .to_string(),
+                            request_id: Some(request_id),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+            } else {
+                send_response_to_tcp_client(
+                    tcp_connection_map,
+                    InternalServiceResponse::GroupMessageFailure(GroupMessageFailure {
+                        cid,
+                        message: "Could Not Message Group - Connection not found".to_string(),
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                )
+                .await;
+            }
+        }
+
+        InternalServiceRequest::GroupInvite {
+            cid,
+            peer_cid,
+            group_key,
+            request_id,
+        } => {
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
+                if let Some(group_connection) = connection.groups.get_mut(&group_key) {
+                    let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
+                    match group_sender.invite(peer_cid).await {
+                        Ok(_) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupInviteSuccess(GroupInviteSuccess {
+                                    cid,
+                                    group_key,
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                        Err(err) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupInviteFailure(GroupInviteFailure {
+                                    cid,
+                                    message: err.to_string(),
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupInviteFailure(GroupInviteFailure {
+                            cid,
+                            message: "Could Not Invite to Group - Group Connection not found"
+                                .to_string(),
+                            request_id: Some(request_id),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+            } else {
+                send_response_to_tcp_client(
+                    tcp_connection_map,
+                    InternalServiceResponse::GroupInviteFailure(GroupInviteFailure {
+                        cid,
+                        message: "Could Not Invite to Group - Connection not found".to_string(),
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                )
+                .await;
+            }
+        }
+
+        InternalServiceRequest::GroupKick {
+            cid,
+            peer_cid,
+            group_key,
+            request_id,
+        } => {
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
+                if let Some(group_connection) = connection.groups.get_mut(&group_key) {
+                    let group_sender = group_connection.tx.clone();
+                    drop(server_connection_map);
+                    match group_sender.kick(peer_cid).await {
+                        Ok(_) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupKickSuccess(GroupKickSuccess {
+                                    cid,
+                                    group_key,
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                        Err(err) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupKickFailure(GroupKickFailure {
+                                    cid,
+                                    message: err.to_string(),
+                                    request_id: Some(request_id),
+                                }),
+                                uuid,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupKickFailure(GroupKickFailure {
+                            cid,
+                            message: "Could Not Kick from Group - GroupChannel not found"
+                                .to_string(),
+                            request_id: Some(request_id),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+            } else {
+                send_response_to_tcp_client(
+                    tcp_connection_map,
+                    InternalServiceResponse::GroupKickFailure(GroupKickFailure {
+                        cid,
+                        message: "Could Not Kick from Group - GroupChannel not found".to_string(),
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                )
+                .await;
+            }
+        }
+
+        InternalServiceRequest::GroupListGroupsFor {
+            cid,
+            peer_cid,
+            request_id,
+        } => {
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
+                if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
+                    let peer_remote = peer_connection.remote.clone();
+                    drop(server_connection_map);
+                    let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
+                        implicated_cid: cid,
+                        command: GroupBroadcast::ListGroupsFor { cid: peer_cid },
+                    });
+                    if let Ok(mut subscription) =
+                        peer_remote.send_callback_subscription(request).await
+                    {
+                        if let Some(evt) = subscription.next().await {
+                            if let NodeResult::GroupEvent(GroupEvent {
+                                implicated_cid: _,
+                                ticket: _,
+                                event: GroupBroadcast::ListResponse { groups },
+                            }) = evt
+                            {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::GroupListGroupsForSuccess(
+                                        GroupListGroupsForSuccess {
+                                            cid,
+                                            peer_cid,
+                                            group_list: Some(groups),
+                                            request_id: Some(request_id),
+                                        },
+                                    ),
+                                    uuid,
+                                )
+                                .await;
+                            } else {
+                                send_response_to_tcp_client(
+                                    tcp_connection_map,
+                                    InternalServiceResponse::GroupListGroupsForFailure(
+                                        GroupListGroupsForFailure {
+                                            cid,
+                                            message: "Could Not List Groups - Failed".to_string(),
+                                            request_id: Some(request_id),
+                                        },
+                                    ),
+                                    uuid,
+                                )
+                                .await;
+                            }
+                        } else {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupListGroupsForFailure(
+                                    GroupListGroupsForFailure {
+                                        cid,
+                                        message: "Could Not List Groups - Subscription Error"
+                                            .to_string(),
+                                        request_id: Some(request_id),
+                                    },
+                                ),
+                                uuid,
+                            )
+                            .await;
+                        }
+                    } else {
+                        send_response_to_tcp_client(
+                            tcp_connection_map,
+                            InternalServiceResponse::GroupListGroupsForFailure(
+                                GroupListGroupsForFailure {
+                                    cid,
+                                    message: "Could Not List Groups - Subscription Error"
+                                        .to_string(),
+                                    request_id: Some(request_id),
+                                },
+                            ),
+                            uuid,
+                        )
+                        .await;
+                    }
+                } else {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupListGroupsForFailure(
+                            GroupListGroupsForFailure {
+                                cid,
+                                message: "Could Not List Groups - Peer not found".to_string(),
+                                request_id: Some(request_id),
+                            },
+                        ),
+                        uuid,
+                    )
+                    .await;
+                }
+            } else {
+                send_response_to_tcp_client(
+                    tcp_connection_map,
+                    InternalServiceResponse::GroupListGroupsForFailure(GroupListGroupsForFailure {
+                        cid,
+                        message: "Could Not List Groups - Connection not found".to_string(),
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                )
+                .await;
+            }
+        }
+
+        InternalServiceRequest::GroupRespondRequest {
+            cid,
+            peer_cid,
+            group_key,
+            response,
+            request_id,
+            invitation,
+        } => {
+            let group_request = if response {
+                GroupBroadcast::AcceptMembership {
+                    target: if invitation { cid } else { peer_cid },
+                    key: group_key,
+                }
+            } else {
+                GroupBroadcast::DeclineMembership {
+                    target: if invitation { cid } else { peer_cid },
+                    key: group_key,
+                }
+            };
+            let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
+                implicated_cid: cid,
+                command: group_request,
+            });
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
+                if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
+                    let peer_remote = peer_connection.remote.clone();
+                    match peer_remote.send_callback_subscription(request).await {
+                        Ok(mut subscription) => {
+                            let mut result = false;
+                            if invitation {
+                                while let Some(evt) = subscription.next().await {
+                                    match evt {
+                                        // When accepting an invite, we expect a GroupChannelCreated in response
+                                        NodeResult::GroupChannelCreated(GroupChannelCreated {
+                                            ticket: _,
+                                            channel,
+                                        }) => {
+                                            let key = channel.key();
+                                            let group_cid = channel.cid();
+                                            let (tx, rx) = channel.split();
+                                            connection.add_group_channel(
+                                                key,
+                                                GroupConnection {
+                                                    key,
+                                                    tx,
+                                                    cid: group_cid,
+                                                },
+                                            );
+
+                                            let uuid = connection.associated_tcp_connection;
+                                            spawn_group_channel_receiver(
+                                                key,
+                                                cid,
+                                                uuid,
+                                                rx,
+                                                tcp_connection_map.clone(),
+                                            );
+
+                                            result = true;
+                                            break;
+                                        }
+                                        NodeResult::GroupEvent(GroupEvent {
+                                            implicated_cid: _,
+                                            ticket: _,
+                                            event:
+                                                GroupBroadcast::AcceptMembershipResponse {
+                                                    key: _,
+                                                    success,
+                                                },
+                                        }) => {
+                                            result = success;
+                                            // if !result {
+                                            //     break;
+                                            // }
+                                            break;
+                                        }
+                                        NodeResult::GroupEvent(GroupEvent {
+                                            implicated_cid: _,
+                                            ticket: _,
+                                            event:
+                                                GroupBroadcast::DeclineMembershipResponse {
+                                                    key: _,
+                                                    success,
+                                                },
+                                        }) => {
+                                            result = success;
+                                            break;
+                                        }
+                                        _ => {}
+                                    };
+                                }
+                                drop(server_connection_map);
+                            } else {
+                                // For now we return a Success response - we did, in fact, receive the KernelStreamSubscription
+                                result = true;
+                            }
+                            match result {
+                                true => {
+                                    send_response_to_tcp_client(
+                                        tcp_connection_map,
+                                        InternalServiceResponse::GroupRespondRequestSuccess(
+                                            GroupRespondRequestSuccess {
+                                                cid,
+                                                group_key,
+                                                request_id: Some(request_id),
+                                            },
+                                        ),
+                                        uuid,
+                                    )
+                                    .await;
+                                }
+                                false => {
+                                    send_response_to_tcp_client(
+                                        tcp_connection_map,
+                                        InternalServiceResponse::GroupRespondRequestFailure(
+                                            GroupRespondRequestFailure {
+                                                cid,
+                                                message: "Group Invite Response Failed."
+                                                    .to_string(),
+                                                request_id: Some(request_id),
+                                            },
+                                        ),
+                                        uuid,
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupRespondRequestFailure(
+                                    GroupRespondRequestFailure {
+                                        cid,
+                                        message: err.to_string(),
+                                        request_id: Some(request_id),
+                                    },
+                                ),
+                                uuid,
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+        }
+
+        InternalServiceRequest::GroupRequestJoin {
+            cid,
+            group_key,
+            request_id,
+        } => {
+            let mut server_connection_map = server_connection_map.lock().await;
+            if let Some(connection) = server_connection_map.get_mut(&cid) {
+                let target_cid = group_key.cid;
+                if let Some(peer_connection) = connection.peers.get_mut(&target_cid) {
+                    let peer_remote = peer_connection.remote.clone();
+                    drop(server_connection_map);
+                    let group_request = GroupBroadcast::RequestJoin {
+                        sender: cid,
+                        key: group_key,
+                    };
+                    let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
+                        implicated_cid: cid,
+                        command: group_request,
+                    });
+                    match peer_remote.send_callback_subscription(request).await {
+                        Ok(mut subscription) => {
+                            let mut result = Err("Group Request Join Failed".to_string());
+                            while let Some(evt) = subscription.next().await {
+                                if let NodeResult::GroupEvent(GroupEvent {
+                                    implicated_cid: _,
+                                    ticket: _,
+                                    event:
+                                        GroupBroadcast::RequestJoinPending {
+                                            result: signal_result,
+                                            key: _key,
+                                        },
+                                }) = evt
+                                {
+                                    result = signal_result;
+                                    break;
+                                }
+                            }
+                            match result {
+                                Ok(_) => {
+                                    send_response_to_tcp_client(
+                                        tcp_connection_map,
+                                        InternalServiceResponse::GroupRequestJoinSuccess(
+                                            GroupRequestJoinSuccess {
+                                                cid,
+                                                group_key,
+                                                request_id: Some(request_id),
+                                            },
+                                        ),
+                                        uuid,
+                                    )
+                                    .await;
+                                }
+                                Err(err) => {
+                                    send_response_to_tcp_client(
+                                        tcp_connection_map,
+                                        InternalServiceResponse::GroupRequestJoinFailure(
+                                            GroupRequestJoinFailure {
+                                                cid,
+                                                message: err.to_string(),
+                                                request_id: Some(request_id),
+                                            },
+                                        ),
+                                        uuid,
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            send_response_to_tcp_client(
+                                tcp_connection_map,
+                                InternalServiceResponse::GroupRequestJoinFailure(
+                                    GroupRequestJoinFailure {
+                                        cid,
+                                        message: err.to_string(),
+                                        request_id: Some(request_id),
+                                    },
+                                ),
+                                uuid,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    send_response_to_tcp_client(
+                        tcp_connection_map,
+                        InternalServiceResponse::GroupRequestJoinFailure(GroupRequestJoinFailure {
+                            cid,
+                            message: "Could not Request to join Group - Peer not found".to_string(),
+                            request_id: Some(request_id),
+                        }),
+                        uuid,
+                    )
+                    .await;
+                }
+            } else {
+                send_response_to_tcp_client(
+                    tcp_connection_map,
+                    InternalServiceResponse::GroupRequestJoinFailure(GroupRequestJoinFailure {
+                        cid,
+                        message: "Could not Request to join Group - Connection not found"
+                            .to_string(),
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                )
+                .await;
+            }
+        }
     }
 }
 
@@ -1571,4 +2299,112 @@ async fn backend_handler_clear_all(
             .await;
         }
     }
+}
+
+pub(crate) fn spawn_group_channel_receiver(
+    group_key: MessageGroupKey,
+    implicated_cid: u64,
+    uuid: Uuid,
+    mut rx: GroupChannelRecvHalf,
+    tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+) {
+    // Handler/Receiver for Group Channel Broadcasts that aren't handled in on_node_event_received in Kernel
+    let group_channel_receiver = async move {
+        while let Some(inbound_group_broadcast) = rx.next().await {
+            // Gets UnboundedSender to the TCP client to forward Broadcasts
+            match tcp_connection_map.lock().await.get(&uuid) {
+                Some(entry) => {
+                    log::trace!(target:"citadel", "User {implicated_cid:?} Received Group Broadcast: {inbound_group_broadcast:?}");
+                    let message = match inbound_group_broadcast {
+                        GroupBroadcastPayload::Message { payload, sender } => Some(
+                            InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
+                                cid: implicated_cid,
+                                peer_cid: sender,
+                                message: payload.into_buffer(),
+                                group_key,
+                                request_id: None,
+                            }),
+                        ),
+                        GroupBroadcastPayload::Event { payload } => match payload {
+                            GroupBroadcast::RequestJoin { sender, key: _ } => {
+                                Some(InternalServiceResponse::GroupJoinRequestReceived(
+                                    GroupJoinRequestReceived {
+                                        cid: implicated_cid,
+                                        peer_cid: sender,
+                                        group_key,
+                                        request_id: None,
+                                    },
+                                ))
+                            }
+                            GroupBroadcast::MemberStateChanged { key: _, state } => {
+                                Some(InternalServiceResponse::GroupMemberStateChanged(
+                                    GroupMemberStateChanged {
+                                        cid: implicated_cid,
+                                        group_key,
+                                        state,
+                                        request_id: None,
+                                    },
+                                ))
+                            }
+                            GroupBroadcast::EndResponse { key, success } => {
+                                Some(InternalServiceResponse::GroupEnded(GroupEnded {
+                                    cid: implicated_cid,
+                                    group_key: key,
+                                    success,
+                                    request_id: None,
+                                }))
+                            }
+                            GroupBroadcast::Disconnected { key } => Some(
+                                InternalServiceResponse::GroupDisconnected(GroupDisconnected {
+                                    cid: implicated_cid,
+                                    group_key: key,
+                                    request_id: None,
+                                }),
+                            ),
+                            GroupBroadcast::MessageResponse { key, success } => {
+                                Some(InternalServiceResponse::GroupMessageResponse(
+                                    GroupMessageResponse {
+                                        cid: implicated_cid,
+                                        group_key: key,
+                                        success,
+                                        request_id: None,
+                                    },
+                                ))
+                            }
+                            // GroupBroadcast::Create { .. } => {},
+                            // GroupBroadcast::LeaveRoom { .. } => {},
+                            // GroupBroadcast::End { .. } => {},
+                            // GroupBroadcast::Add { .. } => {},
+                            // GroupBroadcast::AddResponse { .. } => {},
+                            // GroupBroadcast::AcceptMembership { .. } => {},
+                            // GroupBroadcast::DeclineMembership { .. } => {},
+                            // GroupBroadcast::AcceptMembershipResponse { .. } => {},
+                            // GroupBroadcast::DeclineMembershipResponse { .. } => {},
+                            // GroupBroadcast::Kick { .. } => {},
+                            // GroupBroadcast::KickResponse { .. } => {},
+                            // GroupBroadcast::ListGroupsFor { .. } => {},
+                            // GroupBroadcast::ListResponse { .. } => {},
+                            // GroupBroadcast::Invitation { .. } => {},
+                            // GroupBroadcast::CreateResponse { .. } => {},
+                            // GroupBroadcast::RequestJoinPending { .. } => {},
+                            _ => None,
+                        },
+                    };
+
+                    // Forward Group Broadcast to TCP Client if it was one of the handled broadcasts
+                    if let Some(message) = message {
+                        if let Err(err) = entry.send(message) {
+                            info!(target: "citadel", "Group Channel Forward To TCP Client Failed: {err:?}");
+                        }
+                    }
+                }
+                None => {
+                    info!(target:"citadel","Connection not found when Group Channel Broadcast Received");
+                }
+            }
+        }
+    };
+
+    // Spawns the above Handler for Group Channel Broadcasts not handled in Node Events
+    tokio::task::spawn(group_channel_receiver);
 }
