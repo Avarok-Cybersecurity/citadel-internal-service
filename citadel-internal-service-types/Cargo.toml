@@ -1,5 +1,5 @@
 [package]
-name = "citadel_workspace_types"
+name = "citadel-internal-service-types"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,6 +7,6 @@ edition = "2021"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-citadel_sdk= { workspace = true }
+citadel_types = { workspace = true }
 bytes = { workspace = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }

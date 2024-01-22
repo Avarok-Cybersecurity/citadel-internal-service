@@ -4,9 +4,7 @@ mod common;
 mod tests {
     use crate::common::*;
     use bytes::BytesMut;
-    use citadel_logging::info;
-    use citadel_sdk::prelude::{MemberState, UserIdentifier};
-    use citadel_workspace_types::{
+    use citadel_internal_service_types::{
         GroupCreateSuccess, GroupDisconnected, GroupEndSuccess, GroupEnded, GroupInvitation,
         GroupInviteSuccess, GroupJoinRequestReceived, GroupKickFailure, GroupKickSuccess,
         GroupLeaveSuccess, GroupLeft, GroupListGroupsForSuccess, GroupMemberStateChanged,
@@ -14,6 +12,8 @@ mod tests {
         GroupRequestJoinFailure, GroupRequestJoinSuccess, GroupRespondRequestFailure,
         GroupRespondRequestSuccess, InternalServiceRequest, InternalServiceResponse,
     };
+    use citadel_logging::info;
+    use citadel_sdk::prelude::{MemberState, UserIdentifier};
     use std::error::Error;
     use std::net::SocketAddr;
     use uuid::Uuid;

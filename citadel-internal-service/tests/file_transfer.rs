@@ -6,14 +6,14 @@ mod tests {
         register_and_connect_to_server, register_and_connect_to_server_then_peers,
         server_info_file_transfer, RegisterAndConnectItems,
     };
-    use citadel_logging::info;
-    use citadel_sdk::prelude::*;
-    use citadel_workspace_service::kernel::CitadelWorkspaceService;
-    use citadel_workspace_types::{
+    use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_types::{
         DeleteVirtualFileSuccess, DownloadFileFailure, FileTransferRequest, FileTransferStatus,
         FileTransferTick, InternalServiceRequest, InternalServiceResponse, SendFileFailure,
         SendFileRequestSent,
     };
+    use citadel_logging::info;
+    use citadel_sdk::prelude::*;
     use core::panic;
     use std::error::Error;
     use std::net::SocketAddr;

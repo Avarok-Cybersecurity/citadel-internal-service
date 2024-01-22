@@ -1,17 +1,17 @@
 #![allow(dead_code)]
 
 use bytes::Bytes;
+use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service_connector::util::wrap_tcp_conn;
+use citadel_internal_service_types::{
+    InternalServiceRequest, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess,
+    ServiceConnectionAccepted,
+};
 use citadel_logging::info;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_lib::wrap_tcp_conn;
-use citadel_workspace_service::kernel::CitadelWorkspaceService;
-use citadel_workspace_types::{
-    InternalServiceRequest, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess,
-    ServiceConnectionAccepted,
-};
 use core::panic;
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
@@ -122,7 +122,7 @@ pub async fn register_and_connect_to_server<
             let response_packet: InternalServiceResponse =
                 bincode2::deserialize(&second_packet).unwrap();
             if let InternalServiceResponse::RegisterSuccess(
-                citadel_workspace_types::RegisterSuccess { request_id: _ },
+                citadel_internal_service_types::RegisterSuccess { request_id: _ },
             ) = response_packet
             {
                 // now, connect to the server
@@ -142,7 +142,7 @@ pub async fn register_and_connect_to_server<
                 let response_packet: InternalServiceResponse =
                     bincode2::deserialize(&next_packet).unwrap();
                 if let InternalServiceResponse::ConnectSuccess(
-                    citadel_workspace_types::ConnectSuccess { cid, request_id: _ },
+                    citadel_internal_service_types::ConnectSuccess { cid, request_id: _ },
                 ) = response_packet
                 {
                     let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();

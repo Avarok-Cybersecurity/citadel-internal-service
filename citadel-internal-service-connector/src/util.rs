@@ -1,4 +1,4 @@
-use citadel_workspace_types::{InternalServiceRequest, InternalServiceResponse};
+use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 

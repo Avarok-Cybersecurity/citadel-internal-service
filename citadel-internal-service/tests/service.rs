@@ -7,14 +7,14 @@ mod tests {
         server_info_reactive_skip_cert_verification, server_info_skip_cert_verification,
         spawn_services, test_kv_for_service, RegisterAndConnectItems,
     };
-    use citadel_logging::info;
-    use citadel_sdk::prelude::*;
-    use citadel_workspace_lib::wrap_tcp_conn;
-    use citadel_workspace_service::kernel::CitadelWorkspaceService;
-    use citadel_workspace_types::{
+    use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_connector::util::wrap_tcp_conn;
+    use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageReceived, MessageSent,
         ServiceConnectionAccepted,
     };
+    use citadel_logging::info;
+    use citadel_sdk::prelude::*;
     use core::panic;
     use futures::StreamExt;
     use std::error::Error;
@@ -250,7 +250,7 @@ mod tests {
             let response_packet: InternalServiceResponse = bincode2::deserialize(&second_packet)?;
 
             if let InternalServiceResponse::ConnectSuccess(
-                citadel_workspace_types::ConnectSuccess {
+                citadel_internal_service_types::ConnectSuccess {
                     cid: _,
                     request_id: _,
                 },

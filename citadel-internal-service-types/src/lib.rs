@@ -1,9 +1,8 @@
 use bytes::BytesMut;
-pub use citadel_sdk::prelude::{
-    ConnectMode, ObjectTransferStatus, SecBuffer, SecurityLevel, SessionSecuritySettings, UdpMode,
-    UserIdentifier,
+pub use citadel_types::prelude::{
+    ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
+    SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
 };
-use citadel_sdk::prelude::{MemberState, MessageGroupKey, TransferType, VirtualObjectMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;

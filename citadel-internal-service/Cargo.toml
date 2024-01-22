@@ -1,5 +1,5 @@
 [package]
-name = "citadel_workspace_service"
+name = "citadel-internal-service"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,8 +13,8 @@ citadel_sdk = { workspace = true, features=["multi-threaded"] }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
 tokio-util = { workspace = true, features = ["codec"] }
 bincode2 = { workspace = true }
-citadel_workspace_types = { workspace = true }
-citadel_workspace_lib = { workspace = true }
+citadel-internal-service-types = { workspace = true }
+citadel-internal-service-connector = { workspace = true }
 futures = { workspace = true }
 uuid = { workspace = true, features = [
     "v4",                # Lets you generate random UUIDs
