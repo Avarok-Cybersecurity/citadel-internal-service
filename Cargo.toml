@@ -20,9 +20,9 @@ citadel-internal-service = { path = "./citadel-internal-service", default-featur
 citadel-internal-service-connector = { path = "./citadel-internal-service-connector", default-features = false, version = "0.1.0" }
 
 # Avarok deps
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "citadel_types" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "citadel_types" }
-citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "citadel_types", default-features = false }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "b70b63b82988e9cb94833d35f87fec5cfad71d31" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "b70b63b82988e9cb94833d35f87fec5cfad71d31" }
+citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", rev = "b70b63b82988e9cb94833d35f87fec5cfad71d31", default-features = false }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }

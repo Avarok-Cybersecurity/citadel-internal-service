@@ -19,7 +19,7 @@ mod tests {
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_group_create() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_group_create() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_group_invite() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_group_invite() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
@@ -335,7 +335,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_group_request_join() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_group_request_join() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_group_leave_and_end() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_group_leave_and_end() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
@@ -777,7 +777,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_group_kick() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_group_kick() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
@@ -986,7 +986,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_group_message() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_group_message() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();

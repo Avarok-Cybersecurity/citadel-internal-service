@@ -26,7 +26,7 @@ mod tests {
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_register_connect() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_register_connect() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_peer_test() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_peer_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         let _ = register_and_connect_to_server_then_peers(vec![
             "127.0.0.1:55526".parse().unwrap(),
@@ -315,7 +315,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_peer_test_list_peers() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_peer_test_list_peers() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
 
         let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
@@ -337,7 +337,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_peer_message_test() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_peer_message_test() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();

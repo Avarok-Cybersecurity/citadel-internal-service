@@ -27,7 +27,7 @@ mod tests {
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_standard_file_transfer_c2s(
+    async fn test_internal_service_standard_file_transfer_c2s(
     ) -> Result<(), Box<dyn Error>> {
         // Causes panics in spawned threads to be caught
         let orig_hook = take_hook();
@@ -92,7 +92,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_peer_standard_file_transfer(
+    async fn test_internal_service_peer_standard_file_transfer(
     ) -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_c2s_revfs() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_c2s_revfs() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_peer_revfs() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_peer_revfs() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
