@@ -27,8 +27,7 @@ mod tests {
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn test_internal_service_standard_file_transfer_c2s(
-    ) -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_standard_file_transfer_c2s() -> Result<(), Box<dyn Error>> {
         // Causes panics in spawned threads to be caught
         let orig_hook = take_hook();
         set_hook(Box::new(move |panic_info| {
@@ -92,8 +91,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_internal_service_peer_standard_file_transfer(
-    ) -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_peer_standard_file_transfer() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
