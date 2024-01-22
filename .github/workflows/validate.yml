@@ -24,9 +24,9 @@ jobs:
     steps:
       - uses: Avarok-Cybersecurity/gh-actions-deps@master
       - uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --package citadel_workspace_service --features=vendored
+      - run: cargo nextest run --package citadel-internal-service --features=vendored
         if: startsWith(matrix.os, 'windows')
-      - run: cargo nextest run --package citadel_workspace_service
+      - run: cargo nextest run --package citadel-internal-service
         if: ${{ !startsWith(matrix.os, 'windows') }}
 
   clippy:
