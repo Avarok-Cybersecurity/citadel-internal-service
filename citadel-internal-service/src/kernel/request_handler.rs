@@ -3,11 +3,11 @@ use crate::kernel::{
     GroupConnection,
 };
 use async_recursion::async_recursion;
+use citadel_internal_service_types::*;
 use citadel_logging::tracing::log;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
-use citadel_workspace_types::*;
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -250,7 +250,7 @@ pub async fn handle_request(
                     let hm_for_conn = tcp_connection_map.clone();
 
                     let response = InternalServiceResponse::ConnectSuccess(
-                        citadel_workspace_types::ConnectSuccess {
+                        citadel_internal_service_types::ConnectSuccess {
                             cid,
                             request_id: Some(request_id),
                         },
@@ -313,7 +313,7 @@ pub async fn handle_request(
                 Ok(_res) => match connect_after_register {
                     false => {
                         let response = InternalServiceResponse::RegisterSuccess(
-                            citadel_workspace_types::RegisterSuccess {
+                            citadel_internal_service_types::RegisterSuccess {
                                 request_id: Some(request_id),
                             },
                         );
@@ -342,7 +342,7 @@ pub async fn handle_request(
                 },
                 Err(err) => {
                     let response = InternalServiceResponse::RegisterFailure(
-                        citadel_workspace_types::RegisterFailure {
+                        citadel_internal_service_types::RegisterFailure {
                             message: err.into_string(),
                             request_id: Some(request_id),
                         },

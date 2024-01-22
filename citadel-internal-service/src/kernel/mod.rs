@@ -1,11 +1,11 @@
 use crate::kernel::request_handler::handle_request;
 use bytes::Bytes;
+use citadel_internal_service_connector::util::{deserialize, serialize_payload, wrap_tcp_conn};
+use citadel_internal_service_types::*;
 use citadel_logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
-use citadel_workspace_lib::{deserialize, serialize_payload, wrap_tcp_conn};
-use citadel_workspace_types::*;
 use futures::stream::{SplitSink, StreamExt};
 use futures::SinkExt;
 use std::collections::HashMap;

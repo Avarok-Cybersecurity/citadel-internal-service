@@ -6,14 +6,14 @@ mod tests {
         register_and_connect_to_server, register_and_connect_to_server_then_peers,
         server_info_file_transfer, RegisterAndConnectItems,
     };
-    use citadel_logging::info;
-    use citadel_sdk::prelude::*;
-    use citadel_workspace_service::kernel::CitadelWorkspaceService;
-    use citadel_workspace_types::{
+    use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_types::{
         DeleteVirtualFileSuccess, DownloadFileFailure, FileTransferRequest, FileTransferStatus,
         FileTransferTick, InternalServiceRequest, InternalServiceResponse, SendFileFailure,
         SendFileRequestSent,
     };
+    use citadel_logging::info;
+    use citadel_sdk::prelude::*;
     use core::panic;
     use std::error::Error;
     use std::net::SocketAddr;
@@ -27,8 +27,7 @@ mod tests {
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_standard_file_transfer_c2s(
-    ) -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_standard_file_transfer_c2s() -> Result<(), Box<dyn Error>> {
         // Causes panics in spawned threads to be caught
         let orig_hook = take_hook();
         set_hook(Box::new(move |panic_info| {
@@ -92,8 +91,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_peer_standard_file_transfer(
-    ) -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_peer_standard_file_transfer() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
@@ -182,7 +180,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_c2s_revfs() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_c2s_revfs() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
@@ -303,7 +301,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_citadel_workspace_service_peer_revfs() -> Result<(), Box<dyn Error>> {
+    async fn test_internal_service_peer_revfs() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();

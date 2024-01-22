@@ -1,5 +1,5 @@
+use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType};
-use citadel_workspace_service::kernel::CitadelWorkspaceService;
 use std::error::Error;
 use std::net::SocketAddr;
 use structopt::StructOpt;
