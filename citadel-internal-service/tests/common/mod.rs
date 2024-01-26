@@ -184,7 +184,7 @@ pub async fn register_and_connect_to_server_then_peers(
 
         internal_services.push(Box::pin(async move {
             match internal_service.await {
-                Err(err) => Err(Box::try_from(err).unwrap()),
+                Err(err) => Err(Box::from(err)),
                 _ => Ok(()),
             }
         }));

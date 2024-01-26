@@ -390,13 +390,13 @@ mod tests {
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
         internal_services.push(Box::pin(async move {
             match internal_service.await {
-                Err(err) => Err(Box::try_from(err).unwrap()),
+                Err(err) => Err(Box::from(err)),
                 _ => Ok(()),
             }
         }));
         internal_services.push(Box::pin(async move {
             match server.await {
-                Err(err) => Err(Box::try_from(err).unwrap()),
+                Err(err) => Err(Box::from(err)),
                 _ => Ok(()),
             }
         }));
