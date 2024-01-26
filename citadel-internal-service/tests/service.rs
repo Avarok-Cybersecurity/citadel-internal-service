@@ -5,24 +5,20 @@ mod tests {
     use crate::common::{
         register_and_connect_to_server, register_and_connect_to_server_then_peers, send,
         server_info_reactive_skip_cert_verification, server_info_skip_cert_verification,
-        spawn_services, test_kv_for_service, RegisterAndConnectItems,
+        spawn_services, test_kv_for_service, InternalServicesFutures, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
-    use citadel_internal_service_connector::util::wrap_tcp_conn;
+    use citadel_internal_service_connector::util::InternalServiceConnector;
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageReceived, MessageSent,
-        ServiceConnectionAccepted,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
     use core::panic;
     use futures::StreamExt;
     use std::error::Error;
-    use std::future::Future;
     use std::net::SocketAddr;
-    use std::pin::Pin;
     use std::time::Duration;
-    use tokio::net::TcpStream;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -219,49 +215,35 @@ mod tests {
         info!(target: "citadel", "about to connect to internal service");
 
         // begin mocking the GUI/CLI access
-        let conn = TcpStream::connect(bind_address_internal_service).await?;
-        info!(target: "citadel", "connected to the TCP stream");
-        let framed = wrap_tcp_conn(conn);
-        info!(target: "citadel", "wrapped tcp connection");
+        let (mut sink, mut stream) =
+            InternalServiceConnector::connect(bind_address_internal_service)
+                .await?
+                .split();
 
-        let (mut sink, mut stream) = framed.split();
+        let register_command = InternalServiceRequest::Register {
+            server_addr: server_bind_address,
+            full_name: String::from("John"),
+            username: String::from("john_doe"),
+            proposed_password: String::from("test12345").into_bytes().into(),
+            session_security_settings: Default::default(),
+            connect_after_register: true,
+            request_id: Uuid::new_v4(),
+        };
 
-        let first_packet = stream.next().await.unwrap()?;
-        info!(target: "citadel", "First packet");
-        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&first_packet)?;
+        send(&mut sink, register_command).await?;
 
-        info!(target: "citadel", "Greeter packet {greeter_packet:?}");
+        let response_packet = stream.next().await.unwrap();
 
-        if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted) =
-            greeter_packet
+        if let InternalServiceResponse::ConnectSuccess(
+            citadel_internal_service_types::ConnectSuccess {
+                cid: _,
+                request_id: _,
+            },
+        ) = response_packet
         {
-            let register_command = InternalServiceRequest::Register {
-                server_addr: server_bind_address,
-                full_name: String::from("John"),
-                username: String::from("john_doe"),
-                proposed_password: String::from("test12345").into_bytes().into(),
-                session_security_settings: Default::default(),
-                connect_after_register: true,
-                request_id: Uuid::new_v4(),
-            };
-            send(&mut sink, register_command).await?;
-
-            let second_packet = stream.next().await.unwrap()?;
-            let response_packet: InternalServiceResponse = bincode2::deserialize(&second_packet)?;
-
-            if let InternalServiceResponse::ConnectSuccess(
-                citadel_internal_service_types::ConnectSuccess {
-                    cid: _,
-                    request_id: _,
-                },
-            ) = response_packet
-            {
-                Ok(())
-            } else {
-                panic!("Registration to server was not a success")
-            }
+            Ok(())
         } else {
-            panic!("Wrong packet type");
+            panic!("Registration to server was not a success")
         }
     }
 
@@ -405,18 +387,16 @@ mod tests {
             ))
             .unwrap();
 
-        let mut internal_services: Vec<
-            Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
-        > = Vec::new();
+        let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
         internal_services.push(Box::pin(async move {
             match internal_service.await {
-                Err(err) => Err(Box::try_from(err).unwrap()),
+                Err(err) => Err(Box::from(err)),
                 _ => Ok(()),
             }
         }));
         internal_services.push(Box::pin(async move {
             match server.await {
-                Err(err) => Err(Box::try_from(err).unwrap()),
+                Err(err) => Err(Box::from(err)),
                 _ => Ok(()),
             }
         }));

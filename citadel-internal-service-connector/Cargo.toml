@@ -10,3 +10,5 @@ citadel-internal-service-types = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
 tokio-util = { workspace = true, features = ["codec"] }
 bincode2 = { workspace = true }
+serde = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }

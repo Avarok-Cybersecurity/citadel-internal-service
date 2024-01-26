@@ -1,6 +1,6 @@
 use crate::kernel::request_handler::handle_request;
-use bytes::Bytes;
-use citadel_internal_service_connector::util::{deserialize, serialize_payload, wrap_tcp_conn};
+use citadel_internal_service_connector::codec::{CodecError, SerializingCodec};
+use citadel_internal_service_connector::util::wrap_tcp_conn;
 use citadel_internal_service_types::*;
 use citadel_logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio_util::codec::Framed;
 use uuid::Uuid;
 
 pub(crate) mod request_handler;
@@ -464,28 +464,22 @@ fn create_client_server_remote(
 }
 
 async fn sink_send_payload(
-    payload: &InternalServiceResponse,
-    sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
-) {
-    let payload = serialize_payload(payload);
-    match sink.send(payload.into()).await {
-        Ok(_) => (),
-        Err(_) => info!(target: "citadel", "w task: sink send err"),
-    }
+    payload: InternalServiceResponse,
+    sink: &mut SplitSink<
+        Framed<TcpStream, SerializingCodec<InternalServicePayload>>,
+        InternalServicePayload,
+    >,
+) -> Result<(), CodecError> {
+    sink.send(InternalServicePayload::Response(payload)).await
 }
 
 fn send_to_kernel(
-    payload_to_send: &[u8],
+    request: InternalServiceRequest,
     sender: &UnboundedSender<(InternalServiceRequest, Uuid)>,
     conn_id: Uuid,
 ) -> Result<(), NetworkError> {
-    if let Some(payload) = deserialize(payload_to_send) {
-        sender.send((payload, conn_id))?;
-        Ok(())
-    } else {
-        error!(target: "citadel", "w task: failed to deserialize payload");
-        Ok(())
-    }
+    sender.send((request, conn_id))?;
+    Ok(())
 }
 
 fn handle_connection(
@@ -504,10 +498,16 @@ fn handle_connection(
             let response =
                 InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted);
 
-            sink_send_payload(&response, &mut sink).await;
+            if let Err(err) = sink_send_payload(response, &mut sink).await {
+                error!(target: "citadel", "Failed to send to client: {err:?}");
+                return;
+            }
 
             while let Some(kernel_response) = from_kernel.recv().await {
-                sink_send_payload(&kernel_response, &mut sink).await;
+                if let Err(err) = sink_send_payload(kernel_response, &mut sink).await {
+                    error!(target: "citadel", "Failed to send to client: {err:?}");
+                    return;
+                }
             }
         };
 
@@ -515,9 +515,11 @@ fn handle_connection(
             while let Some(message) = stream.next().await {
                 match message {
                     Ok(message) => {
-                        if let Err(err) = send_to_kernel(&message, &to_kernel, conn_id) {
-                            error!(target: "citadel", "Failed to send to kernel: {:?}", err);
-                            break;
+                        if let InternalServicePayload::Request(request) = message {
+                            if let Err(err) = send_to_kernel(request, &to_kernel, conn_id) {
+                                error!(target: "citadel", "Failed to send to kernel: {:?}", err);
+                                break;
+                            }
                         }
                     }
                     Err(_) => {
