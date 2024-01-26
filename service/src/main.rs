@@ -9,11 +9,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     citadel_logging::setup_log();
     let opts: Options = Options::from_args();
     let service = CitadelWorkspaceService::new(opts.bind);
-    NodeBuilder::default()
+
+    let mut builder = NodeBuilder::default();
+    let mut builder = builder
         .with_backend(BackendType::InMemory) // TODO: parameterize this in the opts
-        .with_node_type(NodeType::Peer) // We will only use the service to create outbound protocol connections
-        .build(service)?
-        .await?;
+        .with_node_type(NodeType::Peer);
+
+    if opts.dangerous.unwrap_or(false) {
+        builder = builder.with_insecure_skip_cert_verification()
+    }
+
+    builder.build(service)?.await?;
 
     Ok(())
 }
@@ -26,4 +32,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 struct Options {
     #[structopt(short, long)]
     bind: SocketAddr,
+    #[structopt(short, long)]
+    dangerous: Option<bool>,
 }
