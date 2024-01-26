@@ -1,11 +1,8 @@
 #![allow(dead_code)]
-
-use bytes::Bytes;
 use citadel_internal_service::kernel::CitadelWorkspaceService;
-use citadel_internal_service_connector::util::wrap_tcp_conn;
+use citadel_internal_service_connector::util::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess,
-    ServiceConnectionAccepted,
 };
 use citadel_logging::info;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
@@ -13,7 +10,6 @@ use citadel_sdk::prefabs::server::empty::EmptyKernel;
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
 use core::panic;
-use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::error::Error;
@@ -24,9 +20,7 @@ use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use uuid::Uuid;
 
 pub struct RegisterAndConnectItems<T: Into<String>, R: Into<String>, S: Into<SecBuffer>> {
@@ -81,20 +75,9 @@ pub async fn register_and_connect_to_server<
     )> = Vec::new();
 
     for item in services_to_create {
-        let conn = TcpStream::connect(item.internal_service_addr)
-            .await
-            .unwrap();
-        info!(target: "citadel", "connected to the TCP stream");
-        let framed = wrap_tcp_conn(conn);
-        info!(target: "citadel", "wrapped tcp connection");
-
-        let (mut sink, mut stream) = framed.split();
-
-        let first_packet = stream.next().await.unwrap().unwrap();
-        info!(target: "citadel", "First packet");
-        let greeter_packet: InternalServiceResponse = bincode2::deserialize(&first_packet).unwrap();
-
-        info!(target: "citadel", "Greeter packet {greeter_packet:?}");
+        let (mut sink, mut stream) = InternalServiceConnector::connect(item.internal_service_addr)
+            .await?
+            .split();
 
         let username = item.username.into();
         let full_name = item.full_name.into();
@@ -104,88 +87,76 @@ pub async fn register_and_connect_to_server<
             .build()
             .unwrap();
 
-        if let InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted) =
-            greeter_packet
-        {
-            let register_command = InternalServiceRequest::Register {
-                request_id: Uuid::new_v4(),
-                server_addr: item.server_addr,
-                full_name,
-                username: username.clone(),
-                proposed_password: password.clone(),
-                session_security_settings,
-                connect_after_register: false,
-            };
-            send(&mut sink, register_command).await.unwrap();
+        let register_command = InternalServiceRequest::Register {
+            request_id: Uuid::new_v4(),
+            server_addr: item.server_addr,
+            full_name,
+            username: username.clone(),
+            proposed_password: password.clone(),
+            session_security_settings,
+            connect_after_register: false,
+        };
+        send(&mut sink, register_command).await.unwrap();
 
-            let second_packet = stream.next().await.unwrap().unwrap();
-            let response_packet: InternalServiceResponse =
-                bincode2::deserialize(&second_packet).unwrap();
-            if let InternalServiceResponse::RegisterSuccess(
-                citadel_internal_service_types::RegisterSuccess { request_id: _ },
+        let response_packet = stream.next().await.unwrap();
+
+        if let InternalServiceResponse::RegisterSuccess(
+            citadel_internal_service_types::RegisterSuccess { request_id: _ },
+        ) = response_packet
+        {
+            // now, connect to the server
+            let command = InternalServiceRequest::Connect {
+                username,
+                password,
+                connect_mode: Default::default(),
+                udp_mode: Default::default(),
+                keep_alive_timeout: None,
+                session_security_settings,
+                request_id: Uuid::new_v4(),
+            };
+
+            send(&mut sink, command).await.unwrap();
+
+            let response_packet = stream.next().await.unwrap();
+            if let InternalServiceResponse::ConnectSuccess(
+                citadel_internal_service_types::ConnectSuccess { cid, request_id: _ },
             ) = response_packet
             {
-                // now, connect to the server
-                let command = InternalServiceRequest::Connect {
-                    username,
-                    password,
-                    connect_mode: Default::default(),
-                    udp_mode: Default::default(),
-                    keep_alive_timeout: None,
-                    session_security_settings,
-                    request_id: Uuid::new_v4(),
+                let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();
+                let service_to_test = async move {
+                    // take messages from the service and send them to from_service
+                    while let Some(msg) = stream.next().await {
+                        info!(target = "citadel", "Service to test {msg:?}");
+                        to_service.send(msg).unwrap();
+                    }
                 };
 
-                send(&mut sink, command).await.unwrap();
+                let (to_service_sender, mut from_test) = tokio::sync::mpsc::unbounded_channel();
+                let test_to_service = async move {
+                    while let Some(msg) = from_test.recv().await {
+                        info!(target = "citadel", "Test to service {:?}", msg);
+                        send(&mut sink, msg).await.unwrap();
+                    }
+                };
 
-                let next_packet = stream.next().await.unwrap().unwrap();
-                let response_packet: InternalServiceResponse =
-                    bincode2::deserialize(&next_packet).unwrap();
-                if let InternalServiceResponse::ConnectSuccess(
-                    citadel_internal_service_types::ConnectSuccess { cid, request_id: _ },
-                ) = response_packet
-                {
-                    let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();
-                    let service_to_test = async move {
-                        // take messages from the service and send them to from_service
-                        while let Some(msg) = stream.next().await {
-                            let msg = msg.unwrap();
-                            let msg_deserialized: InternalServiceResponse =
-                                bincode2::deserialize(&msg).unwrap();
-                            info!(target = "citadel", "Service to test {:?}", msg_deserialized);
-                            to_service.send(msg_deserialized).unwrap();
-                        }
-                    };
-
-                    let (to_service_sender, mut from_test) = tokio::sync::mpsc::unbounded_channel();
-                    let test_to_service = async move {
-                        while let Some(msg) = from_test.recv().await {
-                            info!(target = "citadel", "Test to service {:?}", msg);
-                            send(&mut sink, msg).await.unwrap();
-                        }
-                    };
-
-                    let mut internal_services: Vec<
-                        Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
-                    > = Vec::new();
-                    internal_services.push(Box::pin(async move {
-                        test_to_service.await;
-                        Ok(())
-                    }));
-                    internal_services.push(Box::pin(async move {
-                        service_to_test.await;
-                        Ok(())
-                    }));
-                    spawn_services(internal_services);
-                    return_results.push((to_service_sender, from_service, cid));
-                } else {
-                    panic!("Connection to server was not a success");
-                }
+                let mut internal_services: Vec<
+                    Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
+                > = Vec::new();
+                internal_services.push(Box::pin(async move {
+                    test_to_service.await;
+                    Ok(())
+                }));
+                internal_services.push(Box::pin(async move {
+                    service_to_test.await;
+                    Ok(())
+                }));
+                spawn_services(internal_services);
+                return_results.push((to_service_sender, from_service, cid));
             } else {
-                panic!("Registration to server was not a success");
+                panic!("Connection to server was not a success");
             }
         } else {
-            panic!("Wrong packet type");
+            panic!("Registration to server was not a success");
         }
     }
     Ok(return_results)
@@ -384,11 +355,10 @@ pub fn spawn_services(
 }
 
 pub async fn send(
-    sink: &mut SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
+    sink: &mut WrappedSink,
     command: InternalServiceRequest,
 ) -> Result<(), Box<dyn Error>> {
-    let command = bincode2::serialize(&command)?;
-    sink.send(command.into()).await?;
+    sink.send(command).await?;
     Ok(())
 }
 

@@ -830,6 +830,12 @@ pub struct PeerSessionInformation {
     pub peer_username: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum InternalServicePayload {
+    Request(InternalServiceRequest),
+    Response(InternalServiceResponse),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
