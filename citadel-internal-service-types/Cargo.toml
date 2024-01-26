@@ -10,3 +10,4 @@ serde = { workspace = true, features = ["derive"] }
 citadel_types = { workspace = true }
 bytes = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
+citadel-internal-service-macros = { workspace = true }
