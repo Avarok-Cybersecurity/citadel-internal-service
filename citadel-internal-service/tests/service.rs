@@ -5,7 +5,7 @@ mod tests {
     use crate::common::{
         register_and_connect_to_server, register_and_connect_to_server_then_peers, send,
         server_info_reactive_skip_cert_verification, server_info_skip_cert_verification,
-        spawn_services, test_kv_for_service, RegisterAndConnectItems,
+        spawn_services, test_kv_for_service, InternalServicesFutures, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_connector::util::InternalServiceConnector;
@@ -17,9 +17,7 @@ mod tests {
     use core::panic;
     use futures::StreamExt;
     use std::error::Error;
-    use std::future::Future;
     use std::net::SocketAddr;
-    use std::pin::Pin;
     use std::time::Duration;
     use uuid::Uuid;
 
@@ -389,9 +387,7 @@ mod tests {
             ))
             .unwrap();
 
-        let mut internal_services: Vec<
-            Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
-        > = Vec::new();
+        let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
         internal_services.push(Box::pin(async move {
             match internal_service.await {
                 Err(err) => Err(Box::try_from(err).unwrap()),

@@ -42,9 +42,8 @@ mod tests {
         let (to_service_c, mut from_service_c, cid_c) =
             peer_return_handle_vec.take_next_service_handle();
 
-        let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
-        initial_users_to_invite.push(UserIdentifier::from(cid_b));
-        initial_users_to_invite.push(UserIdentifier::from(cid_c));
+        let initial_users_to_invite =
+            vec![UserIdentifier::from(cid_b), UserIdentifier::from(cid_c)];
         let send_group_create_payload = InternalServiceRequest::GroupCreate {
             cid: cid_a,
             request_id: Uuid::new_v4(),
@@ -590,9 +589,8 @@ mod tests {
         let (to_service_c, mut from_service_c, cid_c) =
             peer_return_handle_vec.take_next_service_handle();
 
-        let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
-        initial_users_to_invite.push(UserIdentifier::from(cid_b));
-        initial_users_to_invite.push(UserIdentifier::from(cid_c));
+        let initial_users_to_invite =
+            vec![UserIdentifier::from(cid_b), UserIdentifier::from(cid_c)];
         let send_group_create_payload = InternalServiceRequest::GroupCreate {
             cid: cid_a,
             request_id: Uuid::new_v4(),
@@ -800,9 +798,8 @@ mod tests {
         let (to_service_c, mut from_service_c, cid_c) =
             peer_return_handle_vec.take_next_service_handle();
 
-        let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
-        initial_users_to_invite.push(UserIdentifier::from(cid_b));
-        initial_users_to_invite.push(UserIdentifier::from(cid_c));
+        let initial_users_to_invite =
+            vec![UserIdentifier::from(cid_b), UserIdentifier::from(cid_c)];
         let send_group_create_payload = InternalServiceRequest::GroupCreate {
             cid: cid_a,
             request_id: Uuid::new_v4(),
@@ -1009,9 +1006,8 @@ mod tests {
         let (to_service_c, mut from_service_c, cid_c) =
             peer_return_handle_vec.take_next_service_handle();
 
-        let mut initial_users_to_invite: Vec<UserIdentifier> = Vec::new();
-        initial_users_to_invite.push(UserIdentifier::from(cid_b));
-        initial_users_to_invite.push(UserIdentifier::from(cid_c));
+        let initial_users_to_invite =
+            vec![UserIdentifier::from(cid_b), UserIdentifier::from(cid_c)];
         let send_group_create_payload = InternalServiceRequest::GroupCreate {
             cid: cid_a,
             request_id: Uuid::new_v4(),

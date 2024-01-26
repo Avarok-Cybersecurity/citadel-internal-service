@@ -31,6 +31,9 @@ pub struct RegisterAndConnectItems<T: Into<String>, R: Into<String>, S: Into<Sec
     pub password: S,
 }
 
+pub type InternalServicesFutures =
+    Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>;
+
 pub type PeerReturnHandle = (
     UnboundedSender<InternalServiceRequest>,
     UnboundedReceiver<InternalServiceResponse>,
@@ -139,9 +142,7 @@ pub async fn register_and_connect_to_server<
                     }
                 };
 
-                let mut internal_services: Vec<
-                    Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
-                > = Vec::new();
+                let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
                 internal_services.push(Box::pin(async move {
                     test_to_service.await;
                     Ok(())
@@ -168,9 +169,7 @@ pub async fn register_and_connect_to_server_then_peers(
     // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
     let (server, server_bind_address) = server_info_skip_cert_verification();
     tokio::task::spawn(server);
-    let mut internal_services: Vec<
-        Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
-    > = Vec::new();
+    let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
 
     for int_svc_addr_iter in int_svc_addrs.clone() {
         let bind_address_internal_service = int_svc_addr_iter;
@@ -333,11 +332,7 @@ pub async fn register_and_connect_to_server_then_peers(
     Ok(returned_service_info)
 }
 
-pub fn spawn_services(
-    futures_to_spawn: Vec<
-        Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + Send + 'static>>,
-    >,
-) {
+pub fn spawn_services(futures_to_spawn: Vec<InternalServicesFutures>) {
     let services_to_spawn = async move {
         let (returned_future, _, _) = futures::future::select_all(futures_to_spawn).await;
         match returned_future {
@@ -382,7 +377,7 @@ pub fn server_test_node_skip_cert_verification<'a, K: NetKernel + 'a>(
 }
 
 pub fn server_info_skip_cert_verification<'a>() -> (NodeFuture<'a, EmptyKernel>, SocketAddr) {
-    server_test_node_skip_cert_verification(EmptyKernel::default(), |_| {})
+    server_test_node_skip_cert_verification(EmptyKernel, |_| {})
 }
 
 pub fn server_info_reactive_skip_cert_verification<'a, F: 'a, Fut: 'a>(
