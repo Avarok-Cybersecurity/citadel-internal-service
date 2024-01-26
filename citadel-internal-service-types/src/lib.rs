@@ -1,4 +1,5 @@
 use bytes::BytesMut;
+use citadel_internal_service_macros::IsError;
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -543,7 +544,7 @@ pub struct FileTransferTick {
     pub status: ObjectTransferStatus,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, IsError)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectionFailure(ConnectionFailure),
@@ -827,4 +828,23 @@ pub struct PeerSessionInformation {
     pub cid: u64,
     pub peer_cid: u64,
     pub peer_username: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_error_derive() {
+        let success_response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
+            cid: 0,
+            request_id: None,
+        });
+        let error_response = InternalServiceResponse::ConnectionFailure(ConnectionFailure {
+            message: "test".to_string(),
+            request_id: None,
+        });
+        assert!(!success_response.is_error());
+        assert!(error_response.is_error());
+    }
 }
