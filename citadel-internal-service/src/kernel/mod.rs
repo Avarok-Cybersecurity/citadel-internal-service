@@ -420,15 +420,18 @@ impl NetKernel for CitadelWorkspaceService {
                 PeerSignal::PostRegister {
                     peer_conn_type:
                         PeerConnectionType::LocalGroupPeer {
-                            implicated_cid,
-                            peer_cid,
+                            implicated_cid: peer_cid,
+                            peer_cid: implicated_cid,
                         },
                     inviter_username,
                     invitee_username: _,
                     ticket_opt: _,
                     invitee_response: _,
                 } => {
-                    if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
+                    info!(target: "citadel", "Received Register Request from {peer_cid:?}");
+                    let mut server_connection_map = self.server_connection_map.lock().await;
+                    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
+                        info!(target: "citadel", "POST REGISTER CHECKPOINT");
                         let response =
                             InternalServiceResponse::PeerRegisterRequest(PeerRegisterRequest {
                                 cid: implicated_cid,
@@ -439,7 +442,7 @@ impl NetKernel for CitadelWorkspaceService {
                         send_response_to_tcp_client(
                             &self.tcp_connection_map,
                             response,
-                            conn.associated_tcp_connection,
+                            connection.associated_tcp_connection,
                         )
                         .await;
                     }
@@ -447,15 +450,18 @@ impl NetKernel for CitadelWorkspaceService {
                 PeerSignal::PostConnect {
                     peer_conn_type:
                         PeerConnectionType::LocalGroupPeer {
-                            implicated_cid,
-                            peer_cid,
+                            implicated_cid: peer_cid,
+                            peer_cid: implicated_cid,
                         },
                     ticket_opt: _,
                     invitee_response: _,
                     session_security_settings,
                     udp_mode,
                 } => {
-                    if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
+                    info!(target: "citadel", "Received Connect Request from {peer_cid:?}");
+                    let mut server_connection_map = self.server_connection_map.lock().await;
+                    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
+                        info!(target: "citadel", "POST CONNECT CHECKPOINT");
                         let response =
                             InternalServiceResponse::PeerConnectRequest(PeerConnectRequest {
                                 cid: implicated_cid,
@@ -467,7 +473,7 @@ impl NetKernel for CitadelWorkspaceService {
                         send_response_to_tcp_client(
                             &self.tcp_connection_map,
                             response,
-                            conn.associated_tcp_connection,
+                            connection.associated_tcp_connection,
                         )
                         .await;
                     }
