@@ -139,6 +139,23 @@ pub struct PeerDisconnectFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PeerConnectRequest {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub session_security_settings: SessionSecuritySettings,
+    pub udp_mode: UdpMode,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PeerRegisterRequest {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub peer_username: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PeerRegisterSuccess {
     pub cid: u64,
     pub peer_cid: u64,
@@ -567,6 +584,8 @@ pub enum InternalServiceResponse {
     DeleteVirtualFileFailure(DeleteVirtualFileFailure),
     PeerConnectSuccess(PeerConnectSuccess),
     PeerConnectFailure(PeerConnectFailure),
+    PeerConnectRequest(PeerConnectRequest),
+    PeerRegisterRequest(PeerRegisterRequest),
     PeerDisconnectSuccess(PeerDisconnectSuccess),
     PeerDisconnectFailure(PeerDisconnectFailure),
     PeerRegisterSuccess(PeerRegisterSuccess),

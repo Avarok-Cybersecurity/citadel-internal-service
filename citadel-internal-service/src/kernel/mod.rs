@@ -417,6 +417,61 @@ impl NetKernel for CitadelWorkspaceService {
                     )
                     .await;
                 }
+                PeerSignal::PostRegister {
+                    peer_conn_type:
+                        PeerConnectionType::LocalGroupPeer {
+                            implicated_cid,
+                            peer_cid,
+                        },
+                    inviter_username,
+                    invitee_username: _,
+                    ticket_opt: _,
+                    invitee_response: _,
+                } => {
+                    if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
+                        let response =
+                            InternalServiceResponse::PeerRegisterRequest(PeerRegisterRequest {
+                                cid: implicated_cid,
+                                peer_cid,
+                                peer_username: inviter_username,
+                                request_id: None,
+                            });
+                        send_response_to_tcp_client(
+                            &self.tcp_connection_map,
+                            response,
+                            conn.associated_tcp_connection,
+                        )
+                        .await;
+                    }
+                }
+                PeerSignal::PostConnect {
+                    peer_conn_type:
+                        PeerConnectionType::LocalGroupPeer {
+                            implicated_cid,
+                            peer_cid,
+                        },
+                    ticket_opt: _,
+                    invitee_response: _,
+                    session_security_settings,
+                    udp_mode,
+                } => {
+                    if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
+                        let response =
+                            InternalServiceResponse::PeerConnectRequest(PeerConnectRequest {
+                                cid: implicated_cid,
+                                peer_cid,
+                                session_security_settings,
+                                udp_mode,
+                                request_id: None,
+                            });
+                        send_response_to_tcp_client(
+                            &self.tcp_connection_map,
+                            response,
+                            conn.associated_tcp_connection,
+                        )
+                        .await;
+                    }
+                }
                 _ => {}
             },
 
