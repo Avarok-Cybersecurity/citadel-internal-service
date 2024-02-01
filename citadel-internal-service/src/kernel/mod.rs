@@ -431,13 +431,14 @@ impl NetKernel for CitadelWorkspaceService {
                     info!(target: "citadel", "User {implicated_cid:?} received Register Request from {peer_cid:?}");
                     let mut server_connection_map = self.server_connection_map.lock().await;
                     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                        let response =
-                            InternalServiceResponse::PeerRegisterRequest(PeerRegisterRequest {
+                        let response = InternalServiceResponse::PeerRegisterNotification(
+                            PeerRegisterNotification {
                                 cid: implicated_cid,
                                 peer_cid,
                                 peer_username: inviter_username,
                                 request_id: None,
-                            });
+                            },
+                        );
                         send_response_to_tcp_client(
                             &self.tcp_connection_map,
                             response,
@@ -460,14 +461,15 @@ impl NetKernel for CitadelWorkspaceService {
                     info!(target: "citadel", "User {implicated_cid:?} received Connect Request from {peer_cid:?}");
                     let mut server_connection_map = self.server_connection_map.lock().await;
                     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                        let response =
-                            InternalServiceResponse::PeerConnectRequest(PeerConnectRequest {
+                        let response = InternalServiceResponse::PeerConnectNotification(
+                            PeerConnectNotification {
                                 cid: implicated_cid,
                                 peer_cid,
                                 session_security_settings,
                                 udp_mode,
                                 request_id: None,
-                            });
+                            },
+                        );
                         send_response_to_tcp_client(
                             &self.tcp_connection_map,
                             response,

@@ -35,7 +35,7 @@ mod tests {
             exit(1);
         }));
 
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
 
@@ -92,7 +92,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_peer_standard_file_transfer() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
@@ -181,7 +181,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_c2s_revfs() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
 
@@ -302,7 +302,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_peer_revfs() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B

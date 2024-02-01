@@ -23,6 +23,14 @@ use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
+pub fn setup_log() {
+    citadel_logging::setup_log();
+    std::panic::set_hook(Box::new(|info| {
+        citadel_logging::error!(target: "citadel", "Panic: {:?}", info);
+        std::process::exit(1);
+    }));
+}
+
 pub struct RegisterAndConnectItems<T: Into<String>, R: Into<String>, S: Into<SecBuffer>> {
     pub internal_service_addr: SocketAddr,
     pub server_addr: SocketAddr,

@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_internal_service_macros::IsError;
+use citadel_internal_service_macros::{IsError, IsNotification};
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -139,7 +139,7 @@ pub struct PeerDisconnectFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PeerConnectRequest {
+pub struct PeerConnectNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub session_security_settings: SessionSecuritySettings,
@@ -148,7 +148,7 @@ pub struct PeerConnectRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PeerRegisterRequest {
+pub struct PeerRegisterNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub peer_username: String,
@@ -541,7 +541,7 @@ pub struct GetSessions {
 pub struct FileTransferRequest {
     pub cid: u64,
     pub peer_cid: u64,
-    pub metadata: VirtualObjectMetadata, // TODO: metadata: VirtualObjectMetadata
+    pub metadata: VirtualObjectMetadata,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -561,7 +561,7 @@ pub struct FileTransferTick {
     pub status: ObjectTransferStatus,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, IsError)]
+#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectionFailure(ConnectionFailure),
@@ -584,8 +584,8 @@ pub enum InternalServiceResponse {
     DeleteVirtualFileFailure(DeleteVirtualFileFailure),
     PeerConnectSuccess(PeerConnectSuccess),
     PeerConnectFailure(PeerConnectFailure),
-    PeerConnectRequest(PeerConnectRequest),
-    PeerRegisterRequest(PeerRegisterRequest),
+    PeerConnectNotification(PeerConnectNotification),
+    PeerRegisterNotification(PeerRegisterNotification),
     PeerDisconnectSuccess(PeerDisconnectSuccess),
     PeerDisconnectFailure(PeerDisconnectFailure),
     PeerRegisterSuccess(PeerRegisterSuccess),
@@ -871,5 +871,22 @@ mod tests {
         });
         assert!(!success_response.is_error());
         assert!(error_response.is_error());
+    }
+
+    #[test]
+    fn test_is_notification_derive() {
+        let success_response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
+            cid: 0,
+            request_id: None,
+        });
+        let notification_response =
+            InternalServiceResponse::PeerRegisterNotification(PeerRegisterNotification {
+                cid: 0,
+                peer_cid: 0,
+                peer_username: "".to_string(),
+                request_id: None,
+            });
+        assert!(!success_response.is_notification());
+        assert!(notification_response.is_notification());
     }
 }
