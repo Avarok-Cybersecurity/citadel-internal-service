@@ -245,8 +245,10 @@ pub async fn register_and_connect_to_server_then_peers(
                 })
                 .unwrap();
 
-            let item = from_service_b.recv().await.unwrap();
+            // Receive Notification of Register Request
+            let _ = from_service_b.recv().await.unwrap();
 
+            let item = from_service_b.recv().await.unwrap();
             match item {
                 InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
                     cid,
@@ -297,6 +299,9 @@ pub async fn register_and_connect_to_server_then_peers(
                     session_security_settings,
                 })
                 .unwrap();
+
+            // Receive Notification of Connect Request
+            let _ = from_service_b.recv().await.unwrap();
 
             let item = from_service_b.recv().await.unwrap();
             match item {

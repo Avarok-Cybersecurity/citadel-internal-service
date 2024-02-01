@@ -779,12 +779,12 @@ pub async fn handle_request(
                             if let Ok(target_information) =
                                 account_manager.find_target_information(cid, peer_cid).await
                             {
-                                let (peer_cid, mutual_peer) = target_information.unwrap();
+                                let (_, mutual_peer) = target_information.unwrap();
                                 match connect_after_register {
                                     true => {
                                         let connect_command = InternalServiceRequest::PeerConnect {
                                             cid,
-                                            peer_cid,
+                                            peer_cid: mutual_peer.cid.clone(),
                                             udp_mode: Default::default(),
                                             session_security_settings,
                                             request_id,
@@ -805,7 +805,7 @@ pub async fn handle_request(
                                             InternalServiceResponse::PeerRegisterSuccess(
                                                 PeerRegisterSuccess {
                                                     cid,
-                                                    peer_cid,
+                                                    peer_cid: mutual_peer.cid.clone(),
                                                     peer_username: mutual_peer
                                                         .username
                                                         .clone()
