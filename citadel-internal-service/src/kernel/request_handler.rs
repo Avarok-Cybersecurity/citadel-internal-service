@@ -784,7 +784,7 @@ pub async fn handle_request(
                                     true => {
                                         let connect_command = InternalServiceRequest::PeerConnect {
                                             cid,
-                                            peer_cid: mutual_peer.cid.clone(),
+                                            peer_cid: mutual_peer.cid,
                                             udp_mode: Default::default(),
                                             session_security_settings,
                                             request_id,
@@ -805,7 +805,7 @@ pub async fn handle_request(
                                             InternalServiceResponse::PeerRegisterSuccess(
                                                 PeerRegisterSuccess {
                                                     cid,
-                                                    peer_cid: mutual_peer.cid.clone(),
+                                                    peer_cid: mutual_peer.cid,
                                                     peer_username: mutual_peer
                                                         .username
                                                         .clone()
