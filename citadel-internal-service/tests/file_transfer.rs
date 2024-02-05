@@ -8,9 +8,9 @@ mod tests {
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
-        DeleteVirtualFileSuccess, DownloadFileFailure, FileTransferRequest, FileTransferStatus,
-        FileTransferTick, InternalServiceRequest, InternalServiceResponse, SendFileFailure,
-        SendFileRequestSent,
+        DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess, FileTransferRequest,
+        FileTransferStatus, FileTransferTick, InternalServiceRequest, InternalServiceResponse,
+        SendFileFailure, SendFileRequestSent,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
@@ -349,7 +349,7 @@ mod tests {
                 let file_transfer_accept_payload = InternalServiceRequest::RespondFileTransfer {
                     cid: *cid_b,
                     peer_cid: *cid_a,
-                    object_id: metadata.object_id as _,
+                    object_id: metadata.object_id,
                     accept: true,
                     download_location: None,
                     request_id: Uuid::new_v4(),
@@ -363,6 +363,9 @@ mod tests {
             panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
         }
 
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
+
         // Download P2P REVFS file - without delete on pull
         let download_file_command = InternalServiceRequest::DownloadFile {
             virtual_directory: virtual_path.clone(),
@@ -373,9 +376,18 @@ mod tests {
             request_id: Uuid::new_v4(),
         };
         to_service_a.send(download_file_command).unwrap();
-
-        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
-        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+        let download_file_response = from_service_a.recv().await.unwrap();
+        match download_file_response {
+            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
+                cid: response_cid,
+                request_id: _,
+            }) => {
+                assert_eq!(*cid_a, response_cid);
+            }
+            _ => {
+                panic!("Didn't get the REVFS DownloadFileSuccess - instead got {download_file_response:?}");
+            }
+        }
 
         // Delete file on Peer REVFS
         let delete_file_command = InternalServiceRequest::DeleteVirtualFile {
@@ -394,8 +406,7 @@ mod tests {
                 assert_eq!(*cid_a, response_cid);
             }
             _ => {
-                info!(target = "citadel", "{:?}", delete_file_response);
-                panic!("Didn't get the REVFS DeleteVirtualFileSuccess");
+                panic!("Didn't get the REVFS DeleteVirtualFileSuccess - instead got {delete_file_response:?}");
             }
         }
         info!(target: "citadel","{delete_file_response:?}");
@@ -460,8 +471,10 @@ mod tests {
                         info!(target: "citadel", "File Transfer (Sending) Completed");
                         return;
                     }
-                    ObjectTransferStatus::TransferBeginning
-                    | ObjectTransferStatus::TransferTick(..) => {}
+                    ObjectTransferStatus::TransferBeginning => {
+                        info!(target: "citadel", "File Transfer (Sending) Beginning");
+                    }
+                    ObjectTransferStatus::TransferTick(..) => {}
                     _ => {
                         panic!("File Send Reception Status Yielded Unexpected Response")
                     }

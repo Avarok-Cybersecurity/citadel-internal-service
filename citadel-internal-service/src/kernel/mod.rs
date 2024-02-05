@@ -291,6 +291,7 @@ impl NetKernel for CitadelWorkspaceService {
                 };
 
                 citadel_logging::info!(target: "citadel", "Orientation: {:?}", object_transfer_handler.orientation);
+                info!(target: "citadel", "ObjectTransferHandle has implicated_cid: {implicated_cid:?} and peer_cid {peer_cid:?}");
 
                 // When we receive a handle, there are two possibilities:
                 // A: We are the sender of the file transfer, in which case we can assume the adjacent node
@@ -802,9 +803,11 @@ fn spawn_tick_updater(
                             status: status_message,
                         });
                         match entry.send(message.clone()) {
-                            Ok(res) => res,
-                            Err(_) => {
-                                info!(target: "citadel", "File Transfer Status Tick Not Sent")
+                            Ok(_res) => {
+                                info!(target: "citadel", "File Transfer Status Tick Sent");
+                            }
+                            Err(err) => {
+                                warn!(target: "citadel", "File Transfer Status Tick Not Sent: {err:?}");
                             }
                         }
 
@@ -813,14 +816,16 @@ fn spawn_tick_updater(
                             ObjectTransferStatus::TransferComplete { .. }
                                 | ObjectTransferStatus::ReceptionComplete
                         ) {
+                            info!(target: "citadel", "File Transfer Completed - Ending Tick Updater");
                             break;
                         }
                     }
                     None => {
-                        info!(target:"citadel","Connection not found during File Transfer Status Tick")
+                        warn!(target:"citadel","Connection not found during File Transfer Status Tick")
                     }
                 }
             }
+            info!(target:"citadel", "Spawned Tick Updater has ended for {implicated_cid:?}");
         };
         tokio::task::spawn(sender_status_updater);
     } else {
