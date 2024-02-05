@@ -5,10 +5,11 @@ mod tests {
     use crate::common::*;
     use bytes::BytesMut;
     use citadel_internal_service_types::{
-        GroupCreateSuccess, GroupDisconnected, GroupEndSuccess, GroupEnded, GroupInvitation,
-        GroupInviteSuccess, GroupJoinRequestReceived, GroupKickFailure, GroupKickSuccess,
-        GroupLeaveSuccess, GroupLeft, GroupListGroupsForSuccess, GroupMemberStateChanged,
-        GroupMessageReceived, GroupMessageResponse, GroupMessageSuccess, GroupRequestDeclined,
+        GroupCreateSuccess, GroupDisconnectNotification, GroupEndNotification, GroupEndSuccess,
+        GroupInviteNotification, GroupInviteSuccess, GroupJoinRequestNotification,
+        GroupKickFailure, GroupKickSuccess, GroupLeaveNotification, GroupLeaveSuccess,
+        GroupListGroupsSuccess, GroupMemberStateChangeNotification, GroupMessageNotification,
+        GroupMessageResponse, GroupMessageSuccess, GroupRequestJoinDeclineResponse,
         GroupRequestJoinFailure, GroupRequestJoinSuccess, GroupRespondRequestFailure,
         GroupRespondRequestSuccess, InternalServiceRequest, InternalServiceResponse,
     };
@@ -64,7 +65,7 @@ mod tests {
             // Service B Declines Group Invitation
             let service_b_group_create_invite = from_service_b.recv().await.unwrap();
             info!(target: "citadel","Service B: {service_b_group_create_invite:?}");
-            if let InternalServiceResponse::GroupInvitation(GroupInvitation {
+            if let InternalServiceResponse::GroupInviteNotification(GroupInviteNotification {
                 cid: _,
                 peer_cid,
                 group_key,
@@ -113,7 +114,7 @@ mod tests {
             // Service C Accepts Group Invitation
             let service_c_group_create_invite = from_service_c.recv().await.unwrap();
             info!(target: "citadel","Service C: {service_c_group_create_invite:?}");
-            if let InternalServiceResponse::GroupInvitation(GroupInvitation {
+            if let InternalServiceResponse::GroupInviteNotification(GroupInviteNotification {
                 cid: _,
                 peer_cid,
                 group_key,
@@ -218,7 +219,7 @@ mod tests {
                 let service_b_group_inbound = from_service_b.recv().await.unwrap();
                 let owner_group_key = *group_key;
                 info!(target: "citadel","Service B: {service_b_group_inbound:?}");
-                if let InternalServiceResponse::GroupInvitation(GroupInvitation {
+                if let InternalServiceResponse::GroupInviteNotification(GroupInviteNotification {
                     cid: _,
                     peer_cid,
                     group_key,
@@ -281,7 +282,7 @@ mod tests {
                 let service_c_group_inbound = from_service_c.recv().await.unwrap();
                 let owner_group_key = *group_key;
                 info!(target: "citadel","Service C: {service_c_group_inbound:?}");
-                if let InternalServiceResponse::GroupInvitation(GroupInvitation {
+                if let InternalServiceResponse::GroupInviteNotification(GroupInviteNotification {
                     cid: _,
                     peer_cid,
                     group_key,
@@ -378,7 +379,7 @@ mod tests {
             to_service_b.send(service_b_group_outbound).unwrap();
             info!(target: "citadel","Service B Requesting Groups for Service A");
             let service_b_group_inbound = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::GroupListGroupsForSuccess(GroupListGroupsForSuccess {
+            if let InternalServiceResponse::GroupListGroupsSuccess(GroupListGroupsSuccess {
                 cid: _,
                 peer_cid: _,
                 group_list,
@@ -418,8 +419,8 @@ mod tests {
                     }
 
                     let service_a_group_inbound = from_service_a.recv().await.unwrap();
-                    if let InternalServiceResponse::GroupJoinRequestReceived(
-                        GroupJoinRequestReceived {
+                    if let InternalServiceResponse::GroupJoinRequestNotification(
+                        GroupJoinRequestNotification {
                             cid: _,
                             peer_cid: _,
                             group_key,
@@ -443,8 +444,8 @@ mod tests {
                         info!(target: "citadel","Service A Accepted Join Request");
 
                         let service_b_group_inbound = from_service_b.recv().await.unwrap();
-                        if let InternalServiceResponse::GroupMemberStateChanged(
-                            GroupMemberStateChanged {
+                        if let InternalServiceResponse::GroupMemberStateChangeNotification(
+                            GroupMemberStateChangeNotification {
                                 cid: _,
                                 group_key: joined_group,
                                 state,
@@ -480,7 +481,7 @@ mod tests {
             to_service_c.send(service_c_group_outbound).unwrap();
             info!(target: "citadel","Service C Requesting Groups for Service A");
             let service_c_group_inbound = from_service_c.recv().await.unwrap();
-            if let InternalServiceResponse::GroupListGroupsForSuccess(GroupListGroupsForSuccess {
+            if let InternalServiceResponse::GroupListGroupsSuccess(GroupListGroupsSuccess {
                 cid: _,
                 peer_cid: _,
                 group_list,
@@ -520,8 +521,8 @@ mod tests {
                     }
 
                     let service_a_group_inbound = from_service_a.recv().await.unwrap();
-                    if let InternalServiceResponse::GroupJoinRequestReceived(
-                        GroupJoinRequestReceived {
+                    if let InternalServiceResponse::GroupJoinRequestNotification(
+                        GroupJoinRequestNotification {
                             cid: _,
                             peer_cid: _,
                             group_key,
@@ -541,8 +542,8 @@ mod tests {
                         to_service_a.send(service_a_group_outbound).unwrap();
                         info!(target: "citadel","Service A Declined Join Request");
                         let service_c_group_inbound = from_service_c.recv().await.unwrap();
-                        if let InternalServiceResponse::GroupRequestDeclined(
-                            GroupRequestDeclined { .. },
+                        if let InternalServiceResponse::GroupRequestJoinDeclineResponse(
+                            GroupRequestJoinDeclineResponse { .. },
                         ) = &service_c_group_inbound
                         {
                             info!(target: "citadel", "Service C Successfully Received Decline Response for Request Join");
@@ -611,7 +612,7 @@ mod tests {
             // Service B Accepts Invitation
             let service_b_group_create_invite = from_service_b.recv().await.unwrap();
             info!(target: "citadel","Service B: {service_b_group_create_invite:?}");
-            if let InternalServiceResponse::GroupInvitation(GroupInvitation {
+            if let InternalServiceResponse::GroupInviteNotification(GroupInviteNotification {
                 cid: _,
                 peer_cid,
                 group_key,
@@ -659,7 +660,7 @@ mod tests {
             // Service C Accepts Group Invitation
             let service_c_group_create_invite = from_service_c.recv().await.unwrap();
             info!(target: "citadel","Service C: {service_c_group_create_invite:?}");
-            if let InternalServiceResponse::GroupInvitation(GroupInvitation {
+            if let InternalServiceResponse::GroupInviteNotification(GroupInviteNotification {
                 cid: _,
                 peer_cid,
                 group_key,
@@ -720,7 +721,7 @@ mod tests {
                 panic!("Service C panicked while attempting to leave group");
             }
             let service_c_inbound = from_service_c.recv().await.unwrap();
-            if let InternalServiceResponse::GroupLeft(GroupLeft {
+            if let InternalServiceResponse::GroupLeaveNotification(GroupLeaveNotification {
                 cid: _,
                 group_key: _,
                 success,
@@ -751,7 +752,7 @@ mod tests {
                 &service_a_inbound
             {
                 let service_a_inbound = from_service_a.recv().await.unwrap();
-                if let InternalServiceResponse::GroupEnded(GroupEnded {
+                if let InternalServiceResponse::GroupEndNotification(GroupEndNotification {
                     cid: _,
                     group_key: ended_group,
                     success,
@@ -817,7 +818,9 @@ mod tests {
         {
             // Service B Accepts Invitation
             let service_b_group_create_invite = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::GroupInvitation(..) = &service_b_group_create_invite {
+            if let InternalServiceResponse::GroupInviteNotification(..) =
+                &service_b_group_create_invite
+            {
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
                     cid: cid_b,
                     peer_cid: cid_a,
@@ -843,7 +846,9 @@ mod tests {
 
             // Service C Accepts Group Invitation
             let service_c_group_create_invite = from_service_c.recv().await.unwrap();
-            if let InternalServiceResponse::GroupInvitation(..) = &service_c_group_create_invite {
+            if let InternalServiceResponse::GroupInviteNotification(..) =
+                &service_c_group_create_invite
+            {
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
                     cid: cid_c,
                     peer_cid: cid_a,
@@ -932,20 +937,24 @@ mod tests {
             // Service B is notified that it was kicked
             let _ = from_service_b.recv().await.unwrap(); // MemberStateChanged from Service C Joining
             let service_b_inbound = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::GroupDisconnected(GroupDisconnected {
-                cid: _,
-                group_key: disconnected_group,
-                request_id: _,
-            }) = &service_b_inbound
+            if let InternalServiceResponse::GroupDisconnectNotification(
+                GroupDisconnectNotification {
+                    cid: _,
+                    group_key: disconnected_group,
+                    request_id: _,
+                },
+            ) = &service_b_inbound
             {
                 assert_eq!(group_key, disconnected_group);
-            } else if let InternalServiceResponse::GroupLeft(GroupLeft {
-                cid: _,
-                group_key: group_left,
-                success: _,
-                message: _,
-                request_id: _,
-            }) = &service_b_inbound
+            } else if let InternalServiceResponse::GroupLeaveNotification(
+                GroupLeaveNotification {
+                    cid: _,
+                    group_key: group_left,
+                    success: _,
+                    message: _,
+                    request_id: _,
+                },
+            ) = &service_b_inbound
             {
                 assert_eq!(group_key, group_left);
             } else {
@@ -956,20 +965,24 @@ mod tests {
             let _ = from_service_c.recv().await.unwrap(); // MemberStateChanged from Service B getting kicked
             let _ = from_service_c.recv().await.unwrap(); // Extra MemberStateChanged Not Needed here
             let service_c_inbound = from_service_c.recv().await.unwrap();
-            if let InternalServiceResponse::GroupDisconnected(GroupDisconnected {
-                cid: _,
-                group_key: disconnected_group,
-                request_id: _,
-            }) = &service_c_inbound
+            if let InternalServiceResponse::GroupDisconnectNotification(
+                GroupDisconnectNotification {
+                    cid: _,
+                    group_key: disconnected_group,
+                    request_id: _,
+                },
+            ) = &service_c_inbound
             {
                 assert_eq!(group_key, disconnected_group);
-            } else if let InternalServiceResponse::GroupLeft(GroupLeft {
-                cid: _,
-                group_key: group_left,
-                success: _,
-                message: _,
-                request_id: _,
-            }) = &service_c_inbound
+            } else if let InternalServiceResponse::GroupLeaveNotification(
+                GroupLeaveNotification {
+                    cid: _,
+                    group_key: group_left,
+                    success: _,
+                    message: _,
+                    request_id: _,
+                },
+            ) = &service_c_inbound
             {
                 assert_eq!(group_key, group_left);
             } else {
@@ -1025,7 +1038,9 @@ mod tests {
         {
             // Service B Accepts Invitation
             let service_b_group_create_invite = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::GroupInvitation(..) = &service_b_group_create_invite {
+            if let InternalServiceResponse::GroupInviteNotification(..) =
+                &service_b_group_create_invite
+            {
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
                     cid: cid_b,
                     peer_cid: cid_a,
@@ -1051,7 +1066,9 @@ mod tests {
 
             // Service C Accepts Group Invitation
             let service_c_group_create_invite = from_service_c.recv().await.unwrap();
-            if let InternalServiceResponse::GroupInvitation(..) = &service_c_group_create_invite {
+            if let InternalServiceResponse::GroupInviteNotification(..) =
+                &service_c_group_create_invite
+            {
                 let group_invite_response = InternalServiceRequest::GroupRespondRequest {
                     cid: cid_c,
                     peer_cid: cid_a,
@@ -1098,13 +1115,15 @@ mod tests {
 
                 // All Services Receive Message
                 let service_b_inbound = from_service_b.recv().await.unwrap();
-                if let InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
-                    cid: _,
-                    peer_cid: _,
-                    message,
-                    group_key: _,
-                    request_id: _,
-                }) = &service_b_inbound
+                if let InternalServiceResponse::GroupMessageNotification(
+                    GroupMessageNotification {
+                        cid: _,
+                        peer_cid: _,
+                        message,
+                        group_key: _,
+                        request_id: _,
+                    },
+                ) = &service_b_inbound
                 {
                     info!(target: "citadel","Service B received message from Group A");
                     assert_eq!(*message, service_a_message.clone());
@@ -1112,13 +1131,15 @@ mod tests {
                     panic!("Service B Did Not Receive Message - instead received {service_b_inbound:?}");
                 }
                 let service_c_inbound = from_service_c.recv().await.unwrap();
-                if let InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
-                    cid: _,
-                    peer_cid: _,
-                    message,
-                    group_key: _,
-                    request_id: _,
-                }) = &service_c_inbound
+                if let InternalServiceResponse::GroupMessageNotification(
+                    GroupMessageNotification {
+                        cid: _,
+                        peer_cid: _,
+                        message,
+                        group_key: _,
+                        request_id: _,
+                    },
+                ) = &service_c_inbound
                 {
                     info!(target: "citadel","Service C received message from Group A");
                     assert_eq!(*message, service_a_message.clone());
@@ -1161,13 +1182,15 @@ mod tests {
 
                 // All Services Receive Message
                 let service_a_inbound = from_service_a.recv().await.unwrap();
-                if let InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
-                    cid: _,
-                    peer_cid: _,
-                    message,
-                    group_key: _,
-                    request_id: _,
-                }) = &service_a_inbound
+                if let InternalServiceResponse::GroupMessageNotification(
+                    GroupMessageNotification {
+                        cid: _,
+                        peer_cid: _,
+                        message,
+                        group_key: _,
+                        request_id: _,
+                    },
+                ) = &service_a_inbound
                 {
                     info!(target: "citadel","Service A received message from Service B in Group");
                     assert_eq!(*message, service_b_message.clone());
@@ -1175,13 +1198,15 @@ mod tests {
                     panic!("Service A Did Not Receive Message - instead received {service_a_inbound:?}");
                 }
                 let service_c_inbound = from_service_c.recv().await.unwrap();
-                if let InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
-                    cid: _,
-                    peer_cid: _,
-                    message,
-                    group_key: _,
-                    request_id: _,
-                }) = &service_c_inbound
+                if let InternalServiceResponse::GroupMessageNotification(
+                    GroupMessageNotification {
+                        cid: _,
+                        peer_cid: _,
+                        message,
+                        group_key: _,
+                        request_id: _,
+                    },
+                ) = &service_c_inbound
                 {
                     info!(target: "citadel","Service C received message from Service B in Group");
                     assert_eq!(*message, service_b_message.clone());

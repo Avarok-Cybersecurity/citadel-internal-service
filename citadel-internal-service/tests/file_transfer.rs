@@ -8,9 +8,10 @@ mod tests {
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
-        DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess, FileTransferRequest,
-        FileTransferStatus, FileTransferTick, InternalServiceRequest, InternalServiceResponse,
-        SendFileFailure, SendFileRequestSent,
+        DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess,
+        FileTransferRequestNotification, FileTransferStatusNotification,
+        FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
+        SendFileRequestFailure, SendFileRequestSuccess,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
@@ -123,9 +124,9 @@ mod tests {
 
         info!(target:"citadel", "File Transfer Request Sent Successfully {cid_a:?}");
         let deserialized_service_b_payload_response = from_service_b.recv().await.unwrap();
-        if let InternalServiceResponse::FileTransferRequest(FileTransferRequest {
-            metadata, ..
-        }) = deserialized_service_b_payload_response
+        if let InternalServiceResponse::FileTransferRequestNotification(
+            FileTransferRequestNotification { metadata, .. },
+        ) = deserialized_service_b_payload_response
         {
             info!(target:"citadel", "File Transfer Request {cid_b:?}");
 
@@ -141,14 +142,16 @@ mod tests {
             info!(target:"citadel", "Accepted File Transfer {cid_b:?}");
 
             let file_transfer_accept = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::FileTransferStatus(FileTransferStatus {
-                cid: _,
-                object_id: _,
-                success,
-                response,
-                message: _,
-                request_id: _,
-            }) = file_transfer_accept
+            if let InternalServiceResponse::FileTransferStatusNotification(
+                FileTransferStatusNotification {
+                    cid: _,
+                    object_id: _,
+                    success,
+                    response,
+                    message: _,
+                    request_id: _,
+                },
+            ) = file_transfer_accept
             {
                 if success && response {
                     info!(target:"citadel", "File Transfer Accept Success {cid_b:?}");
@@ -232,7 +235,7 @@ mod tests {
             };
             to_service.send(file_transfer_command).unwrap();
             let file_transfer_response = from_service.recv().await.unwrap();
-            if let InternalServiceResponse::SendFileFailure(SendFileFailure {
+            if let InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                 cid: _,
                 message,
                 request_id: _,
@@ -336,15 +339,14 @@ mod tests {
         let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_payload_response:?}");
 
-        if let InternalServiceResponse::SendFileRequestSent(SendFileRequestSent { .. }) =
+        if let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
             &deserialized_service_a_payload_response
         {
             info!(target:"citadel", "File Transfer Request {cid_b}");
             let deserialized_service_a_payload_response = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::FileTransferRequest(FileTransferRequest {
-                metadata,
-                ..
-            }) = deserialized_service_a_payload_response
+            if let InternalServiceResponse::FileTransferRequestNotification(
+                FileTransferRequestNotification { metadata, .. },
+            ) = deserialized_service_a_payload_response
             {
                 let file_transfer_accept_payload = InternalServiceRequest::RespondFileTransfer {
                     cid: *cid_b,
@@ -424,11 +426,13 @@ mod tests {
         loop {
             let tick_response = svc.recv().await.unwrap();
             match tick_response {
-                InternalServiceResponse::FileTransferTick(FileTransferTick {
-                    cid: _,
-                    peer_cid: _,
-                    status,
-                }) => match status {
+                InternalServiceResponse::FileTransferTickNotification(
+                    FileTransferTickNotification {
+                        cid: _,
+                        peer_cid: _,
+                        status,
+                    },
+                ) => match status {
                     ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
                         path = Some(file_path);
                         is_revfs = matches!(

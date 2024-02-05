@@ -10,7 +10,7 @@ mod tests {
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_connector::util::InternalServiceConnector;
     use citadel_internal_service_types::{
-        InternalServiceRequest, InternalServiceResponse, MessageReceived, MessageSent,
+        InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
         PeerConnectNotification, PeerRegisterNotification,
     };
     use citadel_logging::info;
@@ -68,7 +68,7 @@ mod tests {
 
             assert!(matches!(
                 disconnect_response,
-                InternalServiceResponse::Disconnected { .. }
+                InternalServiceResponse::DisconnectNotification { .. }
             ));
 
             Ok(())
@@ -137,12 +137,12 @@ mod tests {
             let deserialized_message_response = from_service.recv().await.unwrap();
             info!(target: "citadel","{deserialized_message_response:?}");
 
-            if let InternalServiceResponse::MessageSent(MessageSent { cid, .. }) =
+            if let InternalServiceResponse::MessageSendSuccess(MessageSendSuccess { cid, .. }) =
                 deserialized_message_response
             {
                 info!(target:"citadel", "Message {cid}");
                 let deserialized_message_response = from_service.recv().await.unwrap();
-                if let InternalServiceResponse::MessageReceived(MessageReceived {
+                if let InternalServiceResponse::MessageNotification(MessageNotification {
                     message,
                     cid,
                     peer_cid: _,
@@ -168,7 +168,7 @@ mod tests {
 
             assert!(matches!(
                 disconnect_response,
-                InternalServiceResponse::Disconnected { .. }
+                InternalServiceResponse::DisconnectNotification { .. }
             ));
 
             Ok(())
@@ -263,7 +263,7 @@ mod tests {
         to_service.send(svc_a_request).unwrap();
 
         let resp = from_service.recv().await.unwrap();
-        if let InternalServiceResponse::ListAllPeers(list) = resp {
+        if let InternalServiceResponse::ListAllPeersResponse(list) = resp {
             assert_eq!(list.online_status.len(), 1);
             assert!(list.online_status.contains_key(&peer_cid))
         } else {
@@ -278,7 +278,7 @@ mod tests {
         to_service.send(svc_a_request).unwrap();
 
         let resp = from_service.recv().await.unwrap();
-        if let InternalServiceResponse::ListRegisteredPeers(list) = resp {
+        if let InternalServiceResponse::ListRegisteredPeersResponse(list) = resp {
             assert_eq!(list.online_status.len(), 1);
             assert!(list.online_status.contains_key(&peer_cid))
         } else {
@@ -349,12 +349,13 @@ mod tests {
         let deserialized_service_a_message_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_message_response:?}");
 
-        if let InternalServiceResponse::MessageSent(MessageSent { cid: cid_b, .. }) =
-            &deserialized_service_a_message_response
+        if let InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
+            cid: cid_b, ..
+        }) = &deserialized_service_a_message_response
         {
             info!(target:"citadel", "Message {cid_b}");
             let deserialized_service_a_message_response = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::MessageReceived(MessageReceived {
+            if let InternalServiceResponse::MessageNotification(MessageNotification {
                 message,
                 cid: cid_a,
                 peer_cid: _cid_b,

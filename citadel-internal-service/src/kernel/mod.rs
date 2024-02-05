@@ -230,11 +230,13 @@ impl NetKernel for CitadelWorkspaceService {
                             let mut server_connection_map = self.server_connection_map.lock().await;
                             if let Some(conn) = server_connection_map.remove(&implicated_cid) {
                                 (
-                                    InternalServiceResponse::Disconnected(Disconnected {
-                                        cid: implicated_cid,
-                                        peer_cid: None,
-                                        request_id: None,
-                                    }),
+                                    InternalServiceResponse::DisconnectNotification(
+                                        DisconnectNotification {
+                                            cid: implicated_cid,
+                                            peer_cid: None,
+                                            request_id: None,
+                                        },
+                                    ),
                                     conn.associated_tcp_connection,
                                 )
                             } else {
@@ -249,11 +251,13 @@ impl NetKernel for CitadelWorkspaceService {
                                 self.clear_peer_connection(implicated_cid, peer_cid).await
                             {
                                 (
-                                    InternalServiceResponse::Disconnected(Disconnected {
-                                        cid: implicated_cid,
-                                        peer_cid: Some(peer_cid),
-                                        request_id: None,
-                                    }),
+                                    InternalServiceResponse::DisconnectNotification(
+                                        DisconnectNotification {
+                                            cid: implicated_cid,
+                                            peer_cid: Some(peer_cid),
+                                            request_id: None,
+                                        },
+                                    ),
                                     conn.associated_tcp_connection,
                                 )
                             } else {
@@ -320,12 +324,13 @@ impl NetKernel for CitadelWorkspaceService {
                             );
                         } else {
                             // Send an update to the TCP client that way they can choose to accept or reject the transfer
-                            let response =
-                                InternalServiceResponse::FileTransferRequest(FileTransferRequest {
+                            let response = InternalServiceResponse::FileTransferRequestNotification(
+                                FileTransferRequestNotification {
                                     cid: implicated_cid,
                                     peer_cid,
                                     metadata,
-                                });
+                                },
+                            );
                             send_response_to_tcp_client(&self.tcp_connection_map, response, uuid)
                                 .await;
                             connection.add_object_transfer_handler(
@@ -392,11 +397,13 @@ impl NetKernel for CitadelWorkspaceService {
                     disconnect_response: _,
                 } => {
                     if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
-                        let response = InternalServiceResponse::Disconnected(Disconnected {
-                            cid: implicated_cid,
-                            peer_cid: Some(peer_cid),
-                            request_id: None,
-                        });
+                        let response = InternalServiceResponse::DisconnectNotification(
+                            DisconnectNotification {
+                                cid: implicated_cid,
+                                peer_cid: Some(peer_cid),
+                                request_id: None,
+                            },
+                        );
                         send_response_to_tcp_client(
                             &self.tcp_connection_map,
                             response,
@@ -615,12 +622,14 @@ async fn handle_group_broadcast(
             GroupBroadcast::Invitation {
                 sender: peer_cid,
                 key: group_key,
-            } => Some(InternalServiceResponse::GroupInvitation(GroupInvitation {
-                cid: implicated_cid,
-                peer_cid,
-                group_key,
-                request_id: None,
-            })),
+            } => Some(InternalServiceResponse::GroupInviteNotification(
+                GroupInviteNotification {
+                    cid: implicated_cid,
+                    peer_cid,
+                    group_key,
+                    request_id: None,
+                },
+            )),
 
             GroupBroadcast::RequestJoin {
                 sender: peer_cid,
@@ -629,23 +638,27 @@ async fn handle_group_broadcast(
                 .groups
                 .get_mut(&group_key)
                 .map(|_group_connection| {
-                    InternalServiceResponse::GroupJoinRequestReceived(GroupJoinRequestReceived {
-                        cid: implicated_cid,
-                        peer_cid,
-                        group_key,
-                        request_id: None,
-                    })
+                    InternalServiceResponse::GroupJoinRequestNotification(
+                        GroupJoinRequestNotification {
+                            cid: implicated_cid,
+                            peer_cid,
+                            group_key,
+                            request_id: None,
+                        },
+                    )
                 }),
 
             GroupBroadcast::AcceptMembership { target: _, key: _ } => None,
 
-            GroupBroadcast::DeclineMembership { target: _, key } => Some(
-                InternalServiceResponse::GroupRequestDeclined(GroupRequestDeclined {
-                    cid: implicated_cid,
-                    group_key: key,
-                    request_id: None,
-                }),
-            ),
+            GroupBroadcast::DeclineMembership { target: _, key } => {
+                Some(InternalServiceResponse::GroupRequestJoinDeclineResponse(
+                    GroupRequestJoinDeclineResponse {
+                        cid: implicated_cid,
+                        group_key: key,
+                        request_id: None,
+                    },
+                ))
+            }
 
             GroupBroadcast::Message {
                 sender: peer_cid,
@@ -655,7 +668,7 @@ async fn handle_group_broadcast(
                 .groups
                 .get_mut(&group_key)
                 .map(|_group_connection| {
-                    InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
+                    InternalServiceResponse::GroupMessageNotification(GroupMessageNotification {
                         cid: implicated_cid,
                         peer_cid,
                         message: message.into_buffer(),
@@ -682,8 +695,8 @@ async fn handle_group_broadcast(
             GroupBroadcast::MemberStateChanged {
                 key: group_key,
                 state,
-            } => Some(InternalServiceResponse::GroupMemberStateChanged(
-                GroupMemberStateChanged {
+            } => Some(InternalServiceResponse::GroupMemberStateChangeNotification(
+                GroupMemberStateChangeNotification {
                     cid: implicated_cid,
                     group_key,
                     state,
@@ -695,33 +708,39 @@ async fn handle_group_broadcast(
                 key: group_key,
                 success,
                 message,
-            } => Some(InternalServiceResponse::GroupLeft(GroupLeft {
-                cid: implicated_cid,
-                group_key,
-                success,
-                message,
-                request_id: None,
-            })),
+            } => Some(InternalServiceResponse::GroupLeaveNotification(
+                GroupLeaveNotification {
+                    cid: implicated_cid,
+                    group_key,
+                    success,
+                    message,
+                    request_id: None,
+                },
+            )),
 
             GroupBroadcast::EndResponse {
                 key: group_key,
                 success,
-            } => Some(InternalServiceResponse::GroupEnded(GroupEnded {
-                cid: implicated_cid,
-                group_key,
-                success,
-                request_id: None,
-            })),
+            } => Some(InternalServiceResponse::GroupEndNotification(
+                GroupEndNotification {
+                    cid: implicated_cid,
+                    group_key,
+                    success,
+                    request_id: None,
+                },
+            )),
 
             GroupBroadcast::Disconnected { key: group_key } => connection
                 .groups
                 .get_mut(&group_key)
                 .map(|_group_connection| {
-                    InternalServiceResponse::GroupDisconnected(GroupDisconnected {
-                        cid: implicated_cid,
-                        group_key,
-                        request_id: None,
-                    })
+                    InternalServiceResponse::GroupDisconnectNotification(
+                        GroupDisconnectNotification {
+                            cid: implicated_cid,
+                            group_key,
+                            request_id: None,
+                        },
+                    )
                 }),
 
             GroupBroadcast::AddResponse {
@@ -754,12 +773,14 @@ async fn handle_group_broadcast(
             GroupBroadcast::GroupNonExists { key: _group_key } => None,
 
             GroupBroadcast::RequestJoinPending { result, key } => Some(
-                InternalServiceResponse::GroupRequestJoinPending(GroupRequestJoinPending {
-                    cid: implicated_cid,
-                    group_key: key,
-                    result,
-                    request_id: None,
-                }),
+                InternalServiceResponse::GroupRequestJoinPendingNotification(
+                    GroupRequestJoinPendingNotification {
+                        cid: implicated_cid,
+                        group_key: key,
+                        result,
+                        request_id: None,
+                    },
+                ),
             ),
 
             _ => None,
@@ -797,11 +818,13 @@ fn spawn_tick_updater(
                 let status_message = status.clone();
                 match tcp_connection_map.lock().await.get(&uuid) {
                     Some(entry) => {
-                        let message = InternalServiceResponse::FileTransferTick(FileTransferTick {
-                            cid: implicated_cid,
-                            peer_cid,
-                            status: status_message,
-                        });
+                        let message = InternalServiceResponse::FileTransferTickNotification(
+                            FileTransferTickNotification {
+                                cid: implicated_cid,
+                                peer_cid,
+                                status: status_message,
+                            },
+                        );
                         match entry.send(message.clone()) {
                             Ok(_res) => {
                                 info!(target: "citadel", "File Transfer Status Tick Sent");
