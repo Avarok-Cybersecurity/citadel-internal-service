@@ -24,6 +24,8 @@ jobs:
     steps:
       - uses: Avarok-Cybersecurity/gh-actions-deps@master
       - uses: taiki-e/install-action@nextest
+      - run: cargo test test_internal_service_group_create -- --nocapture
+        if: startsWith(matrix.os, 'ubuntu')
       - run: cargo nextest run --package citadel-internal-service --features=vendored
         if: startsWith(matrix.os, 'windows')
       - run: cargo nextest run --package citadel-internal-service
