@@ -21,6 +21,10 @@ mod tests {
     #[tokio::test]
     async fn test_internal_service_group_create() -> Result<(), Box<dyn Error>> {
         citadel_logging::setup_log();
+        std::panic::set_hook(Box::new(|info| {
+            citadel_logging::error!(target: "citadel", "Panic: {:?}", info);
+            std::process::exit(1);
+        }));
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
