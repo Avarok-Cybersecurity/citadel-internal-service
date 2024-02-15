@@ -79,6 +79,7 @@ pub async fn register_and_connect_to_server<
     )>,
     Box<dyn Error>,
 > {
+    info!(target = "citadel", "Registering and Connecting To Server");
     let mut return_results: Vec<(
         UnboundedSender<InternalServiceRequest>,
         UnboundedReceiver<InternalServiceResponse>,
@@ -95,6 +96,7 @@ pub async fn register_and_connect_to_server<
         let password = item.password.into();
         let session_security_settings = SessionSecuritySettingsBuilder::default().build().unwrap();
 
+        info!(target = "citadel", "Sending Register Request");
         let register_command = InternalServiceRequest::Register {
             request_id: Uuid::new_v4(),
             server_addr: item.server_addr,
@@ -112,6 +114,7 @@ pub async fn register_and_connect_to_server<
             citadel_internal_service_types::RegisterSuccess { request_id: _ },
         ) = response_packet
         {
+            info!(target = "citadel", "RegisterSuccess Received, Now Connecting");
             // now, connect to the server
             let command = InternalServiceRequest::Connect {
                 username,
@@ -130,6 +133,7 @@ pub async fn register_and_connect_to_server<
                 citadel_internal_service_types::ConnectSuccess { cid, request_id: _ },
             ) = response_packet
             {
+                info!(target = "citadel", "ConnectSuccess Received, Creating Service Channels");
                 let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();
                 let service_to_test = async move {
                     // take messages from the service and send them to from_service
@@ -217,6 +221,7 @@ pub async fn register_and_connect_to_server_then_peers(
     // Registers and Connects all peers to Server
     let mut returned_service_info = register_and_connect_to_server(to_spawn).await.unwrap();
 
+    info!(target = "citadel", "Starting Registration and Connection between peers");
     // Registers and Connects all peers to Each Other Peer
     for service_index in 0..returned_service_info.len() {
         let (item, neighbor_items) = {
@@ -233,6 +238,7 @@ pub async fn register_and_connect_to_server_then_peers(
 
             // now, both peers are connected and registered to the central server. Now, we
             // need to have them peer-register to each other
+            info!(target = "citadel", "Peer {cid_a:?} Sending PeerRegister Request to {cid_b:?}");
             to_service_a
                 .send(InternalServiceRequest::PeerRegister {
                     request_id: Uuid::new_v4(),
@@ -243,6 +249,10 @@ pub async fn register_and_connect_to_server_then_peers(
                 })
                 .unwrap();
 
+            // Receive Notification of Register Request
+            let _ = from_service_b.recv().await.unwrap();
+
+            info!(target = "citadel", "Peer {cid_b:?} Accepting PeerRegister Request From {cid_a:?}");
             to_service_b
                 .send(InternalServiceRequest::PeerRegister {
                     request_id: Uuid::new_v4(),
@@ -253,9 +263,6 @@ pub async fn register_and_connect_to_server_then_peers(
                 })
                 .unwrap();
 
-            // Receive Notification of Register Request
-            let _ = from_service_b.recv().await.unwrap();
-
             let item = from_service_b.recv().await.unwrap();
             match item {
                 InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
@@ -264,6 +271,7 @@ pub async fn register_and_connect_to_server_then_peers(
                     peer_username: _,
                     request_id: _,
                 }) => {
+                    info!(target = "citadel", "Peer {cid_b:?} Received PeerRegisterSuccess Signal");
                     assert_eq!(cid, *cid_b);
                     assert_eq!(peer_cid, *cid_a);
                 }
@@ -280,6 +288,7 @@ pub async fn register_and_connect_to_server_then_peers(
                     peer_username: _,
                     request_id: _,
                 }) => {
+                    info!(target = "citadel", "Peer {cid_a:?} Received PeerRegisterSuccess Signal");
                     assert_eq!(cid, *cid_a);
                     assert_eq!(peer_cid, *cid_b);
                 }
@@ -288,6 +297,7 @@ pub async fn register_and_connect_to_server_then_peers(
                 }
             }
 
+            info!(target = "citadel", "Peer {cid_a:?} Sending PeerConnect Request to {cid_b:?}");
             to_service_a
                 .send(InternalServiceRequest::PeerConnect {
                     request_id: Uuid::new_v4(),
@@ -298,6 +308,10 @@ pub async fn register_and_connect_to_server_then_peers(
                 })
                 .unwrap();
 
+            // Receive Notification of Connect Request
+            let _ = from_service_b.recv().await.unwrap();
+
+            info!(target = "citadel", "Peer {cid_b:?} Accepting PeerConnect Request From {cid_a:?}");
             to_service_b
                 .send(InternalServiceRequest::PeerConnect {
                     request_id: Uuid::new_v4(),
@@ -308,15 +322,13 @@ pub async fn register_and_connect_to_server_then_peers(
                 })
                 .unwrap();
 
-            // Receive Notification of Connect Request
-            let _ = from_service_b.recv().await.unwrap();
-
             let item = from_service_b.recv().await.unwrap();
             match item {
                 InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
                     cid,
                     request_id: _,
                 }) => {
+                    info!(target = "citadel", "Peer {cid_b:?} Received PeerConnectSuccess Signal");
                     assert_eq!(cid, *cid_b);
                 }
                 _ => {
@@ -331,6 +343,7 @@ pub async fn register_and_connect_to_server_then_peers(
                     cid,
                     request_id: _,
                 }) => {
+                    info!(target = "citadel", "Peer {cid_a:?} Received PeerConnectSuccess Signal");
                     assert_eq!(cid, *cid_a);
                 }
                 _ => {
