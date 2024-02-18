@@ -262,7 +262,11 @@ pub async fn register_and_connect_to_server_then_peers(
                 .unwrap();
 
             // Receive Notification of Register Request
-            let _ = from_service_b.recv().await.unwrap();
+            let peer_register_notification = from_service_b.recv().await.unwrap();
+            assert!(matches!(
+                peer_register_notification,
+                InternalServiceResponse::PeerRegisterNotification(..)
+            ));
 
             info!(
                 target = "citadel",
@@ -333,7 +337,11 @@ pub async fn register_and_connect_to_server_then_peers(
                 .unwrap();
 
             // Receive Notification of Connect Request
-            let _ = from_service_b.recv().await.unwrap();
+            let peer_connect_notification = from_service_b.recv().await.unwrap();
+            assert!(matches!(
+                peer_connect_notification,
+                InternalServiceResponse::PeerConnectNotification(..)
+            ));
 
             info!(
                 target = "citadel",
