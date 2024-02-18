@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_internal_service_macros::IsError;
+use citadel_internal_service_macros::{IsError, IsNotification};
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -18,7 +18,7 @@ pub struct ConnectSuccess {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ConnectionFailure {
+pub struct ConnectFailure {
     pub message: String,
     pub request_id: Option<Uuid>,
 }
@@ -38,21 +38,21 @@ pub struct RegisterFailure {
 pub struct ServiceConnectionAccepted;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MessageSent {
+pub struct MessageSendSuccess {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MessageSendError {
+pub struct MessageSendFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MessageReceived {
+pub struct MessageNotification {
     pub message: BytesMut,
     pub cid: u64,
     pub peer_cid: u64,
@@ -60,7 +60,7 @@ pub struct MessageReceived {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Disconnected {
+pub struct DisconnectNotification {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub request_id: Option<Uuid>,
@@ -74,13 +74,13 @@ pub struct DisconnectFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SendFileRequestSent {
+pub struct SendFileRequestSuccess {
     pub cid: u64,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SendFileFailure {
+pub struct SendFileRequestFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
@@ -135,6 +135,23 @@ pub struct PeerDisconnectSuccess {
 pub struct PeerDisconnectFailure {
     pub cid: u64,
     pub message: String,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PeerConnectNotification {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub session_security_settings: SessionSecuritySettings,
+    pub udp_mode: UdpMode,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PeerRegisterNotification {
+    pub cid: u64,
+    pub peer_cid: u64,
+    pub peer_username: String,
     pub request_id: Option<Uuid>,
 }
 
@@ -219,7 +236,7 @@ pub struct GroupEndFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupEnded {
+pub struct GroupEndNotification {
     pub cid: u64,
     pub group_key: MessageGroupKey,
     pub success: bool,
@@ -227,7 +244,7 @@ pub struct GroupEnded {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupLeft {
+pub struct GroupLeaveNotification {
     pub cid: u64,
     pub group_key: MessageGroupKey,
     pub success: bool,
@@ -236,7 +253,7 @@ pub struct GroupLeft {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupMessageReceived {
+pub struct GroupMessageNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub message: BytesMut,
@@ -267,7 +284,7 @@ pub struct GroupMessageFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupInvitation {
+pub struct GroupInviteNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub group_key: MessageGroupKey,
@@ -311,7 +328,7 @@ pub struct GroupMembershipResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupRequestJoinPending {
+pub struct GroupRequestJoinPendingNotification {
     pub cid: u64,
     pub group_key: MessageGroupKey,
     pub result: Result<(), String>,
@@ -319,7 +336,7 @@ pub struct GroupRequestJoinPending {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupDisconnected {
+pub struct GroupDisconnectNotification {
     pub cid: u64,
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
@@ -340,7 +357,7 @@ pub struct GroupKickFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupListGroupsForSuccess {
+pub struct GroupListGroupsSuccess {
     pub cid: u64,
     pub peer_cid: u64,
     pub group_list: Option<Vec<MessageGroupKey>>,
@@ -348,7 +365,7 @@ pub struct GroupListGroupsForSuccess {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupListGroupsForFailure {
+pub struct GroupListGroupsFailure {
     pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
@@ -362,7 +379,7 @@ pub struct GroupListGroupsResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupJoinRequestReceived {
+pub struct GroupJoinRequestNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub group_key: MessageGroupKey,
@@ -370,14 +387,14 @@ pub struct GroupJoinRequestReceived {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupRequestJoinAccepted {
+pub struct GroupRequestJoinAcceptResponse {
     pub cid: u64,
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupRequestDeclined {
+pub struct GroupRequestJoinDeclineResponse {
     pub cid: u64,
     pub group_key: MessageGroupKey,
     pub request_id: Option<Uuid>,
@@ -398,7 +415,7 @@ pub struct GroupRequestJoinFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupMemberStateChanged {
+pub struct GroupMemberStateChangeNotification {
     pub cid: u64,
     pub group_key: MessageGroupKey,
     pub state: MemberState,
@@ -478,7 +495,7 @@ pub struct LocalDBClearAllKVSuccess {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ListAllPeers {
+pub struct ListAllPeersResponse {
     pub cid: u64,
     pub online_status: HashMap<u64, bool>,
     pub request_id: Option<Uuid>,
@@ -499,7 +516,7 @@ pub struct ListRegisteredPeersFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ListRegisteredPeers {
+pub struct ListRegisteredPeersResponse {
     pub cid: u64,
     pub peers: HashMap<u64, PeerSessionInformation>,
     pub online_status: HashMap<u64, bool>,
@@ -515,20 +532,20 @@ pub struct LocalDBClearAllKVFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GetSessions {
+pub struct GetSessionsResponse {
     pub sessions: Vec<SessionInformation>,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FileTransferRequest {
+pub struct FileTransferRequestNotification {
     pub cid: u64,
     pub peer_cid: u64,
-    pub metadata: VirtualObjectMetadata, // TODO: metadata: VirtualObjectMetadata
+    pub metadata: VirtualObjectMetadata,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FileTransferStatus {
+pub struct FileTransferStatusNotification {
     pub cid: u64,
     pub object_id: u64,
     pub success: bool,
@@ -538,35 +555,37 @@ pub struct FileTransferStatus {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FileTransferTick {
+pub struct FileTransferTickNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub status: ObjectTransferStatus,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, IsError)]
+#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
-    ConnectionFailure(ConnectionFailure),
+    ConnectFailure(ConnectFailure),
     RegisterSuccess(RegisterSuccess),
     RegisterFailure(RegisterFailure),
     ServiceConnectionAccepted(ServiceConnectionAccepted),
-    MessageSent(MessageSent),
-    MessageSendError(MessageSendError),
-    MessageReceived(MessageReceived),
-    Disconnected(Disconnected),
+    MessageSendSuccess(MessageSendSuccess),
+    MessageSendFailure(MessageSendFailure),
+    MessageNotification(MessageNotification),
+    DisconnectNotification(DisconnectNotification),
     DisconnectFailure(DisconnectFailure),
-    SendFileRequestSent(SendFileRequestSent),
-    SendFileFailure(SendFileFailure),
-    FileTransferRequest(FileTransferRequest),
-    FileTransferStatus(FileTransferStatus),
-    FileTransferTick(FileTransferTick),
+    SendFileRequestSuccess(SendFileRequestSuccess),
+    SendFileRequestFailure(SendFileRequestFailure),
+    FileTransferRequestNotification(FileTransferRequestNotification),
+    FileTransferStatusNotification(FileTransferStatusNotification),
+    FileTransferTickNotification(FileTransferTickNotification),
     DownloadFileSuccess(DownloadFileSuccess),
     DownloadFileFailure(DownloadFileFailure),
     DeleteVirtualFileSuccess(DeleteVirtualFileSuccess),
     DeleteVirtualFileFailure(DeleteVirtualFileFailure),
     PeerConnectSuccess(PeerConnectSuccess),
     PeerConnectFailure(PeerConnectFailure),
+    PeerConnectNotification(PeerConnectNotification),
+    PeerRegisterNotification(PeerRegisterNotification),
     PeerDisconnectSuccess(PeerDisconnectSuccess),
     PeerDisconnectFailure(PeerDisconnectFailure),
     PeerRegisterSuccess(PeerRegisterSuccess),
@@ -578,33 +597,33 @@ pub enum InternalServiceResponse {
     GroupCreateFailure(GroupCreateFailure),
     GroupLeaveSuccess(GroupLeaveSuccess),
     GroupLeaveFailure(GroupLeaveFailure),
-    GroupLeft(GroupLeft),
+    GroupLeaveNotification(GroupLeaveNotification),
     GroupEndSuccess(GroupEndSuccess),
     GroupEndFailure(GroupEndFailure),
-    GroupEnded(GroupEnded),
-    GroupMessageReceived(GroupMessageReceived),
+    GroupEndNotification(GroupEndNotification),
+    GroupMessageNotification(GroupMessageNotification),
     GroupMessageResponse(GroupMessageResponse),
     GroupMessageSuccess(GroupMessageSuccess),
     GroupMessageFailure(GroupMessageFailure),
-    GroupInvitation(GroupInvitation),
+    GroupInviteNotification(GroupInviteNotification),
     GroupInviteSuccess(GroupInviteSuccess),
     GroupInviteFailure(GroupInviteFailure),
     GroupRespondRequestSuccess(GroupRespondRequestSuccess),
     GroupRespondRequestFailure(GroupRespondRequestFailure),
     GroupMembershipResponse(GroupMembershipResponse),
-    GroupRequestJoinPending(GroupRequestJoinPending),
-    GroupDisconnected(GroupDisconnected),
+    GroupRequestJoinPendingNotification(GroupRequestJoinPendingNotification),
+    GroupDisconnectNotification(GroupDisconnectNotification),
     GroupKickSuccess(GroupKickSuccess),
     GroupKickFailure(GroupKickFailure),
-    GroupListGroupsForSuccess(GroupListGroupsForSuccess),
-    GroupListGroupsForFailure(GroupListGroupsForFailure),
+    GroupListGroupsSuccess(GroupListGroupsSuccess),
+    GroupListGroupsFailure(GroupListGroupsFailure),
     GroupListGroupsResponse(GroupListGroupsResponse),
-    GroupJoinRequestReceived(GroupJoinRequestReceived),
-    GroupRequestJoinAccepted(GroupRequestJoinAccepted),
-    GroupRequestDeclined(GroupRequestDeclined),
+    GroupJoinRequestNotification(GroupJoinRequestNotification),
+    GroupRequestJoinAcceptResponse(GroupRequestJoinAcceptResponse),
+    GroupRequestJoinDeclineResponse(GroupRequestJoinDeclineResponse),
     GroupRequestJoinSuccess(GroupRequestJoinSuccess),
-    GroupMemberStateChanged(GroupMemberStateChanged),
     GroupRequestJoinFailure(GroupRequestJoinFailure),
+    GroupMemberStateChangeNotification(GroupMemberStateChangeNotification),
     LocalDBGetKVSuccess(LocalDBGetKVSuccess),
     LocalDBGetKVFailure(LocalDBGetKVFailure),
     LocalDBSetKVSuccess(LocalDBSetKVSuccess),
@@ -615,11 +634,11 @@ pub enum InternalServiceResponse {
     LocalDBGetAllKVFailure(LocalDBGetAllKVFailure),
     LocalDBClearAllKVSuccess(LocalDBClearAllKVSuccess),
     LocalDBClearAllKVFailure(LocalDBClearAllKVFailure),
-    GetSessions(GetSessions),
-    GetAccountInformation(Accounts),
-    ListAllPeers(ListAllPeers),
+    GetSessionsResponse(GetSessionsResponse),
+    GetAccountInformationResponse(Accounts),
+    ListAllPeersResponse(ListAllPeersResponse),
     ListAllPeersFailure(ListAllPeersFailure),
-    ListRegisteredPeers(ListRegisteredPeers),
+    ListRegisteredPeersResponse(ListRegisteredPeersResponse),
     ListRegisteredPeersFailure(ListRegisteredPeersFailure),
 }
 
@@ -846,11 +865,28 @@ mod tests {
             cid: 0,
             request_id: None,
         });
-        let error_response = InternalServiceResponse::ConnectionFailure(ConnectionFailure {
+        let error_response = InternalServiceResponse::ConnectFailure(ConnectFailure {
             message: "test".to_string(),
             request_id: None,
         });
         assert!(!success_response.is_error());
         assert!(error_response.is_error());
+    }
+
+    #[test]
+    fn test_is_notification_derive() {
+        let success_response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
+            cid: 0,
+            request_id: None,
+        });
+        let notification_response =
+            InternalServiceResponse::PeerRegisterNotification(PeerRegisterNotification {
+                cid: 0,
+                peer_cid: 0,
+                peer_username: "".to_string(),
+                request_id: None,
+            });
+        assert!(!success_response.is_notification());
+        assert!(notification_response.is_notification());
     }
 }

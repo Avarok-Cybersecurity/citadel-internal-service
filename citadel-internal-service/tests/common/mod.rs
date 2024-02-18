@@ -23,6 +23,14 @@ use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
+pub fn setup_log() {
+    citadel_logging::setup_log();
+    std::panic::set_hook(Box::new(|info| {
+        citadel_logging::error!(target: "citadel", "Panic: {:?}", info);
+        std::process::exit(1);
+    }));
+}
+
 pub struct RegisterAndConnectItems<T: Into<String>, R: Into<String>, S: Into<SecBuffer>> {
     pub internal_service_addr: SocketAddr,
     pub server_addr: SocketAddr,
@@ -71,6 +79,7 @@ pub async fn register_and_connect_to_server<
     )>,
     Box<dyn Error>,
 > {
+    info!(target = "citadel", "Registering and Connecting To Server");
     let mut return_results: Vec<(
         UnboundedSender<InternalServiceRequest>,
         UnboundedReceiver<InternalServiceResponse>,
@@ -85,11 +94,9 @@ pub async fn register_and_connect_to_server<
         let username = item.username.into();
         let full_name = item.full_name.into();
         let password = item.password.into();
-        let session_security_settings = SessionSecuritySettingsBuilder::default()
-            // .with_crypto_params(EncryptionAlgorithm::AES_GCM_256 + KemAlgorithm::Kyber + SigAlgorithm::None)
-            .build()
-            .unwrap();
+        let session_security_settings = SessionSecuritySettingsBuilder::default().build().unwrap();
 
+        info!(target = "citadel", "Sending Register Request");
         let register_command = InternalServiceRequest::Register {
             request_id: Uuid::new_v4(),
             server_addr: item.server_addr,
@@ -107,6 +114,10 @@ pub async fn register_and_connect_to_server<
             citadel_internal_service_types::RegisterSuccess { request_id: _ },
         ) = response_packet
         {
+            info!(
+                target = "citadel",
+                "RegisterSuccess Received, Now Connecting"
+            );
             // now, connect to the server
             let command = InternalServiceRequest::Connect {
                 username,
@@ -125,6 +136,10 @@ pub async fn register_and_connect_to_server<
                 citadel_internal_service_types::ConnectSuccess { cid, request_id: _ },
             ) = response_packet
             {
+                info!(
+                    target = "citadel",
+                    "ConnectSuccess Received, Creating Service Channels"
+                );
                 let (to_service, from_service) = tokio::sync::mpsc::unbounded_channel();
                 let service_to_test = async move {
                     // take messages from the service and send them to from_service
@@ -171,10 +186,11 @@ pub async fn register_and_connect_to_server_then_peers(
     tokio::task::spawn(server);
     let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
 
+    // Spawn Internal Services with given addresses
     for int_svc_addr_iter in int_svc_addrs.clone() {
         let bind_address_internal_service = int_svc_addr_iter;
 
-        info!(target: "citadel", "sub server spawn");
+        info!(target: "citadel", "Internal Service Spawning");
         let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
@@ -182,6 +198,7 @@ pub async fn register_and_connect_to_server_then_peers(
             .build(internal_service_kernel)
             .unwrap();
 
+        // Add NodeFuture for Internal Service to Vector to be spawned
         internal_services.push(Box::pin(async move {
             match internal_service.await {
                 Err(err) => Err(Box::from(err)),
@@ -190,10 +207,11 @@ pub async fn register_and_connect_to_server_then_peers(
         }));
     }
     spawn_services(internal_services);
-    // give time for both the server and internal service to run
-    tokio::time::sleep(Duration::from_millis(2000)).await;
-    info!(target: "citadel", "about to connect to internal service");
 
+    // Give time for both the Server and Internal Service to run
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+
+    // Set Info for Vector of Peers
     let mut to_spawn: Vec<RegisterAndConnectItems<String, String, Vec<u8>>> = Vec::new();
     for (peer_number, int_svc_addr_iter) in int_svc_addrs.clone().iter().enumerate() {
         let bind_address_internal_service = *int_svc_addr_iter;
@@ -206,8 +224,14 @@ pub async fn register_and_connect_to_server_then_peers(
         });
     }
 
+    // Registers and Connects all peers to Server
     let mut returned_service_info = register_and_connect_to_server(to_spawn).await.unwrap();
 
+    info!(
+        target = "citadel",
+        "Starting Registration and Connection between peers"
+    );
+    // Registers and Connects all peers to Each Other Peer
     for service_index in 0..returned_service_info.len() {
         let (item, neighbor_items) = {
             let (_, second) = returned_service_info.split_at_mut(service_index);
@@ -218,13 +242,15 @@ pub async fn register_and_connect_to_server_then_peers(
         let (ref mut to_service_a, ref mut from_service_a, cid_a) = item;
         for neighbor in neighbor_items {
             let (ref mut to_service_b, ref mut from_service_b, cid_b) = neighbor;
-            let session_security_settings = SessionSecuritySettingsBuilder::default()
-                // .with_crypto_params(EncryptionAlgorithm::AES_GCM_256 + KemAlgorithm::Kyber + SigAlgorithm::None)
-                .build()
-                .unwrap();
+            let session_security_settings =
+                SessionSecuritySettingsBuilder::default().build().unwrap();
 
             // now, both peers are connected and registered to the central server. Now, we
             // need to have them peer-register to each other
+            info!(
+                target = "citadel",
+                "Peer {cid_a:?} Sending PeerRegister Request to {cid_b:?}"
+            );
             to_service_a
                 .send(InternalServiceRequest::PeerRegister {
                     request_id: Uuid::new_v4(),
@@ -235,6 +261,17 @@ pub async fn register_and_connect_to_server_then_peers(
                 })
                 .unwrap();
 
+            // Receive Notification of Register Request
+            let peer_register_notification = from_service_b.recv().await.unwrap();
+            assert!(matches!(
+                peer_register_notification,
+                InternalServiceResponse::PeerRegisterNotification(..)
+            ));
+
+            info!(
+                target = "citadel",
+                "Peer {cid_b:?} Accepting PeerRegister Request From {cid_a:?}"
+            );
             to_service_b
                 .send(InternalServiceRequest::PeerRegister {
                     request_id: Uuid::new_v4(),
@@ -246,7 +283,6 @@ pub async fn register_and_connect_to_server_then_peers(
                 .unwrap();
 
             let item = from_service_b.recv().await.unwrap();
-
             match item {
                 InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
                     cid,
@@ -254,9 +290,12 @@ pub async fn register_and_connect_to_server_then_peers(
                     peer_username: _,
                     request_id: _,
                 }) => {
+                    info!(
+                        target = "citadel",
+                        "Peer {cid_b:?} Received PeerRegisterSuccess Signal"
+                    );
                     assert_eq!(cid, *cid_b);
-                    assert_eq!(peer_cid, *cid_b);
-                    //assert_eq!(peer_username, "peer.0");
+                    assert_eq!(peer_cid, *cid_a);
                 }
                 _ => {
                     panic!("Didn't get the PeerRegisterSuccess");
@@ -271,15 +310,22 @@ pub async fn register_and_connect_to_server_then_peers(
                     peer_username: _,
                     request_id: _,
                 }) => {
+                    info!(
+                        target = "citadel",
+                        "Peer {cid_a:?} Received PeerRegisterSuccess Signal"
+                    );
                     assert_eq!(cid, *cid_a);
-                    assert_eq!(peer_cid, *cid_a);
-                    //assert_eq!(peer_username, "peer.b");
+                    assert_eq!(peer_cid, *cid_b);
                 }
                 _ => {
                     panic!("Didn't get the PeerRegisterSuccess");
                 }
             }
 
+            info!(
+                target = "citadel",
+                "Peer {cid_a:?} Sending PeerConnect Request to {cid_b:?}"
+            );
             to_service_a
                 .send(InternalServiceRequest::PeerConnect {
                     request_id: Uuid::new_v4(),
@@ -290,6 +336,17 @@ pub async fn register_and_connect_to_server_then_peers(
                 })
                 .unwrap();
 
+            // Receive Notification of Connect Request
+            let peer_connect_notification = from_service_b.recv().await.unwrap();
+            assert!(matches!(
+                peer_connect_notification,
+                InternalServiceResponse::PeerConnectNotification(..)
+            ));
+
+            info!(
+                target = "citadel",
+                "Peer {cid_b:?} Accepting PeerConnect Request From {cid_a:?}"
+            );
             to_service_b
                 .send(InternalServiceRequest::PeerConnect {
                     request_id: Uuid::new_v4(),
@@ -306,6 +363,10 @@ pub async fn register_and_connect_to_server_then_peers(
                     cid,
                     request_id: _,
                 }) => {
+                    info!(
+                        target = "citadel",
+                        "Peer {cid_b:?} Received PeerConnectSuccess Signal"
+                    );
                     assert_eq!(cid, *cid_b);
                 }
                 _ => {
@@ -320,6 +381,10 @@ pub async fn register_and_connect_to_server_then_peers(
                     cid,
                     request_id: _,
                 }) => {
+                    info!(
+                        target = "citadel",
+                        "Peer {cid_a:?} Received PeerConnectSuccess Signal"
+                    );
                     assert_eq!(cid, *cid_a);
                 }
                 _ => {
@@ -343,9 +408,7 @@ pub fn spawn_services(futures_to_spawn: Vec<InternalServicesFutures>) {
                 citadel_logging::error!(target: "citadel", "Internal service error: {err:?}");
             }
         }
-        //std::process::exit(1);
     };
-
     tokio::task::spawn(services_to_spawn);
 }
 
@@ -413,7 +476,7 @@ impl NetKernel for ReceiverFileTransferKernel {
             let mut handle = object_transfer_handle.handle;
             let mut path = None;
             let mut is_revfs = false;
-            // accept the transfer
+            // Automatically accept the transfer
             handle.accept().unwrap();
 
             use futures::StreamExt;

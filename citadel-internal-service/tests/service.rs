@@ -10,7 +10,8 @@ mod tests {
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_connector::util::InternalServiceConnector;
     use citadel_internal_service_types::{
-        InternalServiceRequest, InternalServiceResponse, MessageReceived, MessageSent,
+        InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
+        PeerConnectNotification, PeerRegisterNotification,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
@@ -23,7 +24,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_register_connect() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
 
@@ -67,7 +68,7 @@ mod tests {
 
             assert!(matches!(
                 disconnect_response,
-                InternalServiceResponse::Disconnected { .. }
+                InternalServiceResponse::DisconnectNotification { .. }
             ));
 
             Ok(())
@@ -79,7 +80,7 @@ mod tests {
     // test
     #[tokio::test]
     async fn message_test() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
 
@@ -136,12 +137,12 @@ mod tests {
             let deserialized_message_response = from_service.recv().await.unwrap();
             info!(target: "citadel","{deserialized_message_response:?}");
 
-            if let InternalServiceResponse::MessageSent(MessageSent { cid, .. }) =
+            if let InternalServiceResponse::MessageSendSuccess(MessageSendSuccess { cid, .. }) =
                 deserialized_message_response
             {
                 info!(target:"citadel", "Message {cid}");
                 let deserialized_message_response = from_service.recv().await.unwrap();
-                if let InternalServiceResponse::MessageReceived(MessageReceived {
+                if let InternalServiceResponse::MessageNotification(MessageNotification {
                     message,
                     cid,
                     peer_cid: _,
@@ -167,7 +168,7 @@ mod tests {
 
             assert!(matches!(
                 disconnect_response,
-                InternalServiceResponse::Disconnected { .. }
+                InternalServiceResponse::DisconnectNotification { .. }
             ));
 
             Ok(())
@@ -178,7 +179,7 @@ mod tests {
 
     #[tokio::test]
     async fn connect_after_register_true() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
 
@@ -262,7 +263,7 @@ mod tests {
         to_service.send(svc_a_request).unwrap();
 
         let resp = from_service.recv().await.unwrap();
-        if let InternalServiceResponse::ListAllPeers(list) = resp {
+        if let InternalServiceResponse::ListAllPeersResponse(list) = resp {
             assert_eq!(list.online_status.len(), 1);
             assert!(list.online_status.contains_key(&peer_cid))
         } else {
@@ -277,7 +278,7 @@ mod tests {
         to_service.send(svc_a_request).unwrap();
 
         let resp = from_service.recv().await.unwrap();
-        if let InternalServiceResponse::ListRegisteredPeers(list) = resp {
+        if let InternalServiceResponse::ListRegisteredPeersResponse(list) = resp {
             assert_eq!(list.online_status.len(), 1);
             assert!(list.online_status.contains_key(&peer_cid))
         } else {
@@ -287,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_peer_test() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         let _ = register_and_connect_to_server_then_peers(vec![
             "127.0.0.1:55526".parse().unwrap(),
             "127.0.0.1:55527".parse().unwrap(),
@@ -298,7 +299,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_peer_test_list_peers() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
 
         let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
             "127.0.0.1:55526".parse().unwrap(),
@@ -320,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_peer_message_test() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
@@ -348,12 +349,13 @@ mod tests {
         let deserialized_service_a_message_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_message_response:?}");
 
-        if let InternalServiceResponse::MessageSent(MessageSent { cid: cid_b, .. }) =
-            &deserialized_service_a_message_response
+        if let InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
+            cid: cid_b, ..
+        }) = &deserialized_service_a_message_response
         {
             info!(target:"citadel", "Message {cid_b}");
             let deserialized_service_a_message_response = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::MessageReceived(MessageReceived {
+            if let InternalServiceResponse::MessageNotification(MessageNotification {
                 message,
                 cid: cid_a,
                 peer_cid: _cid_b,
@@ -374,7 +376,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_c2s_kv() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         let (server, server_bind_address) = server_info_skip_cert_verification();
 
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55537".parse().unwrap();
@@ -421,7 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_p2p_kv() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
@@ -439,6 +441,160 @@ mod tests {
 
         test_kv_for_service(to_service_a, from_service_a, *cid_a, Some(*cid_b)).await?;
         test_kv_for_service(to_service_b, from_service_b, *cid_b, Some(*cid_a)).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_internal_service_forward_peer_requests() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+
+        let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
+        let internal_service_addresses = vec![
+            "127.0.0.1:55536".parse().unwrap(),
+            "127.0.0.1:55537".parse().unwrap(),
+        ];
+        for internal_service_address in internal_service_addresses.clone() {
+            let bind_address_internal_service = internal_service_address;
+            let internal_service_kernel =
+                CitadelWorkspaceService::new(bind_address_internal_service);
+            let internal_service = NodeBuilder::default()
+                .with_node_type(NodeType::Peer)
+                .with_insecure_skip_cert_verification()
+                .build(internal_service_kernel)
+                .unwrap();
+
+            internal_services.push(Box::pin(async move {
+                match internal_service.await {
+                    Err(err) => Err(Box::from(err)),
+                    _ => Ok(()),
+                }
+            }));
+        }
+        spawn_services(internal_services);
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        let mut to_spawn: Vec<RegisterAndConnectItems<String, String, Vec<u8>>> = Vec::new();
+        for (peer_number, internal_service_address) in
+            internal_service_addresses.clone().iter().enumerate()
+        {
+            let bind_address_internal_service = *internal_service_address;
+            to_spawn.push(RegisterAndConnectItems {
+                internal_service_addr: bind_address_internal_service,
+                server_addr: server_bind_address,
+                full_name: format!("Peer {}", peer_number),
+                username: format!("peer.{}", peer_number),
+                password: format!("secret_{}", peer_number).into_bytes().to_owned(),
+            });
+        }
+
+        let mut returned_service_info = register_and_connect_to_server(to_spawn).await.unwrap();
+
+        for service_index in 0..returned_service_info.len() {
+            let (item, neighbor_items) = {
+                let (_, second) = returned_service_info.split_at_mut(service_index);
+                let (element, remainder) = second.split_at_mut(1);
+                (&mut element[0], remainder)
+            };
+
+            let (ref mut to_service_a, ref mut from_service_a, cid_a) = item;
+            for neighbor in neighbor_items {
+                let (ref mut to_service_b, ref mut from_service_b, cid_b) = neighbor;
+                let session_security_settings =
+                    SessionSecuritySettingsBuilder::default().build().unwrap();
+
+                // Service A Requests to Register with Service B
+                to_service_a
+                    .send(InternalServiceRequest::PeerRegister {
+                        request_id: Uuid::new_v4(),
+                        cid: *cid_a,
+                        peer_cid: (*cid_b),
+                        session_security_settings,
+                        connect_after_register: false,
+                    })
+                    .unwrap();
+
+                // Service B receives Register Request from Service A
+                let inbound_response = from_service_b.recv().await.unwrap();
+                match inbound_response {
+                    InternalServiceResponse::PeerRegisterNotification(
+                        PeerRegisterNotification {
+                            cid,
+                            peer_cid,
+                            peer_username: _,
+                            request_id: _,
+                        },
+                    ) => {
+                        assert_eq!(cid, *cid_b);
+                        assert_eq!(peer_cid, *cid_a);
+                    }
+                    _ => {
+                        panic!("Peer B didn't get the PeerRegisterNotification, instead got {inbound_response:?}");
+                    }
+                }
+
+                // Service B Sends Register Request to Accept
+                to_service_b
+                    .send(InternalServiceRequest::PeerRegister {
+                        request_id: Uuid::new_v4(),
+                        cid: *cid_b,
+                        peer_cid: (*cid_a),
+                        session_security_settings,
+                        connect_after_register: false,
+                    })
+                    .unwrap();
+
+                // Receive Register Success Responses
+                let _ = from_service_a.recv().await.unwrap();
+                let _ = from_service_b.recv().await.unwrap();
+
+                // Service A Requests To Connect
+                to_service_a
+                    .send(InternalServiceRequest::PeerConnect {
+                        request_id: Uuid::new_v4(),
+                        cid: *cid_a,
+                        peer_cid: *cid_b,
+                        udp_mode: Default::default(),
+                        session_security_settings,
+                    })
+                    .unwrap();
+
+                // Service B Receives Connect Request from Service A
+                let inbound_response = from_service_b.recv().await.unwrap();
+                match inbound_response {
+                    InternalServiceResponse::PeerConnectNotification(PeerConnectNotification {
+                        cid,
+                        peer_cid,
+                        session_security_settings: _,
+                        udp_mode: _,
+                        request_id: _,
+                    }) => {
+                        assert_eq!(cid, *cid_b);
+                        assert_eq!(peer_cid, *cid_a);
+                    }
+                    _ => {
+                        panic!("Peer B didn't get the PeerConnectNotification");
+                    }
+                }
+
+                // Service B Sends Connect Request to Accept
+                to_service_b
+                    .send(InternalServiceRequest::PeerConnect {
+                        request_id: Uuid::new_v4(),
+                        cid: *cid_b,
+                        peer_cid: *cid_a,
+                        udp_mode: Default::default(),
+                        session_security_settings,
+                    })
+                    .unwrap();
+
+                // Receive Connect Success Responses
+                let _ = from_service_a.recv().await.unwrap();
+                let _ = from_service_b.recv().await.unwrap();
+            }
+        }
         Ok(())
     }
 }

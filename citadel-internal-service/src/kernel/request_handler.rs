@@ -47,7 +47,7 @@ pub async fn handle_request(
                         );
                     }
 
-                    let peers = ListRegisteredPeers {
+                    let peers = ListRegisteredPeersResponse {
                         cid,
                         peers: accounts,
                         online_status: peers
@@ -57,7 +57,7 @@ pub async fn handle_request(
                         request_id: Some(request_id),
                     };
 
-                    let response = InternalServiceResponse::ListRegisteredPeers(peers);
+                    let response = InternalServiceResponse::ListRegisteredPeersResponse(peers);
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                 }
 
@@ -76,7 +76,7 @@ pub async fn handle_request(
         InternalServiceRequest::ListAllPeers { request_id, cid } => {
             match remote.get_local_group_peers(cid, None).await {
                 Ok(peers) => {
-                    let peers = ListAllPeers {
+                    let peers = ListAllPeersResponse {
                         cid,
                         online_status: peers
                             .into_iter()
@@ -86,7 +86,7 @@ pub async fn handle_request(
                         request_id: Some(request_id),
                     };
 
-                    let response = InternalServiceResponse::ListAllPeers(peers);
+                    let response = InternalServiceResponse::ListAllPeersResponse(peers);
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                 }
 
@@ -172,7 +172,7 @@ pub async fn handle_request(
                 }
             }
 
-            let response = InternalServiceResponse::GetAccountInformation(Accounts {
+            let response = InternalServiceResponse::GetAccountInformationResponse(Accounts {
                 accounts: accounts_ret,
                 request_id: Some(request_id),
             });
@@ -207,7 +207,7 @@ pub async fn handle_request(
                 }
             }
 
-            let response = InternalServiceResponse::GetSessions(GetSessions {
+            let response = InternalServiceResponse::GetSessionsResponse(GetSessionsResponse {
                 sessions,
                 request_id: Some(request_id),
             });
@@ -261,7 +261,7 @@ pub async fn handle_request(
                     let connection_read_stream = async move {
                         while let Some(message) = stream.next().await {
                             let message =
-                                InternalServiceResponse::MessageReceived(MessageReceived {
+                                InternalServiceResponse::MessageNotification(MessageNotification {
                                     message: message.into_buffer(),
                                     cid,
                                     peer_cid: 0,
@@ -282,7 +282,7 @@ pub async fn handle_request(
                 }
 
                 Err(err) => {
-                    let response = InternalServiceResponse::ConnectionFailure(ConnectionFailure {
+                    let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
                         message: err.into_string(),
                         request_id: Some(request_id),
                     });
@@ -371,7 +371,7 @@ pub async fn handle_request(
                             info!(target: "citadel","connection not found");
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::MessageSendError(MessageSendError {
+                                InternalServiceResponse::MessageSendFailure(MessageSendFailure {
                                     cid,
                                     message: format!("Connection for {cid} not found"),
                                     request_id: Some(request_id),
@@ -389,11 +389,12 @@ pub async fn handle_request(
                             .unwrap();
                     }
 
-                    let response = InternalServiceResponse::MessageSent(MessageSent {
-                        cid,
-                        peer_cid,
-                        request_id: Some(request_id),
-                    });
+                    let response =
+                        InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
+                            cid,
+                            peer_cid,
+                            request_id: Some(request_id),
+                        });
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
                     info!(target: "citadel", "Into the message handler command send")
                 }
@@ -401,7 +402,7 @@ pub async fn handle_request(
                     info!(target: "citadel","connection not found");
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::MessageSendError(MessageSendError {
+                        InternalServiceResponse::MessageSendFailure(MessageSendFailure {
                             cid,
                             message: format!("Connection for {cid} not found"),
                             request_id: Some(request_id),
@@ -420,11 +421,12 @@ pub async fn handle_request(
             server_connection_map.lock().await.remove(&cid);
             match remote.send(request).await {
                 Ok(res) => {
-                    let disconnect_success = InternalServiceResponse::Disconnected(Disconnected {
-                        cid,
-                        peer_cid: None,
-                        request_id: Some(request_id),
-                    });
+                    let disconnect_success =
+                        InternalServiceResponse::DisconnectNotification(DisconnectNotification {
+                            cid,
+                            peer_cid: None,
+                            request_id: Some(request_id),
+                        });
                     send_response_to_tcp_client(tcp_connection_map, disconnect_success, uuid).await;
                     info!(target: "citadel", "Disconnected {res:?}")
                 }
@@ -486,10 +488,12 @@ pub async fn handle_request(
                             info!(target: "citadel","InternalServiceRequest Send File Success");
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::SendFileRequestSent(SendFileRequestSent {
-                                    cid,
-                                    request_id: Some(request_id),
-                                }),
+                                InternalServiceResponse::SendFileRequestSuccess(
+                                    SendFileRequestSuccess {
+                                        cid,
+                                        request_id: Some(request_id),
+                                    },
+                                ),
                                 uuid,
                             )
                             .await;
@@ -499,11 +503,13 @@ pub async fn handle_request(
                             info!(target: "citadel","InternalServiceRequest Send File Failure");
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::SendFileFailure(SendFileFailure {
-                                    cid,
-                                    message: err.into_string(),
-                                    request_id: Some(request_id),
-                                }),
+                                InternalServiceResponse::SendFileRequestFailure(
+                                    SendFileRequestFailure {
+                                        cid,
+                                        message: err.into_string(),
+                                        request_id: Some(request_id),
+                                    },
+                                ),
                                 uuid,
                             )
                             .await;
@@ -514,7 +520,7 @@ pub async fn handle_request(
                     info!(target: "citadel","server connection not found");
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::SendFileFailure(SendFileFailure {
+                        InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                             cid,
                             message: "Server Connection Not Found".into(),
                             request_id: Some(request_id),
@@ -557,8 +563,8 @@ pub async fn handle_request(
                             Ok(_) => {
                                 send_response_to_tcp_client(
                                     tcp_connection_map,
-                                    InternalServiceResponse::FileTransferStatus(
-                                        FileTransferStatus {
+                                    InternalServiceResponse::FileTransferStatusNotification(
+                                        FileTransferStatusNotification {
                                             cid,
                                             object_id,
                                             success: true,
@@ -575,8 +581,8 @@ pub async fn handle_request(
                             Err(err) => {
                                 send_response_to_tcp_client(
                                     tcp_connection_map,
-                                    InternalServiceResponse::FileTransferStatus(
-                                        FileTransferStatus {
+                                    InternalServiceResponse::FileTransferStatusNotification(
+                                        FileTransferStatusNotification {
                                             cid,
                                             object_id,
                                             success: false,
@@ -779,12 +785,12 @@ pub async fn handle_request(
                             if let Ok(target_information) =
                                 account_manager.find_target_information(cid, peer_cid).await
                             {
-                                let (peer_cid, mutual_peer) = target_information.unwrap();
+                                let (_, mutual_peer) = target_information.unwrap();
                                 match connect_after_register {
                                     true => {
                                         let connect_command = InternalServiceRequest::PeerConnect {
                                             cid,
-                                            peer_cid,
+                                            peer_cid: mutual_peer.cid,
                                             udp_mode: Default::default(),
                                             session_security_settings,
                                             request_id,
@@ -805,7 +811,7 @@ pub async fn handle_request(
                                             InternalServiceResponse::PeerRegisterSuccess(
                                                 PeerRegisterSuccess {
                                                     cid,
-                                                    peer_cid,
+                                                    peer_cid: mutual_peer.cid,
                                                     peer_username: mutual_peer
                                                         .username
                                                         .clone()
@@ -900,13 +906,14 @@ pub async fn handle_request(
                             .await;
                             let connection_read_stream = async move {
                                 while let Some(message) = stream.next().await {
-                                    let message =
-                                        InternalServiceResponse::MessageReceived(MessageReceived {
+                                    let message = InternalServiceResponse::MessageNotification(
+                                        MessageNotification {
                                             message: message.into_buffer(),
                                             cid: connection_cid,
                                             peer_cid,
                                             request_id: Some(request_id),
-                                        });
+                                        },
+                                    );
                                     match hm_for_conn.lock().await.get(&uuid) {
                                         Some(entry) => match entry.send(message) {
                                             Ok(res) => res,
@@ -1745,8 +1752,8 @@ pub async fn handle_request(
                             {
                                 send_response_to_tcp_client(
                                     tcp_connection_map,
-                                    InternalServiceResponse::GroupListGroupsForSuccess(
-                                        GroupListGroupsForSuccess {
+                                    InternalServiceResponse::GroupListGroupsSuccess(
+                                        GroupListGroupsSuccess {
                                             cid,
                                             peer_cid,
                                             group_list: Some(groups),
@@ -1759,8 +1766,8 @@ pub async fn handle_request(
                             } else {
                                 send_response_to_tcp_client(
                                     tcp_connection_map,
-                                    InternalServiceResponse::GroupListGroupsForFailure(
-                                        GroupListGroupsForFailure {
+                                    InternalServiceResponse::GroupListGroupsFailure(
+                                        GroupListGroupsFailure {
                                             cid,
                                             message: "Could Not List Groups - Failed".to_string(),
                                             request_id: Some(request_id),
@@ -1773,8 +1780,8 @@ pub async fn handle_request(
                         } else {
                             send_response_to_tcp_client(
                                 tcp_connection_map,
-                                InternalServiceResponse::GroupListGroupsForFailure(
-                                    GroupListGroupsForFailure {
+                                InternalServiceResponse::GroupListGroupsFailure(
+                                    GroupListGroupsFailure {
                                         cid,
                                         message: "Could Not List Groups - Subscription Error"
                                             .to_string(),
@@ -1788,8 +1795,8 @@ pub async fn handle_request(
                     } else {
                         send_response_to_tcp_client(
                             tcp_connection_map,
-                            InternalServiceResponse::GroupListGroupsForFailure(
-                                GroupListGroupsForFailure {
+                            InternalServiceResponse::GroupListGroupsFailure(
+                                GroupListGroupsFailure {
                                     cid,
                                     message: "Could Not List Groups - Subscription Error"
                                         .to_string(),
@@ -1803,13 +1810,11 @@ pub async fn handle_request(
                 } else {
                     send_response_to_tcp_client(
                         tcp_connection_map,
-                        InternalServiceResponse::GroupListGroupsForFailure(
-                            GroupListGroupsForFailure {
-                                cid,
-                                message: "Could Not List Groups - Peer not found".to_string(),
-                                request_id: Some(request_id),
-                            },
-                        ),
+                        InternalServiceResponse::GroupListGroupsFailure(GroupListGroupsFailure {
+                            cid,
+                            message: "Could Not List Groups - Peer not found".to_string(),
+                            request_id: Some(request_id),
+                        }),
                         uuid,
                     )
                     .await;
@@ -1817,7 +1822,7 @@ pub async fn handle_request(
             } else {
                 send_response_to_tcp_client(
                     tcp_connection_map,
-                    InternalServiceResponse::GroupListGroupsForFailure(GroupListGroupsForFailure {
+                    InternalServiceResponse::GroupListGroupsFailure(GroupListGroupsFailure {
                         cid,
                         message: "Could Not List Groups - Connection not found".to_string(),
                         request_id: Some(request_id),
@@ -2316,19 +2321,21 @@ pub(crate) fn spawn_group_channel_receiver(
                 Some(entry) => {
                     log::trace!(target:"citadel", "User {implicated_cid:?} Received Group Broadcast: {inbound_group_broadcast:?}");
                     let message = match inbound_group_broadcast {
-                        GroupBroadcastPayload::Message { payload, sender } => Some(
-                            InternalServiceResponse::GroupMessageReceived(GroupMessageReceived {
-                                cid: implicated_cid,
-                                peer_cid: sender,
-                                message: payload.into_buffer(),
-                                group_key,
-                                request_id: None,
-                            }),
-                        ),
+                        GroupBroadcastPayload::Message { payload, sender } => {
+                            Some(InternalServiceResponse::GroupMessageNotification(
+                                GroupMessageNotification {
+                                    cid: implicated_cid,
+                                    peer_cid: sender,
+                                    message: payload.into_buffer(),
+                                    group_key,
+                                    request_id: None,
+                                },
+                            ))
+                        }
                         GroupBroadcastPayload::Event { payload } => match payload {
                             GroupBroadcast::RequestJoin { sender, key: _ } => {
-                                Some(InternalServiceResponse::GroupJoinRequestReceived(
-                                    GroupJoinRequestReceived {
+                                Some(InternalServiceResponse::GroupJoinRequestNotification(
+                                    GroupJoinRequestNotification {
                                         cid: implicated_cid,
                                         peer_cid: sender,
                                         group_key,
@@ -2337,8 +2344,8 @@ pub(crate) fn spawn_group_channel_receiver(
                                 ))
                             }
                             GroupBroadcast::MemberStateChanged { key: _, state } => {
-                                Some(InternalServiceResponse::GroupMemberStateChanged(
-                                    GroupMemberStateChanged {
+                                Some(InternalServiceResponse::GroupMemberStateChangeNotification(
+                                    GroupMemberStateChangeNotification {
                                         cid: implicated_cid,
                                         group_key,
                                         state,
@@ -2347,20 +2354,24 @@ pub(crate) fn spawn_group_channel_receiver(
                                 ))
                             }
                             GroupBroadcast::EndResponse { key, success } => {
-                                Some(InternalServiceResponse::GroupEnded(GroupEnded {
-                                    cid: implicated_cid,
-                                    group_key: key,
-                                    success,
-                                    request_id: None,
-                                }))
+                                Some(InternalServiceResponse::GroupEndNotification(
+                                    GroupEndNotification {
+                                        cid: implicated_cid,
+                                        group_key: key,
+                                        success,
+                                        request_id: None,
+                                    },
+                                ))
                             }
-                            GroupBroadcast::Disconnected { key } => Some(
-                                InternalServiceResponse::GroupDisconnected(GroupDisconnected {
-                                    cid: implicated_cid,
-                                    group_key: key,
-                                    request_id: None,
-                                }),
-                            ),
+                            GroupBroadcast::Disconnected { key } => {
+                                Some(InternalServiceResponse::GroupDisconnectNotification(
+                                    GroupDisconnectNotification {
+                                        cid: implicated_cid,
+                                        group_key: key,
+                                        request_id: None,
+                                    },
+                                ))
+                            }
                             GroupBroadcast::MessageResponse { key, success } => {
                                 Some(InternalServiceResponse::GroupMessageResponse(
                                     GroupMessageResponse {

@@ -8,9 +8,10 @@ mod tests {
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
-        DeleteVirtualFileSuccess, DownloadFileFailure, FileTransferRequest, FileTransferStatus,
-        FileTransferTick, InternalServiceRequest, InternalServiceResponse, SendFileFailure,
-        SendFileRequestSent,
+        DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess,
+        FileTransferRequestNotification, FileTransferStatusNotification,
+        FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
+        SendFileRequestFailure, SendFileRequestSuccess,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
@@ -35,7 +36,7 @@ mod tests {
             exit(1);
         }));
 
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
 
@@ -92,7 +93,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_peer_standard_file_transfer() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
@@ -123,9 +124,9 @@ mod tests {
 
         info!(target:"citadel", "File Transfer Request Sent Successfully {cid_a:?}");
         let deserialized_service_b_payload_response = from_service_b.recv().await.unwrap();
-        if let InternalServiceResponse::FileTransferRequest(FileTransferRequest {
-            metadata, ..
-        }) = deserialized_service_b_payload_response
+        if let InternalServiceResponse::FileTransferRequestNotification(
+            FileTransferRequestNotification { metadata, .. },
+        ) = deserialized_service_b_payload_response
         {
             info!(target:"citadel", "File Transfer Request {cid_b:?}");
 
@@ -141,14 +142,16 @@ mod tests {
             info!(target:"citadel", "Accepted File Transfer {cid_b:?}");
 
             let file_transfer_accept = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::FileTransferStatus(FileTransferStatus {
-                cid: _,
-                object_id: _,
-                success,
-                response,
-                message: _,
-                request_id: _,
-            }) = file_transfer_accept
+            if let InternalServiceResponse::FileTransferStatusNotification(
+                FileTransferStatusNotification {
+                    cid: _,
+                    object_id: _,
+                    success,
+                    response,
+                    message: _,
+                    request_id: _,
+                },
+            ) = file_transfer_accept
             {
                 if success && response {
                     info!(target:"citadel", "File Transfer Accept Success {cid_b:?}");
@@ -181,7 +184,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_c2s_revfs() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
 
@@ -232,7 +235,7 @@ mod tests {
             };
             to_service.send(file_transfer_command).unwrap();
             let file_transfer_response = from_service.recv().await.unwrap();
-            if let InternalServiceResponse::SendFileFailure(SendFileFailure {
+            if let InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                 cid: _,
                 message,
                 request_id: _,
@@ -302,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_internal_service_peer_revfs() -> Result<(), Box<dyn Error>> {
-        citadel_logging::setup_log();
+        crate::common::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
@@ -336,20 +339,19 @@ mod tests {
         let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_payload_response:?}");
 
-        if let InternalServiceResponse::SendFileRequestSent(SendFileRequestSent { .. }) =
+        if let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
             &deserialized_service_a_payload_response
         {
             info!(target:"citadel", "File Transfer Request {cid_b}");
             let deserialized_service_a_payload_response = from_service_b.recv().await.unwrap();
-            if let InternalServiceResponse::FileTransferRequest(FileTransferRequest {
-                metadata,
-                ..
-            }) = deserialized_service_a_payload_response
+            if let InternalServiceResponse::FileTransferRequestNotification(
+                FileTransferRequestNotification { metadata, .. },
+            ) = deserialized_service_a_payload_response
             {
                 let file_transfer_accept_payload = InternalServiceRequest::RespondFileTransfer {
                     cid: *cid_b,
                     peer_cid: *cid_a,
-                    object_id: metadata.object_id as _,
+                    object_id: metadata.object_id,
                     accept: true,
                     download_location: None,
                     request_id: Uuid::new_v4(),
@@ -363,6 +365,9 @@ mod tests {
             panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
         }
 
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
+
         // Download P2P REVFS file - without delete on pull
         let download_file_command = InternalServiceRequest::DownloadFile {
             virtual_directory: virtual_path.clone(),
@@ -373,9 +378,18 @@ mod tests {
             request_id: Uuid::new_v4(),
         };
         to_service_a.send(download_file_command).unwrap();
-
-        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
-        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+        let download_file_response = from_service_a.recv().await.unwrap();
+        match download_file_response {
+            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
+                cid: response_cid,
+                request_id: _,
+            }) => {
+                assert_eq!(*cid_a, response_cid);
+            }
+            _ => {
+                panic!("Didn't get the REVFS DownloadFileSuccess - instead got {download_file_response:?}");
+            }
+        }
 
         // Delete file on Peer REVFS
         let delete_file_command = InternalServiceRequest::DeleteVirtualFile {
@@ -394,8 +408,7 @@ mod tests {
                 assert_eq!(*cid_a, response_cid);
             }
             _ => {
-                info!(target = "citadel", "{:?}", delete_file_response);
-                panic!("Didn't get the REVFS DeleteVirtualFileSuccess");
+                panic!("Didn't get the REVFS DeleteVirtualFileSuccess - instead got {delete_file_response:?}");
             }
         }
         info!(target: "citadel","{delete_file_response:?}");
@@ -413,11 +426,13 @@ mod tests {
         loop {
             let tick_response = svc.recv().await.unwrap();
             match tick_response {
-                InternalServiceResponse::FileTransferTick(FileTransferTick {
-                    cid: _,
-                    peer_cid: _,
-                    status,
-                }) => match status {
+                InternalServiceResponse::FileTransferTickNotification(
+                    FileTransferTickNotification {
+                        cid: _,
+                        peer_cid: _,
+                        status,
+                    },
+                ) => match status {
                     ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
                         path = Some(file_path);
                         is_revfs = matches!(
@@ -460,8 +475,10 @@ mod tests {
                         info!(target: "citadel", "File Transfer (Sending) Completed");
                         return;
                     }
-                    ObjectTransferStatus::TransferBeginning
-                    | ObjectTransferStatus::TransferTick(..) => {}
+                    ObjectTransferStatus::TransferBeginning => {
+                        info!(target: "citadel", "File Transfer (Sending) Beginning");
+                    }
+                    ObjectTransferStatus::TransferTick(..) => {}
                     _ => {
                         panic!("File Send Reception Status Yielded Unexpected Response")
                     }
