@@ -87,7 +87,7 @@ pub async fn register_and_connect_to_server<
     )> = Vec::new();
 
     for item in services_to_create {
-        let (mut sink, mut stream) = InternalServiceConnector::connect(item.internal_service_addr)
+        let (mut sink, mut stream) = InternalServiceConnector::connect_to_service(item.internal_service_addr)
             .await?
             .split();
 
