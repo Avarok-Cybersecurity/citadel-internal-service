@@ -2,7 +2,8 @@
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::util::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_types::{
-    InternalServiceRequest, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess,
+    InternalServiceRequest, InternalServiceResponse, PeerConnectNotification, PeerConnectSuccess,
+    PeerRegisterNotification, PeerRegisterSuccess,
 };
 use citadel_logging::info;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
@@ -395,6 +396,117 @@ pub async fn register_and_connect_to_server_then_peers(
         }
     }
     Ok(returned_service_info)
+}
+
+pub async fn register_p2p(
+    to_service_a: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_a: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_a: u64,
+    to_service_b: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_b: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_b: u64,
+    session_security_settings: SessionSecuritySettings,
+) -> Result<(), Box<dyn Error>> {
+    // Service A Requests to Register with Service B
+    to_service_a
+        .send(InternalServiceRequest::PeerRegister {
+            request_id: Uuid::new_v4(),
+            cid: cid_a,
+            peer_cid: cid_b,
+            session_security_settings,
+            connect_after_register: false,
+        })
+        .unwrap();
+
+    // Service B receives Register Request from Service A
+    let inbound_response = from_service_b.recv().await.unwrap();
+    match inbound_response {
+        InternalServiceResponse::PeerRegisterNotification(PeerRegisterNotification {
+            cid,
+            peer_cid,
+            peer_username: _,
+            request_id: _,
+        }) => {
+            assert_eq!(cid, cid_b);
+            assert_eq!(peer_cid, cid_a);
+        }
+        _ => {
+            panic!(
+                "Peer B didn't get the PeerRegisterNotification, instead got {inbound_response:?}"
+            );
+        }
+    }
+
+    // Service B Sends Register Request to Accept
+    to_service_b
+        .send(InternalServiceRequest::PeerRegister {
+            request_id: Uuid::new_v4(),
+            cid: cid_b,
+            peer_cid: cid_a,
+            session_security_settings,
+            connect_after_register: false,
+        })
+        .unwrap();
+
+    // Receive Register Success Responses
+    let _ = from_service_a.recv().await.unwrap();
+    let _ = from_service_b.recv().await.unwrap();
+    Ok(())
+}
+
+pub async fn connect_p2p(
+    to_service_a: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_a: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_a: u64,
+    to_service_b: &mut UnboundedSender<InternalServiceRequest>,
+    from_service_b: &mut UnboundedReceiver<InternalServiceResponse>,
+    cid_b: u64,
+    session_security_settings: SessionSecuritySettings,
+) -> Result<(), Box<dyn Error>> {
+    // Service A Requests To Connect
+    to_service_a
+        .send(InternalServiceRequest::PeerConnect {
+            request_id: Uuid::new_v4(),
+            cid: cid_a,
+            peer_cid: cid_b,
+            udp_mode: Default::default(),
+            session_security_settings,
+        })
+        .unwrap();
+
+    // Service B Receives Connect Request from Service A
+    let inbound_response = from_service_b.recv().await.unwrap();
+    match inbound_response {
+        InternalServiceResponse::PeerConnectNotification(PeerConnectNotification {
+            cid,
+            peer_cid,
+            session_security_settings: _,
+            udp_mode: _,
+            request_id: _,
+        }) => {
+            assert_eq!(cid, cid_b);
+            assert_eq!(peer_cid, cid_a);
+        }
+        _ => {
+            panic!("Peer B didn't get the PeerConnectNotification");
+        }
+    }
+
+    // Service B Sends Connect Request to Accept
+    to_service_b
+        .send(InternalServiceRequest::PeerConnect {
+            request_id: Uuid::new_v4(),
+            cid: cid_b,
+            peer_cid: cid_a,
+            udp_mode: Default::default(),
+            session_security_settings,
+        })
+        .unwrap();
+
+    // Receive Connect Success Responses
+    let _ = from_service_a.recv().await.unwrap();
+    let _ = from_service_b.recv().await.unwrap();
+    Ok(())
 }
 
 pub fn spawn_services(futures_to_spawn: Vec<InternalServicesFutures>) {

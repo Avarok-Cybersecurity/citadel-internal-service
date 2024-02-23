@@ -30,27 +30,48 @@ mod tests {
 
         // Now with both the server and the IS running, we can test both peers trying to connect, then to each other
         // via p2p
-        let mut to_spawn = vec![];
-        to_spawn.push(RegisterAndConnectItems {
-            internal_service_addr: service_addr,
-            server_addr: server_bind_address,
-            full_name: format!("Peer 0"),
-            username: format!("peer.0"),
-            password: format!("secret_0").into_bytes().to_owned(),
-        });
-
-        to_spawn.push(RegisterAndConnectItems {
-            internal_service_addr: service_addr,
-            server_addr: server_bind_address,
-            full_name: format!("Peer 1"),
-            username: format!("peer.1"),
-            password: format!("secret_1").into_bytes().to_owned(),
-        });
+        let to_spawn = vec![
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer 0".to_string(),
+                username: "peer.0".to_string(),
+                password: "secret_0".to_string().into_bytes().to_owned(),
+            },
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer 1".to_string(),
+                username: "peer.1".to_string(),
+                password: "secret_1".to_string().into_bytes().to_owned(),
+            },
+        ];
 
         let mut returned_service_info = register_and_connect_to_server(to_spawn).await.unwrap();
-        let (peer_0_tx, peer_0_rx, peer_0_cid) = returned_service_info.remove(0);
-        let (peer_1_tx, peer_1_rx, peer_1_cid) = returned_service_info.remove(0);
+        let (mut peer_0_tx, mut peer_0_rx, peer_0_cid) = returned_service_info.remove(0);
+        let (mut peer_1_tx, mut peer_1_rx, peer_1_cid) = returned_service_info.remove(0);
 
+        crate::common::register_p2p(
+            &mut peer_0_tx,
+            &mut peer_0_rx,
+            peer_0_cid,
+            &mut peer_1_tx,
+            &mut peer_1_rx,
+            peer_1_cid,
+            SessionSecuritySettings::default(),
+        )
+        .await?;
+        citadel_logging::info!(target: "citadel", "P2P Register complete");
+        crate::common::connect_p2p(
+            &mut peer_0_tx,
+            &mut peer_0_rx,
+            peer_0_cid,
+            &mut peer_1_tx,
+            &mut peer_1_rx,
+            peer_1_cid,
+            SessionSecuritySettings::default(),
+        )
+        .await?;
         Ok(())
     }
 }
