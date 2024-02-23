@@ -591,8 +591,8 @@ fn handle_connection(
                             }
                         }
                     }
-                    Err(_) => {
-                        warn!(target: "citadel", "Bad message from client");
+                    Err(err) => {
+                        warn!(target: "citadel", "Bad message from client: {err:?}");
                     }
                 }
             }
