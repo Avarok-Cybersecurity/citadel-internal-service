@@ -42,3 +42,4 @@ anyhow = "1.0.71"
 async-recursion = { version = "1.0.4" }
 parking_lot = { version = "0.12.1" }
 structopt = { version = "0.3.26" }
+lazy_static = "1.4.0"
