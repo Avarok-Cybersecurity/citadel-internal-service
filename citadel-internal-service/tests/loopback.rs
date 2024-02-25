@@ -6,12 +6,11 @@ mod tests {
         register_and_connect_to_server, server_info_skip_cert_verification, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
-    use citadel_logging::setup_log;
     use citadel_sdk::prelude::*;
 
     #[tokio::test]
     async fn test_2_peers_1_service() -> Result<(), Box<dyn std::error::Error>> {
-        setup_log();
+        crate::common::setup_log();
 
         let (server, server_bind_address) = server_info_skip_cert_verification();
         tokio::task::spawn(server);

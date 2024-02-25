@@ -7,6 +7,8 @@ use citadel_internal_service_types::*;
 use citadel_logging::tracing::log;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
+use citadel_sdk::prelude::remote_specialization::PeerRemote;
+use citadel_sdk::prelude::results::PeerRegisterStatus;
 use citadel_sdk::prelude::*;
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -299,7 +301,6 @@ pub async fn handle_request(
             session_security_settings,
             request_id,
         } => {
-            info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
             match remote
                 .register(
                     server_addr,
@@ -330,17 +331,23 @@ pub async fn handle_request(
                             request_id,
                         };
 
-                        handle_request(
-                            connect_command,
-                            uuid,
-                            server_connection_map,
-                            remote,
-                            tcp_connection_map,
-                        )
-                        .await
+                        let server_connection_map = server_connection_map.clone();
+                        let mut remote = remote.clone();
+                        let tcp_connection_map = tcp_connection_map.clone();
+                        tokio::task::spawn(async move {
+                            handle_request(
+                                connect_command,
+                                uuid,
+                                &server_connection_map,
+                                &mut remote,
+                                &tcp_connection_map,
+                            )
+                            .await
+                        });
                     }
                 },
                 Err(err) => {
+                    citadel_logging::error!(target: "citadel", "Failure on register: {err:?}");
                     let response = InternalServiceResponse::RegisterFailure(
                         citadel_internal_service_types::RegisterFailure {
                             message: err.into_string(),
@@ -777,9 +784,68 @@ pub async fn handle_request(
                 session_security_settings,
             );
 
+            let remote_for_scanner = &remote;
+            let scan_for_status = |status| async move {
+                if let NodeResult::PeerEvent(PeerEvent {
+                    event:
+                        PeerSignal::PostRegister {
+                            peer_conn_type,
+                            inviter_username: _,
+                            invitee_username: _,
+                            ticket_opt: _,
+                            invitee_response: resp,
+                        },
+                    ticket: _,
+                }) = status
+                {
+                    match resp {
+                        Some(PeerResponse::Accept(..)) => Ok(Some(PeerRegisterStatus::Accepted)),
+                        Some(PeerResponse::Decline) => Ok(Some(PeerRegisterStatus::Declined)),
+                        Some(PeerResponse::Timeout) => Ok(Some(PeerRegisterStatus::Failed { reason: Some("Timeout on register request. Peer did not accept in time. Try again later".to_string()) })),
+                        _ => {
+                            // This may be a signal needing to be routed
+                            if peer_conn_type.get_original_target_cid() == peer_cid {
+                                // If the target peer is the same as the peer_cid, that means that
+                                // the peer is in the same kernel space. Route the signal through the TCP client
+                                let lock = server_connection_map.lock().await;
+                                if let Some(peer) = lock.get(&peer_cid) {
+                                    let username_of_sender = remote_for_scanner.account_manager().get_username_by_cid(cid).await
+                                        .map_err(|err| NetworkError::msg(format!("Unable to get username for cid: {cid}. Error: {err:?}")))?
+                                        .ok_or_else(|| NetworkError::msg(format!("Unable to get username for cid: {cid}")))?;
+
+                                    let peer_uuid = peer.associated_tcp_connection;
+                                    drop(lock);
+
+                                    log::debug!(target: "citadel", "Routing signal meant for other peer in intra-kernel space");
+                                    send_response_to_tcp_client(
+                                        tcp_connection_map,
+                                        InternalServiceResponse::PeerRegisterNotification(
+                                            PeerRegisterNotification {
+                                                cid: peer_cid,
+                                                peer_cid: cid,
+                                                peer_username: username_of_sender,
+                                                request_id: Some(request_id),
+                                            },
+                                        ),
+                                        peer_uuid
+                                    ).await
+                                }
+                            }
+
+                            Ok(None)
+                        }
+                    }
+                } else {
+                    Ok(None)
+                }
+            };
+
             match client_to_server_remote.propose_target(cid, peer_cid).await {
                 Ok(symmetric_identifier_handle_ref) => {
-                    match symmetric_identifier_handle_ref.register_to_peer().await {
+                    match symmetric_identifier_handle_ref
+                        .register_to_peer_with_fn(scan_for_status)
+                        .await
+                    {
                         Ok(_peer_register_success) => {
                             let account_manager = symmetric_identifier_handle_ref.account_manager();
                             if let Ok(target_information) =
@@ -796,14 +862,19 @@ pub async fn handle_request(
                                             request_id,
                                         };
 
-                                        handle_request(
-                                            connect_command,
-                                            uuid,
-                                            server_connection_map,
-                                            remote,
-                                            tcp_connection_map,
-                                        )
-                                        .await;
+                                        let server_connection_map = server_connection_map.clone();
+                                        let mut remote = remote.clone();
+                                        let tcp_connection_map = tcp_connection_map.clone();
+                                        tokio::task::spawn(async move {
+                                            handle_request(
+                                                connect_command,
+                                                uuid,
+                                                &server_connection_map,
+                                                &mut remote,
+                                                &tcp_connection_map,
+                                            )
+                                            .await;
+                                        });
                                     }
                                     false => {
                                         send_response_to_tcp_client(
@@ -864,7 +935,6 @@ pub async fn handle_request(
             session_security_settings,
             request_id,
         } => {
-            // TODO: check to see if peer is already in the hashmap
             let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupPeer {
                     implicated_cid: cid,
@@ -873,10 +943,98 @@ pub async fn handle_request(
                 remote.clone(),
                 session_security_settings,
             );
+
             match client_to_server_remote.find_target(cid, peer_cid).await {
-                Ok(symmetric_identifier_handle_ref) => {
-                    match symmetric_identifier_handle_ref
-                        .connect_to_peer_custom(session_security_settings, udp_mode)
+                Ok(symmetric_identifier_handle) => {
+                    let symmetric_identifier_handle = &symmetric_identifier_handle.into_owned();
+
+                    let remote_for_scanner = &remote;
+                    let signal_scanner = |status| async move {
+                        match status {
+                            NodeResult::PeerChannelCreated(PeerChannelCreated {
+                                ticket: _,
+                                channel,
+                                udp_rx_opt,
+                            }) => {
+                                let username =
+                                    symmetric_identifier_handle.target_username().cloned();
+
+                                let remote = PeerRemote {
+                                    inner: (*remote_for_scanner).clone(),
+                                    peer: symmetric_identifier_handle
+                                        .try_as_peer_connection()
+                                        .await?
+                                        .as_virtual_connection(),
+                                    username,
+                                    session_security_settings,
+                                };
+
+                                Ok(Some(results::PeerConnectSuccess {
+                                    remote,
+                                    channel,
+                                    udp_channel_rx: udp_rx_opt,
+                                    incoming_object_transfer_handles: None,
+                                }))
+                            }
+
+                            NodeResult::PeerEvent(PeerEvent {
+                                event:
+                                    PeerSignal::PostConnect {
+                                        peer_conn_type: _,
+                                        ticket_opt: _,
+                                        invitee_response: Some(PeerResponse::Decline),
+                                        ..
+                                    },
+                                ..
+                            }) => Err(NetworkError::msg(format!(
+                                "Peer {peer_cid} declined connection"
+                            ))),
+
+                            NodeResult::PeerEvent(PeerEvent {
+                                event:
+                                    PeerSignal::PostConnect {
+                                        peer_conn_type,
+                                        ticket_opt: _,
+                                        invitee_response: None,
+                                        ..
+                                    },
+                                ..
+                            }) => {
+                                // Route the signal to the intra-kernel user
+                                if peer_conn_type.get_original_target_cid() == peer_cid {
+                                    let lock = server_connection_map.lock().await;
+                                    if let Some(conn) = lock.get(&peer_cid) {
+                                        let peer_uuid = conn.associated_tcp_connection;
+                                        send_response_to_tcp_client(
+                                            tcp_connection_map,
+                                            InternalServiceResponse::PeerConnectNotification(
+                                                PeerConnectNotification {
+                                                    cid: peer_cid,
+                                                    peer_cid: cid,
+                                                    session_security_settings,
+                                                    udp_mode,
+                                                    request_id: Some(request_id),
+                                                },
+                                            ),
+                                            peer_uuid,
+                                        )
+                                        .await
+                                    }
+                                }
+
+                                Ok(None)
+                            }
+
+                            _ => Ok(None),
+                        }
+                    };
+
+                    match symmetric_identifier_handle
+                        .connect_to_peer_with_fn(
+                            session_security_settings,
+                            udp_mode,
+                            signal_scanner,
+                        )
                         .await
                     {
                         Ok(peer_connect_success) => {
@@ -890,7 +1048,7 @@ pub async fn handle_request(
                                 .add_peer_connection(
                                     peer_cid,
                                     sink,
-                                    symmetric_identifier_handle_ref.into_owned(),
+                                    symmetric_identifier_handle.clone(),
                                 );
 
                             let hm_for_conn = tcp_connection_map.clone();
@@ -899,6 +1057,7 @@ pub async fn handle_request(
                                 tcp_connection_map,
                                 InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
                                     cid,
+                                    peer_cid,
                                     request_id: Some(request_id),
                                 }),
                                 uuid,

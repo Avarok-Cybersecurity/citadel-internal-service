@@ -115,6 +115,7 @@ pub struct DeleteVirtualFileFailure {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PeerConnectSuccess {
     pub cid: u64,
+    pub peer_cid: u64,
     pub request_id: Option<Uuid>,
 }
 

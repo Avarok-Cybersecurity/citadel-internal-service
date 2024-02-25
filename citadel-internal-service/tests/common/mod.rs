@@ -245,154 +245,27 @@ pub async fn register_and_connect_to_server_then_peers(
             let (ref mut to_service_b, ref mut from_service_b, cid_b) = neighbor;
             let session_security_settings =
                 SessionSecuritySettingsBuilder::default().build().unwrap();
+            register_p2p(
+                to_service_a,
+                from_service_a,
+                *cid_a,
+                to_service_b,
+                from_service_b,
+                *cid_b,
+                session_security_settings,
+            )
+            .await?;
 
-            // now, both peers are connected and registered to the central server. Now, we
-            // need to have them peer-register to each other
-            info!(
-                target = "citadel",
-                "Peer {cid_a:?} Sending PeerRegister Request to {cid_b:?}"
-            );
-            to_service_a
-                .send(InternalServiceRequest::PeerRegister {
-                    request_id: Uuid::new_v4(),
-                    cid: *cid_a,
-                    peer_cid: (*cid_b),
-                    session_security_settings,
-                    connect_after_register: false,
-                })
-                .unwrap();
-
-            // Receive Notification of Register Request
-            let peer_register_notification = from_service_b.recv().await.unwrap();
-            assert!(matches!(
-                peer_register_notification,
-                InternalServiceResponse::PeerRegisterNotification(..)
-            ));
-
-            info!(
-                target = "citadel",
-                "Peer {cid_b:?} Accepting PeerRegister Request From {cid_a:?}"
-            );
-            to_service_b
-                .send(InternalServiceRequest::PeerRegister {
-                    request_id: Uuid::new_v4(),
-                    cid: *cid_b,
-                    peer_cid: (*cid_a),
-                    session_security_settings,
-                    connect_after_register: false,
-                })
-                .unwrap();
-
-            let item = from_service_b.recv().await.unwrap();
-            match item {
-                InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-                    cid,
-                    peer_cid,
-                    peer_username: _,
-                    request_id: _,
-                }) => {
-                    info!(
-                        target = "citadel",
-                        "Peer {cid_b:?} Received PeerRegisterSuccess Signal"
-                    );
-                    assert_eq!(cid, *cid_b);
-                    assert_eq!(peer_cid, *cid_a);
-                }
-                _ => {
-                    panic!("Didn't get the PeerRegisterSuccess");
-                }
-            }
-
-            let item = from_service_a.recv().await.unwrap();
-            match item {
-                InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess {
-                    cid,
-                    peer_cid,
-                    peer_username: _,
-                    request_id: _,
-                }) => {
-                    info!(
-                        target = "citadel",
-                        "Peer {cid_a:?} Received PeerRegisterSuccess Signal"
-                    );
-                    assert_eq!(cid, *cid_a);
-                    assert_eq!(peer_cid, *cid_b);
-                }
-                _ => {
-                    panic!("Didn't get the PeerRegisterSuccess");
-                }
-            }
-
-            info!(
-                target = "citadel",
-                "Peer {cid_a:?} Sending PeerConnect Request to {cid_b:?}"
-            );
-            to_service_a
-                .send(InternalServiceRequest::PeerConnect {
-                    request_id: Uuid::new_v4(),
-                    cid: *cid_a,
-                    peer_cid: *cid_b,
-                    udp_mode: Default::default(),
-                    session_security_settings,
-                })
-                .unwrap();
-
-            // Receive Notification of Connect Request
-            let peer_connect_notification = from_service_b.recv().await.unwrap();
-            assert!(matches!(
-                peer_connect_notification,
-                InternalServiceResponse::PeerConnectNotification(..)
-            ));
-
-            info!(
-                target = "citadel",
-                "Peer {cid_b:?} Accepting PeerConnect Request From {cid_a:?}"
-            );
-            to_service_b
-                .send(InternalServiceRequest::PeerConnect {
-                    request_id: Uuid::new_v4(),
-                    cid: *cid_b,
-                    peer_cid: *cid_a,
-                    udp_mode: Default::default(),
-                    session_security_settings,
-                })
-                .unwrap();
-
-            let item = from_service_b.recv().await.unwrap();
-            match item {
-                InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
-                    cid,
-                    request_id: _,
-                }) => {
-                    info!(
-                        target = "citadel",
-                        "Peer {cid_b:?} Received PeerConnectSuccess Signal"
-                    );
-                    assert_eq!(cid, *cid_b);
-                }
-                _ => {
-                    info!(target = "citadel", "{:?}", item);
-                    panic!("Didn't get the PeerConnectSuccess");
-                }
-            }
-
-            let item = from_service_a.recv().await.unwrap();
-            match item {
-                InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
-                    cid,
-                    request_id: _,
-                }) => {
-                    info!(
-                        target = "citadel",
-                        "Peer {cid_a:?} Received PeerConnectSuccess Signal"
-                    );
-                    assert_eq!(cid, *cid_a);
-                }
-                _ => {
-                    info!(target = "citadel", "{:?}", item);
-                    panic!("Didn't get the PeerConnectSuccess");
-                }
-            }
+            connect_p2p(
+                to_service_a,
+                from_service_a,
+                *cid_a,
+                to_service_b,
+                from_service_b,
+                *cid_b,
+                session_security_settings,
+            )
+            .await?;
         }
     }
     Ok(returned_service_info)
@@ -449,8 +322,24 @@ pub async fn register_p2p(
         .unwrap();
 
     // Receive Register Success Responses
-    let _ = from_service_a.recv().await.unwrap();
-    let _ = from_service_b.recv().await.unwrap();
+    let resp = from_service_a.recv().await.unwrap();
+    let InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess { cid, peer_cid, .. }) =
+        resp
+    else {
+        panic!("Invalid signal")
+    };
+    assert_eq!(cid, cid_a);
+    assert_eq!(peer_cid, cid_b);
+
+    let resp = from_service_b.recv().await.unwrap();
+    let InternalServiceResponse::PeerRegisterSuccess(PeerRegisterSuccess { cid, peer_cid, .. }) =
+        resp
+    else {
+        panic!("Invalid signal")
+    };
+    assert_eq!(cid, cid_b);
+    assert_eq!(peer_cid, cid_a);
+
     Ok(())
 }
 
@@ -504,8 +393,23 @@ pub async fn connect_p2p(
         .unwrap();
 
     // Receive Connect Success Responses
-    let _ = from_service_a.recv().await.unwrap();
-    let _ = from_service_b.recv().await.unwrap();
+    let signal = from_service_a.recv().await.unwrap();
+    let InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid, peer_cid, .. }) =
+        signal
+    else {
+        panic!("Invalid signal")
+    };
+    assert_eq!(cid, cid_a);
+    assert_eq!(peer_cid, cid_b);
+    let signal = from_service_b.recv().await.unwrap();
+    let InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess { cid, peer_cid, .. }) =
+        signal
+    else {
+        panic!("Invalid signal")
+    };
+    assert_eq!(cid, cid_b);
+    assert_eq!(peer_cid, cid_a);
+
     Ok(())
 }
 

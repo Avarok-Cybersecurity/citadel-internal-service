@@ -167,7 +167,7 @@ impl NetKernel for CitadelWorkspaceService {
     }
 
     async fn on_start(&self) -> Result<(), NetworkError> {
-        let mut remote = self.remote.clone().unwrap();
+        let remote = self.remote.clone().unwrap();
         let remote_for_closure = remote.clone();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
 
@@ -198,14 +198,20 @@ impl NetKernel for CitadelWorkspaceService {
         let inbound_command_task = async move {
             while let Some((command, conn_id)) = rx.recv().await {
                 // TODO: handle error once payload_handler is fallible
-                handle_request(
-                    command,
-                    conn_id,
-                    server_connection_map,
-                    &mut remote,
-                    tcp_connection_map,
-                )
-                .await;
+                let mut remote = remote.clone();
+                let server_connection_map = server_connection_map.clone();
+                let tcp_connection_map = tcp_connection_map.clone();
+                // Spawn the task, that way, we can handle multiple requests in parallel
+                tokio::task::spawn(async move {
+                    handle_request(
+                        command,
+                        conn_id,
+                        &server_connection_map,
+                        &mut remote,
+                        &tcp_connection_map,
+                    )
+                    .await;
+                });
             }
             Ok(())
         };
@@ -221,7 +227,6 @@ impl NetKernel for CitadelWorkspaceService {
     }
 
     async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
-        info!(target: "citadel", "NODE EVENT RECEIVED WITH MESSAGE: {message:?}");
         match message {
             NodeResult::Disconnect(disconnect) => {
                 if let Some(conn) = disconnect.v_conn_type {
