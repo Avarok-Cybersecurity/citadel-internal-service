@@ -2,7 +2,6 @@ use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType};
 use std::error::Error;
 use std::net::SocketAddr;
-use std::time::Duration;
 use structopt::StructOpt;
 
 #[tokio::main]
@@ -20,9 +19,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         builder = builder.with_insecure_skip_cert_verification()
     }
 
-    let internal_service = builder.build(service)?;
-    tokio::spawn(internal_service);
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    builder.build(service)?.await?;
 
     Ok(())
 }
