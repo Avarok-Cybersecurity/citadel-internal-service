@@ -464,30 +464,72 @@ pub async fn handle_request(
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
                         if let Some(peer_remote) = conn.peers.get(&peer_cid) {
-                            let request = NodeRequest::SendObject(SendObject {
-                                source: Box::new(source),
-                                chunk_size,
-                                implicated_cid: cid,
-                                v_conn_type: *peer_remote.remote.user(),
-                                transfer_type,
-                            });
+                            let scan_for_status = |status| async move {
+                                match status {
+                                    NodeResult::ObjectTransferHandle(ObjectTransferHandle {
+                                                                         ticket: _ticket,
+                                                                         mut handle,
+                                                                     }) => {
+                                        let target_cid = handle.receiver;
+                                        if target_cid != cid {
+                                            // Route the signal to the intra-kernel user
+                                            if target_cid == peer_cid {
+                                                let lock = server_connection_map.lock().await;
+                                                if let Some(conn) = lock.get(&peer_cid) {
+                                                    let peer_uuid = conn.associated_tcp_connection;
+                                                    send_response_to_tcp_client(
+                                                        tcp_connection_map,
+                                                        InternalServiceResponse::FileTransferRequestNotification(
+                                                            FileTransferRequestNotification {
+                                                                cid,
+                                                                peer_cid,
+                                                                metadata: handle.metadata,
+                                                            },
+                                                        ),
+                                                        peer_uuid,
+                                                    )
+                                                        .await
+                                                }
+                                            }
+                                            return Ok(None);
+                                        } else {
+                                            while let Some(res) = handle.next().await {
+                                                log::trace!(target: "citadel", "Client received RES {:?}", res);
+                                                if let ObjectTransferStatus::TransferComplete = res
+                                                {
+                                                    return Ok(Some(()));
+                                                }
+                                            }
+                                        }
+                                        Err(NetworkError::msg("Failed To Receive TransferComplete Response During FileTransfer"))
+                                    }
 
-                            remote.send(request).await
+                                    res => {
+                                        log::error!(target: "citadel", "Invalid NodeResult for FileTransfer request received: {:?}", res);
+                                        Err(NetworkError::msg(
+                                            "Invalid Response Received During FileTransfer",
+                                        ))
+                                    }
+                                }
+                            };
+                            peer_remote
+                                .remote
+                                .send_file_with_custom_opts_and_with_fn(
+                                    source,
+                                    chunk_size.unwrap_or_default(),
+                                    transfer_type,
+                                    scan_for_status,
+                                )
+                                .await
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        let request = NodeRequest::SendObject(SendObject {
-                            source: Box::new(source),
-                            chunk_size,
-                            implicated_cid: cid,
-                            v_conn_type: VirtualTargetType::LocalGroupServer {
-                                implicated_cid: cid,
-                            },
+                        conn.client_server_remote.send_file_with_custom_opts(
+                            source,
+                            chunk_size.unwrap_or_default(),
                             transfer_type,
-                        });
-
-                        remote.send(request).await
+                        ).await
                     };
 
                     match result {
@@ -1038,7 +1080,6 @@ pub async fn handle_request(
                         .await
                     {
                         Ok(peer_connect_success) => {
-                            let connection_cid = peer_connect_success.channel.get_peer_cid();
                             let (sink, mut stream) = peer_connect_success.channel.split();
                             server_connection_map
                                 .lock()
@@ -1068,7 +1109,7 @@ pub async fn handle_request(
                                     let message = InternalServiceResponse::MessageNotification(
                                         MessageNotification {
                                             message: message.into_buffer(),
-                                            cid: connection_cid,
+                                            cid,
                                             peer_cid,
                                             request_id: Some(request_id),
                                         },
