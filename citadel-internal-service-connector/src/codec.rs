@@ -1,3 +1,4 @@
+use crate::connector::ClientError;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::error::Error;
@@ -28,6 +29,12 @@ impl From<std::io::Error> for CodecError {
         Self {
             reason: format!("IO error: {:?}", value),
         }
+    }
+}
+
+impl From<CodecError> for ClientError {
+    fn from(value: CodecError) -> Self {
+        ClientError::CodecError(value.reason)
     }
 }
 

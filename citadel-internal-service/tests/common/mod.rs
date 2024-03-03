@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use citadel_internal_service::kernel::CitadelWorkspaceService;
-use citadel_internal_service_connector::util::{InternalServiceConnector, WrappedSink};
+use citadel_internal_service_connector::connector::InternalServiceConnector;
+use citadel_internal_service_connector::util::WrappedSink;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess,
 };
@@ -87,9 +88,10 @@ pub async fn register_and_connect_to_server<
     )> = Vec::new();
 
     for item in services_to_create {
-        let (mut sink, mut stream) = InternalServiceConnector::connect_to_service(item.internal_service_addr)
-            .await?
-            .split();
+        let (mut sink, mut stream) =
+            InternalServiceConnector::connect_to_service(item.internal_service_addr)
+                .await?
+                .split();
 
         let username = item.username.into();
         let full_name = item.full_name.into();
