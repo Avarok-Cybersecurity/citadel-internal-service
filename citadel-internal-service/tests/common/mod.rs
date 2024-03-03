@@ -2,8 +2,8 @@
 use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::util::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_types::{
-    InternalServiceRequest, InternalServiceResponse, PeerConnectNotification, PeerConnectSuccess,
-    PeerRegisterNotification, PeerRegisterSuccess,
+    FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
+    PeerConnectNotification, PeerConnectSuccess, PeerRegisterNotification, PeerRegisterSuccess,
 };
 use citadel_logging::info;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
@@ -547,6 +547,80 @@ pub fn server_info_file_transfer<'a>(
     let (server, bind_addr) =
         server_test_node_skip_cert_verification(ReceiverFileTransferKernel(None, switch), |_| {});
     (server, bind_addr)
+}
+
+pub async fn exhaust_stream_to_file_completion(
+    cmp_path: PathBuf,
+    svc: &mut UnboundedReceiver<InternalServiceResponse>,
+) {
+    // Exhaust the stream for the receiver
+    let mut path = None;
+    let mut is_revfs = false;
+    loop {
+        let tick_response = svc.recv().await.unwrap();
+        match tick_response {
+            InternalServiceResponse::FileTransferTickNotification(
+                FileTransferTickNotification {
+                    cid: _,
+                    peer_cid: _,
+                    status,
+                },
+            ) => match status {
+                ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {
+                    path = Some(file_path);
+                    is_revfs = matches!(
+                        vfm.transfer_type,
+                        TransferType::RemoteEncryptedVirtualFilesystem { .. }
+                    );
+                    info!(target: "citadel", "File Transfer (Receiving) Beginning");
+                    assert_eq!(vfm.name, "test.txt")
+                }
+                ObjectTransferStatus::ReceptionTick(..) => {
+                    info!(target: "citadel", "File Transfer (Receiving) Tick");
+                }
+                ObjectTransferStatus::ReceptionComplete => {
+                    info!(target: "citadel", "File Transfer (Receiving) Completed");
+                    let cmp_data = tokio::fs::read(cmp_path.clone()).await.unwrap();
+                    let streamed_data = tokio::fs::read(
+                        path.clone()
+                            .expect("Never received the ReceptionBeginning tick!"),
+                    )
+                    .await
+                    .unwrap();
+                    if is_revfs {
+                        // The locally stored contents should NEVER be the same as the plaintext for REVFS
+                        assert_ne!(
+                            cmp_data.as_slice(),
+                            streamed_data.as_slice(),
+                            "Original data and streamed data does not match"
+                        );
+                    } else {
+                        assert_eq!(
+                            cmp_data.as_slice(),
+                            streamed_data.as_slice(),
+                            "Original data and streamed data does not match"
+                        );
+                    }
+
+                    return;
+                }
+                ObjectTransferStatus::TransferComplete => {
+                    info!(target: "citadel", "File Transfer (Sending) Completed");
+                    return;
+                }
+                ObjectTransferStatus::TransferBeginning => {
+                    info!(target: "citadel", "File Transfer (Sending) Beginning");
+                }
+                ObjectTransferStatus::TransferTick(..) => {}
+                _ => {
+                    panic!("File Send Reception Status Yielded Unexpected Response")
+                }
+            },
+            unexpected_response => {
+                citadel_logging::warn!(target: "citadel", "Unexpected signal {unexpected_response:?}")
+            }
+        }
+    }
 }
 
 pub async fn test_kv_for_service(

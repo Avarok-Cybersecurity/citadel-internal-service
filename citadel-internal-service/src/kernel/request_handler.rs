@@ -464,31 +464,47 @@ pub async fn handle_request(
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
                         if let Some(peer_remote) = conn.peers.get(&peer_cid) {
+                            let peer_remote = &peer_remote.remote.clone();
+                            drop(lock);
                             let scan_for_status = |status| async move {
                                 match status {
                                     NodeResult::ObjectTransferHandle(ObjectTransferHandle {
-                                                                         ticket: _ticket,
-                                                                         mut handle,
-                                                                     }) => {
-                                        let target_cid = handle.receiver;
-                                        if target_cid != cid {
-                                            // Route the signal to the intra-kernel user
-                                            if target_cid == peer_cid {
-                                                let lock = server_connection_map.lock().await;
-                                                if let Some(conn) = lock.get(&peer_cid) {
-                                                    let peer_uuid = conn.associated_tcp_connection;
+                                        ticket: _ticket,
+                                        mut handle,
+                                    }) => {
+                                        let original_target_cid = handle.receiver;
+                                        let original_source_cid = handle.source;
+                                        let handle_metadata = handle.metadata.clone();
+
+                                        if let ObjectTransferOrientation::Receiver {
+                                            is_revfs_pull: _,
+                                        } = handle.orientation
+                                        {
+                                            if original_target_cid == peer_cid {
+                                                let mut lock = server_connection_map.lock().await;
+                                                // Route the signal to the intra-kernel user if possible
+                                                if let Some(peer) =
+                                                    lock.get_mut(&original_target_cid)
+                                                {
+                                                    let peer_uuid = peer.associated_tcp_connection;
                                                     send_response_to_tcp_client(
                                                         tcp_connection_map,
                                                         InternalServiceResponse::FileTransferRequestNotification(
                                                             FileTransferRequestNotification {
-                                                                cid,
-                                                                peer_cid,
-                                                                metadata: handle.metadata,
+                                                                cid: original_target_cid,
+                                                                peer_cid: original_source_cid,
+                                                                metadata: handle_metadata.clone(),
                                                             },
                                                         ),
                                                         peer_uuid,
                                                     )
-                                                        .await
+                                                        .await;
+                                                    peer.add_object_transfer_handler(
+                                                        cid,
+                                                        handle_metadata.object_id,
+                                                        Some(handle),
+                                                    );
+                                                    return Ok(Some(()));
                                                 }
                                             }
                                             return Ok(None);
@@ -513,7 +529,6 @@ pub async fn handle_request(
                                 }
                             };
                             peer_remote
-                                .remote
                                 .send_file_with_custom_opts_and_with_fn(
                                     source,
                                     chunk_size.unwrap_or_default(),
@@ -525,11 +540,13 @@ pub async fn handle_request(
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        conn.client_server_remote.send_file_with_custom_opts(
-                            source,
-                            chunk_size.unwrap_or_default(),
-                            transfer_type,
-                        ).await
+                        conn.client_server_remote
+                            .send_file_with_custom_opts(
+                                source,
+                                chunk_size.unwrap_or_default(),
+                                transfer_type,
+                            )
+                            .await
                     };
 
                     match result {
