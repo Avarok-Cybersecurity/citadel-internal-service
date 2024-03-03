@@ -31,7 +31,7 @@ fn generate_function(input: TokenStream, contains: &str, function_name: &str) ->
     // Generate match arms for each enum variant
     let match_arms = generate_match_arms(name, &data, contains);
 
-    // Generate the implementation of the `is_error` method
+    // Generate the implementation of the `$function_name` method
     let expanded = quote! {
         impl #name {
             pub fn #function_name(&self) -> bool {
@@ -62,6 +62,52 @@ fn generate_match_arms(
             // Match against each variant, ignoring any inner data
             quote! {
                 #name::#variant_ident(_) => #is_error,
+            }
+        })
+        .collect()
+}
+
+#[proc_macro_derive(RequestId)]
+pub fn request_ids(input: TokenStream) -> TokenStream {
+    // Parse the input tokens into a syntax tree
+    let input = parse_macro_input!(input as DeriveInput);
+
+    // Extract the identifier and data from the input
+    let name = &input.ident;
+    let data = if let Data::Enum(data) = input.data {
+        data
+    } else {
+        // This macro only supports enums
+        panic!("RequestId can only be derived for enums");
+    };
+
+    // Generate match arms for each enum variant
+    let match_arms = generate_match_arms_uuid(name, &data);
+
+    // Generate the implementation of the `$function_name` method
+    let expanded = quote! {
+        impl #name {
+            pub fn request_id(&self) -> Option<&Uuid> {
+                match self {
+                    #(#match_arms)*
+                }
+            }
+        }
+    };
+
+    // Convert into a TokenStream and return it
+    TokenStream::from(expanded)
+}
+
+fn generate_match_arms_uuid(name: &Ident, data_enum: &DataEnum) -> Vec<proc_macro2::TokenStream> {
+    data_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            let variant_ident = &variant.ident;
+            // Match against each variant, ignoring any inner data
+            quote! {
+                #name::#variant_ident(inner) => inner.request_id.as_ref(),
             }
         })
         .collect()

@@ -431,6 +431,7 @@ mod tests {
                         cid: _,
                         peer_cid: _,
                         status,
+                        request_id: None,
                     },
                 ) => match status {
                     ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {

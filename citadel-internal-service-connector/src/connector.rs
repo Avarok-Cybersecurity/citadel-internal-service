@@ -72,7 +72,9 @@ impl InternalServiceConnector {
             .ok_or(ClientError::InternalServiceDisconnected)??;
         if matches!(
             greeter_packet,
-            InternalServicePayload::Response(InternalServiceResponse::ServiceConnectionAccepted(_))
+            InternalServicePayload::Response(
+                InternalServiceResponse::ServiceConnectionAccepted { .. }
+            )
         ) {
             let stream = WrappedStream { inner: stream };
             let sink = WrappedSink { inner: sink };

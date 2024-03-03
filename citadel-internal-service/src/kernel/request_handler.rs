@@ -106,6 +106,7 @@ pub async fn handle_request(
                 accounts_ret: &mut HashMap<u64, AccountInformation>,
                 account: CNACMetadata,
                 remote: &NodeRemote,
+                request_id: Uuid,
             ) {
                 let username = account.username.clone();
                 let full_name = account.full_name.clone();
@@ -143,6 +144,7 @@ pub async fn handle_request(
                         username,
                         full_name,
                         peers,
+                        request_id: Some(request_id),
                     },
                 );
             }
@@ -164,11 +166,11 @@ pub async fn handle_request(
             if let Some(cid) = cid {
                 let account = filtered_accounts.into_iter().find(|r| r.cid == cid);
                 if let Some(account) = account {
-                    add_account_to_map(&mut accounts_ret, account, remote).await;
+                    add_account_to_map(&mut accounts_ret, account, remote, request_id).await;
                 }
             } else {
                 for account in filtered_accounts {
-                    add_account_to_map(&mut accounts_ret, account, remote).await;
+                    add_account_to_map(&mut accounts_ret, account, remote, request_id).await;
                 }
             }
 
@@ -188,6 +190,7 @@ pub async fn handle_request(
                     let mut session = SessionInformation {
                         cid: *cid,
                         peer_connections: HashMap::new(),
+                        request_id: Some(request_id),
                     };
                     for (peer_cid, conn) in connection.peers.iter() {
                         session.peer_connections.insert(
