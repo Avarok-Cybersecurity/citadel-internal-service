@@ -51,6 +51,7 @@ mod tests {
         info!(target: "citadel", "sub server spawn");
         let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
         let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;
@@ -198,6 +199,7 @@ mod tests {
         info!(target: "citadel", "sub server spawn");
         let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
         let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;

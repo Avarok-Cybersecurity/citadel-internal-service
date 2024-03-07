@@ -31,7 +31,7 @@ pub async fn handle_request(
                 Ok(peers) => {
                     let mut accounts = HashMap::new();
                     for peer in &peers {
-                        // TOOD: Do not unwrap below
+                        // TODO: Do not unwrap below
                         let peer_username = remote
                             .find_target(cid, peer.cid)
                             .await
@@ -470,13 +470,13 @@ pub async fn handle_request(
                                 match status {
                                     NodeResult::ObjectTransferHandle(ObjectTransferHandle {
                                         ticket: _ticket,
-                                        mut handle,
+                                        handle,
                                     }) => {
                                         let original_target_cid = handle.receiver;
                                         let original_source_cid = handle.source;
                                         let handle_metadata = handle.metadata.clone();
 
-                                        if let ObjectTransferOrientation::Receiver {
+                                        return if let ObjectTransferOrientation::Receiver {
                                             is_revfs_pull: _,
                                         } = handle.orientation
                                         {
@@ -507,17 +507,26 @@ pub async fn handle_request(
                                                     return Ok(Some(()));
                                                 }
                                             }
-                                            return Ok(None);
+                                            Ok(None)
                                         } else {
-                                            while let Some(res) = handle.next().await {
-                                                log::trace!(target: "citadel", "Client received RES {:?}", res);
-                                                if let ObjectTransferStatus::TransferComplete = res
-                                                {
-                                                    return Ok(Some(()));
-                                                }
+                                            let mut server_connection_map =
+                                                server_connection_map.lock().await;
+                                            if let Some(_conn) =
+                                                server_connection_map.get_mut(&original_target_cid)
+                                            {
+                                                // The Sender is a local user, so we start the tick updater
+                                                spawn_tick_updater(
+                                                    handle,
+                                                    original_target_cid,
+                                                    original_source_cid,
+                                                    &mut server_connection_map,
+                                                    tcp_connection_map.clone(),
+                                                );
+                                                Ok(Some(()))
+                                            } else {
+                                                Ok(None)
                                             }
-                                        }
-                                        Err(NetworkError::msg("Failed To Receive TransferComplete Response During FileTransfer"))
+                                        };
                                     }
 
                                     res => {

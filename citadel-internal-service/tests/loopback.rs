@@ -92,7 +92,7 @@ mod tests {
         let service = CitadelWorkspaceService::new(service_addr);
 
         let internal_service = NodeBuilder::default()
-            .with_backend(BackendType::InMemory)
+            .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(service)?;

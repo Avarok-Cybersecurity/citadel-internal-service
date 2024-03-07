@@ -194,6 +194,7 @@ pub async fn register_and_connect_to_server_then_peers(
         info!(target: "citadel", "Internal Service Spawning");
         let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
         let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)
