@@ -12,6 +12,7 @@ use citadel_sdk::prelude::results::PeerRegisterStatus;
 use citadel_sdk::prelude::*;
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
@@ -685,31 +686,80 @@ pub async fn handle_request(
             request_id,
         } => {
             let security_level = security_level.unwrap_or_default();
+            let scan_for_status = |status| async move {
+                match status {
+                    NodeResult::ObjectTransferHandle(ObjectTransferHandle {
+                        ticket: _ticket,
+                        handle,
+                    }) => {
+                        let (implicated_cid, peer_cid) =
+                            if let ObjectTransferOrientation::Receiver {
+                                is_revfs_pull: true,
+                            } = handle.orientation
+                            {
+                                (handle.receiver, handle.source)
+                            } else {
+                                (handle.source, handle.receiver)
+                            };
+
+                        // Both the Sender and Receiver should automatically Send/Receive here
+                        let mut server_connection_map = server_connection_map.lock().await;
+                        if let Some(_conn) = server_connection_map.get_mut(&implicated_cid) {
+                            // The Receiver is a local user, so we start the tick updater
+                            spawn_tick_updater(
+                                handle,
+                                implicated_cid,
+                                peer_cid,
+                                &mut server_connection_map,
+                                tcp_connection_map.clone(),
+                            );
+                            // We have to return Some, but we don't care what it is in this case
+                            Ok(Some(PathBuf::default()))
+                        } else {
+                            Ok(None)
+                        }
+                    }
+
+                    res => {
+                        log::error!(target: "citadel", "Invalid NodeResult for REVFS DownloadFile request received: {:?}", res);
+                        Err(NetworkError::msg(
+                            "Invalid Response Received During REVFS Pull",
+                        ))
+                    }
+                }
+            };
 
             match server_connection_map.lock().await.get_mut(&cid) {
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
                         if let Some(peer_remote) = conn.peers.get_mut(&peer_cid) {
-                            let request = NodeRequest::PullObject(PullObject {
-                                v_conn: *peer_remote.remote.user(),
-                                virtual_dir: virtual_directory,
-                                delete_on_pull,
-                                transfer_security_level: security_level,
-                            });
-
-                            peer_remote.remote.send(request).await
+                            let current_security_settings =
+                                peer_remote.remote.session_security_settings();
+                            info!(target: "citadel","Current Security Settings: {current_security_settings:?}");
+                            peer_remote
+                                .remote
+                                .remote_encrypted_virtual_filesystem_pull_with_fn(
+                                    virtual_directory,
+                                    security_level,
+                                    delete_on_pull,
+                                    scan_for_status,
+                                )
+                                .await
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        let request = NodeRequest::PullObject(PullObject {
-                            v_conn: *conn.client_server_remote.user(),
-                            virtual_dir: virtual_directory,
-                            delete_on_pull,
-                            transfer_security_level: security_level,
-                        });
-
-                        conn.client_server_remote.send(request).await
+                        let current_security_settings =
+                            conn.client_server_remote.session_security_settings();
+                        info!(target: "citadel","Current Security Settings: {current_security_settings:?}");
+                        conn.client_server_remote
+                            .remote_encrypted_virtual_filesystem_pull_with_fn(
+                                virtual_directory,
+                                security_level,
+                                delete_on_pull,
+                                scan_for_status,
+                            )
+                            .await
                     };
 
                     match result {

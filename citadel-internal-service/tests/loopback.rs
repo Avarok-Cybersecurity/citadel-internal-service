@@ -8,15 +8,16 @@ mod tests {
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
-        FileTransferRequestNotification, FileTransferStatusNotification, InternalServiceRequest,
-        InternalServiceResponse,
+        DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequestNotification,
+        FileTransferStatusNotification, InternalServiceRequest, InternalServiceResponse,
+        SendFileRequestSuccess,
     };
     use citadel_sdk::prelude::*;
     use std::path::PathBuf;
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn test_2_peers_1_service() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_intra_kernel_service_and_peers() -> Result<(), Box<dyn std::error::Error>> {
         crate::common::setup_log();
 
         let (server, server_bind_address) = server_info_skip_cert_verification();
@@ -82,7 +83,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_loopback_send_file() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_intra_kernel_send_file() -> Result<(), Box<dyn std::error::Error>> {
         crate::common::setup_log();
 
         let (server, server_bind_address) = server_info_skip_cert_verification();
@@ -214,6 +215,165 @@ mod tests {
         } else {
             panic!("File Transfer P2P Failure");
         };
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_intra_kernel_revfs() -> Result<(), Box<dyn std::error::Error>> {
+        crate::common::setup_log();
+
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+
+        let service_addr = "127.0.0.1:55778".parse().unwrap();
+        let service = CitadelWorkspaceService::new(service_addr);
+
+        let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::Filesystem("filesystem".into()))
+            .with_node_type(NodeType::Peer)
+            .with_insecure_skip_cert_verification()
+            .build(service)?;
+
+        tokio::task::spawn(internal_service);
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+        // Now with both the server and the IS running, we can test both peers trying to connect, then to each other
+        // via p2p
+        let to_spawn = vec![
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer 0".to_string(),
+                username: "peer.0".to_string(),
+                password: "secret_0".to_string().into_bytes().to_owned(),
+            },
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer 1".to_string(),
+                username: "peer.1".to_string(),
+                password: "secret_1".to_string().into_bytes().to_owned(),
+            },
+        ];
+
+        let mut returned_service_info = register_and_connect_to_server(to_spawn).await.unwrap();
+        let (mut peer_0_tx, mut peer_0_rx, peer_0_cid) = returned_service_info.remove(0);
+        let (mut peer_1_tx, mut peer_1_rx, peer_1_cid) = returned_service_info.remove(0);
+
+        crate::common::register_p2p(
+            &mut peer_0_tx,
+            &mut peer_0_rx,
+            peer_0_cid,
+            &mut peer_1_tx,
+            &mut peer_1_rx,
+            peer_1_cid,
+            SessionSecuritySettingsBuilder::default().build().unwrap(),
+        )
+        .await?;
+        citadel_logging::info!(target: "citadel", "P2P Register complete");
+        crate::common::connect_p2p(
+            &mut peer_0_tx,
+            &mut peer_0_rx,
+            peer_0_cid,
+            &mut peer_1_tx,
+            &mut peer_1_rx,
+            peer_1_cid,
+            SessionSecuritySettingsBuilder::default().build().unwrap(), //SessionSecuritySettings::default(),
+        )
+        .await?;
+
+        // Push file to REVFS on peer
+        let file_to_send = PathBuf::from("../resources/test.txt");
+        let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
+        let send_file_peer_1_tx_payload = InternalServiceRequest::SendFile {
+            request_id: Uuid::new_v4(),
+            source: file_to_send.clone(),
+            cid: peer_0_cid,
+            transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
+                virtual_path: virtual_path.clone(),
+                security_level: Default::default(),
+            },
+            peer_cid: Some(peer_1_cid),
+            chunk_size: None,
+        };
+        peer_0_tx.send(send_file_peer_1_tx_payload).unwrap();
+        let deserialized_service_a_payload_response = peer_0_rx.recv().await.unwrap();
+        citadel_logging::info!(target: "citadel","{deserialized_service_a_payload_response:?}");
+
+        if let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
+            &deserialized_service_a_payload_response
+        {
+            citadel_logging::info!(target:"citadel", "File Transfer Request {peer_1_cid}");
+            let deserialized_service_a_payload_response = peer_1_rx.recv().await.unwrap();
+            if let InternalServiceResponse::FileTransferRequestNotification(
+                FileTransferRequestNotification { metadata, .. },
+            ) = deserialized_service_a_payload_response
+            {
+                let file_transfer_accept_payload = InternalServiceRequest::RespondFileTransfer {
+                    cid: peer_1_cid,
+                    peer_cid: peer_0_cid,
+                    object_id: metadata.object_id,
+                    accept: true,
+                    download_location: None,
+                    request_id: Uuid::new_v4(),
+                };
+                peer_1_tx.send(file_transfer_accept_payload).unwrap();
+                citadel_logging::info!(target:"citadel", "Accepted File Transfer {peer_1_cid}");
+            } else {
+                panic!("File Transfer P2P Failure");
+            }
+        } else {
+            panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
+        }
+
+        exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_1_rx).await;
+        exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_0_rx).await;
+
+        // Download P2P REVFS file - without delete on pull
+        let download_file_command = InternalServiceRequest::DownloadFile {
+            virtual_directory: virtual_path.clone(),
+            security_level: Default::default(),
+            delete_on_pull: false,
+            cid: peer_0_cid,
+            peer_cid: Some(peer_1_cid),
+            request_id: Uuid::new_v4(),
+        };
+        peer_0_tx.send(download_file_command).unwrap();
+        let download_file_response = peer_0_rx.recv().await.unwrap();
+        match download_file_response {
+            InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
+                cid: response_cid,
+                request_id: _,
+            }) => {
+                assert_eq!(peer_0_cid, response_cid);
+            }
+            _ => {
+                panic!("Didn't get the REVFS DownloadFileSuccess - instead got {download_file_response:?}");
+            }
+        }
+
+        // Delete file on Peer REVFS
+        let delete_file_command = InternalServiceRequest::DeleteVirtualFile {
+            virtual_directory: virtual_path,
+            cid: peer_0_cid,
+            peer_cid: Some(peer_1_cid),
+            request_id: Uuid::new_v4(),
+        };
+        peer_0_tx.send(delete_file_command).unwrap();
+        let delete_file_response = peer_0_rx.recv().await.unwrap();
+        match delete_file_response {
+            InternalServiceResponse::DeleteVirtualFileSuccess(DeleteVirtualFileSuccess {
+                cid: response_cid,
+                request_id: _,
+            }) => {
+                assert_eq!(peer_0_cid, response_cid);
+            }
+            _ => {
+                panic!("Didn't get the REVFS DeleteVirtualFileSuccess - instead got {delete_file_response:?}");
+            }
+        }
+        citadel_logging::info!(target: "citadel","{delete_file_response:?}");
 
         Ok(())
     }
