@@ -12,7 +12,6 @@ use citadel_sdk::prelude::results::PeerRegisterStatus;
 use citadel_sdk::prelude::*;
 use futures::StreamExt;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
@@ -519,7 +518,7 @@ pub async fn handle_request(
                                                 spawn_tick_updater(
                                                     handle,
                                                     original_target_cid,
-                                                    original_source_cid,
+                                                    Some(original_source_cid),
                                                     &mut server_connection_map,
                                                     tcp_connection_map.clone(),
                                                 );
@@ -550,11 +549,37 @@ pub async fn handle_request(
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
+                        let send_file_c2s = |status| async move {
+                            match status {
+                                NodeResult::ObjectTransferHandle(ObjectTransferHandle {
+                                    ticket: _ticket,
+                                    handle,
+                                }) => {
+                                    let mut server_connection_map =
+                                        server_connection_map.lock().await;
+                                    spawn_tick_updater(
+                                        handle,
+                                        cid,
+                                        None,
+                                        &mut server_connection_map,
+                                        tcp_connection_map.clone(),
+                                    );
+                                    Ok(Some(()))
+                                }
+                                res => {
+                                    log::error!(target: "citadel", "Invalid NodeResult for FileTransfer request received: {:?}", res);
+                                    Err(NetworkError::msg(
+                                        "Invalid Response Received During FileTransfer",
+                                    ))
+                                }
+                            }
+                        };
                         conn.client_server_remote
-                            .send_file_with_custom_opts(
+                            .send_file_with_custom_opts_and_with_fn(
                                 source,
                                 chunk_size.unwrap_or_default(),
                                 transfer_type,
+                                send_file_c2s,
                             )
                             .await
                     };
@@ -626,7 +651,7 @@ pub async fn handle_request(
                             spawn_tick_updater(
                                 owned_handler,
                                 cid,
-                                peer_cid,
+                                Some(peer_cid),
                                 &mut server_connection_map,
                                 tcp_connection_map.clone(),
                             );
@@ -690,32 +715,41 @@ pub async fn handle_request(
                 match status {
                     NodeResult::ObjectTransferHandle(ObjectTransferHandle {
                         ticket: _ticket,
-                        handle,
+                        mut handle,
                     }) => {
-                        let (implicated_cid, peer_cid) =
+                        let (implicated_cid, _peer_cid) =
                             if let ObjectTransferOrientation::Receiver {
                                 is_revfs_pull: true,
                             } = handle.orientation
                             {
+                                info!(target: "citadel", "Download Orientation: Receiver");
                                 (handle.receiver, handle.source)
                             } else {
+                                info!(target: "citadel", "Download Orientation: Sender");
                                 (handle.source, handle.receiver)
                             };
 
-                        // Both the Sender and Receiver should automatically Send/Receive here
                         let mut server_connection_map = server_connection_map.lock().await;
                         if let Some(_conn) = server_connection_map.get_mut(&implicated_cid) {
-                            // The Receiver is a local user, so we start the tick updater
-                            spawn_tick_updater(
-                                handle,
-                                implicated_cid,
-                                peer_cid,
-                                &mut server_connection_map,
-                                tcp_connection_map.clone(),
-                            );
-                            // We have to return Some, but we don't care what it is in this case
-                            Ok(Some(PathBuf::default()))
+                            let mut local_path = None;
+                            while let Some(res) = handle.next().await {
+                                match res {
+                                    ObjectTransferStatus::ReceptionBeginning(path, _) => {
+                                        local_path = Some(path)
+                                    }
+                                    ObjectTransferStatus::TransferComplete => {
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if local_path.is_some() {
+                                Ok(local_path)
+                            } else {
+                                Err(NetworkError::InternalError("Local path never loaded"))
+                            }
                         } else {
+                            info!(target: "citadel", "Download File - Returning None");
                             Ok(None)
                         }
                     }
@@ -729,15 +763,14 @@ pub async fn handle_request(
                 }
             };
 
-            match server_connection_map.lock().await.get_mut(&cid) {
+            let mut lock = server_connection_map.lock().await;
+            match lock.get_mut(&cid) {
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
                         if let Some(peer_remote) = conn.peers.get_mut(&peer_cid) {
-                            let current_security_settings =
-                                peer_remote.remote.session_security_settings();
-                            info!(target: "citadel","Current Security Settings: {current_security_settings:?}");
+                            let peer_remote = peer_remote.remote.clone();
+                            drop(lock);
                             peer_remote
-                                .remote
                                 .remote_encrypted_virtual_filesystem_pull_with_fn(
                                     virtual_directory,
                                     security_level,
@@ -749,10 +782,9 @@ pub async fn handle_request(
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        let current_security_settings =
-                            conn.client_server_remote.session_security_settings();
-                        info!(target: "citadel","Current Security Settings: {current_security_settings:?}");
-                        conn.client_server_remote
+                        let client_server_remote = conn.client_server_remote.clone();
+                        drop(lock);
+                        client_server_remote
                             .remote_encrypted_virtual_filesystem_pull_with_fn(
                                 virtual_directory,
                                 security_level,
@@ -1165,7 +1197,7 @@ pub async fn handle_request(
                                 .add_peer_connection(
                                     peer_cid,
                                     sink,
-                                    symmetric_identifier_handle.clone(),
+                                    peer_connect_success.remote, //symmetric_identifier_handle.clone(),
                                 );
 
                             let hm_for_conn = tcp_connection_map.clone();
@@ -1270,7 +1302,7 @@ pub async fn handle_request(
                     None => {
                         // TODO: handle none case
                     }
-                    Some(target_peer) => match target_peer.remote.send(request).await {
+                    Some(target_peer) => match target_peer.remote.inner.send(request).await {
                         Ok(ticket) => {
                             conn.clear_peer_connection(peer_cid);
                             let peer_disconnect_success =
@@ -2017,7 +2049,7 @@ pub async fn handle_request(
                         command: GroupBroadcast::ListGroupsFor { cid: peer_cid },
                     });
                     if let Ok(mut subscription) =
-                        peer_remote.send_callback_subscription(request).await
+                        peer_remote.inner.send_callback_subscription(request).await
                     {
                         if let Some(evt) = subscription.next().await {
                             if let NodeResult::GroupEvent(GroupEvent {
@@ -2136,7 +2168,7 @@ pub async fn handle_request(
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
                     let peer_remote = peer_connection.remote.clone();
-                    match peer_remote.send_callback_subscription(request).await {
+                    match peer_remote.inner.send_callback_subscription(request).await {
                         Ok(mut subscription) => {
                             let mut result = false;
                             if invitation {
@@ -2276,7 +2308,7 @@ pub async fn handle_request(
                         implicated_cid: cid,
                         command: group_request,
                     });
-                    match peer_remote.send_callback_subscription(request).await {
+                    match peer_remote.inner.send_callback_subscription(request).await {
                         Ok(mut subscription) => {
                             let mut result = Err("Group Request Join Failed".to_string());
                             while let Some(evt) = subscription.next().await {

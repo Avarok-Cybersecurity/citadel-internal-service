@@ -558,7 +558,7 @@ pub struct FileTransferStatusNotification {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileTransferTickNotification {
     pub cid: u64,
-    pub peer_cid: u64,
+    pub peer_cid: Option<u64>,
     pub status: ObjectTransferStatus,
 }
 

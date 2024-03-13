@@ -4,6 +4,7 @@ use citadel_internal_service_connector::util::wrap_tcp_conn;
 use citadel_internal_service_types::*;
 use citadel_logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
+use citadel_sdk::prelude::remote_specialization::PeerRemote;
 use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
 use futures::stream::{SplitSink, StreamExt};
@@ -50,7 +51,7 @@ pub struct Connection {
 #[allow(dead_code)]
 struct PeerConnection {
     sink: PeerChannelSendHalf,
-    remote: SymmetricIdentifierHandle,
+    remote: PeerRemote,
     handler_map: HashMap<u64, Option<ObjectTransferHandler>>,
     associated_tcp_connection: Uuid,
 }
@@ -82,7 +83,7 @@ impl Connection {
         &mut self,
         peer_cid: u64,
         sink: PeerChannelSendHalf,
-        remote: SymmetricIdentifierHandle,
+        remote: PeerRemote,
     ) {
         self.peers.insert(
             peer_cid,
@@ -323,7 +324,7 @@ impl NetKernel for CitadelWorkspaceService {
                             spawn_tick_updater(
                                 object_transfer_handler,
                                 implicated_cid,
-                                peer_cid,
+                                Some(peer_cid),
                                 &mut server_connection_map,
                                 self.tcp_connection_map.clone(),
                             );
@@ -353,7 +354,7 @@ impl NetKernel for CitadelWorkspaceService {
                     spawn_tick_updater(
                         object_transfer_handler,
                         implicated_cid,
-                        peer_cid,
+                        Some(peer_cid),
                         &mut server_connection_map,
                         self.tcp_connection_map.clone(),
                     );
@@ -811,7 +812,7 @@ async fn handle_group_broadcast(
 fn spawn_tick_updater(
     object_transfer_handler: ObjectTransferHandler,
     implicated_cid: u64,
-    peer_cid: u64,
+    peer_cid: Option<u64>,
     server_connection_map: &mut HashMap<u64, Connection>,
     tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
@@ -832,7 +833,7 @@ fn spawn_tick_updater(
                         );
                         match entry.send(message.clone()) {
                             Ok(_res) => {
-                                info!(target: "citadel", "File Transfer Status Tick Sent");
+                                info!(target: "citadel", "File Transfer Status Tick Sent {status:?}");
                             }
                             Err(err) => {
                                 warn!(target: "citadel", "File Transfer Status Tick Not Sent: {err:?}");

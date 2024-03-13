@@ -557,6 +557,12 @@ pub async fn exhaust_stream_to_file_completion(
     // Exhaust the stream for the receiver
     let mut path = None;
     let mut is_revfs = false;
+    let cmp_file_name = cmp_path
+        .file_name()
+        .unwrap()
+        .to_os_string()
+        .into_string()
+        .unwrap();
     loop {
         let tick_response = svc.recv().await.unwrap();
         match tick_response {
@@ -574,7 +580,7 @@ pub async fn exhaust_stream_to_file_completion(
                         TransferType::RemoteEncryptedVirtualFilesystem { .. }
                     );
                     info!(target: "citadel", "File Transfer (Receiving) Beginning");
-                    assert_eq!(vfm.name, "test.txt")
+                    assert_eq!(vfm.name, cmp_file_name)
                 }
                 ObjectTransferStatus::ReceptionTick(..) => {
                     info!(target: "citadel", "File Transfer (Receiving) Tick");

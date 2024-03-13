@@ -268,7 +268,7 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettingsBuilder::default().build().unwrap(),
+            SessionSecuritySettings::default(),
         )
         .await?;
         citadel_logging::info!(target: "citadel", "P2P Register complete");
@@ -279,13 +279,13 @@ mod tests {
             &mut peer_1_tx,
             &mut peer_1_rx,
             peer_1_cid,
-            SessionSecuritySettingsBuilder::default().build().unwrap(), //SessionSecuritySettings::default(),
+            SessionSecuritySettings::default(),
         )
         .await?;
 
         // Push file to REVFS on peer
         let file_to_send = PathBuf::from("../resources/test.txt");
-        let virtual_path = PathBuf::from("/vfs/virtual_test.txt");
+        let virtual_path = PathBuf::from("/vfs/test.txt");
         let send_file_peer_1_tx_payload = InternalServiceRequest::SendFile {
             request_id: Uuid::new_v4(),
             source: file_to_send.clone(),
@@ -330,6 +330,8 @@ mod tests {
         exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_1_rx).await;
         exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_0_rx).await;
 
+        citadel_logging::info!(target: "citadel", "Peer 0 Requesting to Download File");
+
         // Download P2P REVFS file - without delete on pull
         let download_file_command = InternalServiceRequest::DownloadFile {
             virtual_directory: virtual_path.clone(),
@@ -352,6 +354,8 @@ mod tests {
                 panic!("Didn't get the REVFS DownloadFileSuccess - instead got {download_file_response:?}");
             }
         }
+
+        citadel_logging::info!(target: "citadel", "Peer 0 Requesting to Delete File");
 
         // Delete file on Peer REVFS
         let delete_file_command = InternalServiceRequest::DeleteVirtualFile {
