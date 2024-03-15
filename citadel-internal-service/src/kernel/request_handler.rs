@@ -12,6 +12,7 @@ use citadel_sdk::prelude::results::PeerRegisterStatus;
 use citadel_sdk::prelude::*;
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
@@ -462,11 +463,15 @@ pub async fn handle_request(
             let lock = server_connection_map.lock().await;
             match lock.get(&cid) {
                 Some(conn) => {
+                    info!(target: "citadel", "Send File Server Connection Exists");
                     let result = if let Some(peer_cid) = peer_cid {
+                        info!(target: "citadel", "Send File Peer Version");
                         if let Some(peer_remote) = conn.peers.get(&peer_cid) {
+                            info!(target: "citadel", "Send File Peer Remote Exists");
                             let peer_remote = &peer_remote.remote.clone();
                             drop(lock);
                             let scan_for_status = |status| async move {
+                                info!(target: "citadel", "Send File Scan For Status Entered");
                                 match status {
                                     NodeResult::ObjectTransferHandle(ObjectTransferHandle {
                                         ticket: _ticket,
@@ -480,12 +485,15 @@ pub async fn handle_request(
                                             is_revfs_pull: _,
                                         } = handle.orientation
                                         {
+                                            info!(target: "citadel", "Send File Receiver Entered");
                                             if original_target_cid == peer_cid {
+                                                info!(target: "citadel", "Send File Receiver is targeted at Peer CID");
                                                 let mut lock = server_connection_map.lock().await;
                                                 // Route the signal to the intra-kernel user if possible
                                                 if let Some(peer) =
                                                     lock.get_mut(&original_target_cid)
                                                 {
+                                                    info!(target: "citadel", "Send File Receiver - Target is local, rerouting");
                                                     let peer_uuid = peer.associated_tcp_connection;
                                                     send_response_to_tcp_client(
                                                         tcp_connection_map,
@@ -509,12 +517,15 @@ pub async fn handle_request(
                                             }
                                             Ok(None)
                                         } else {
+                                            info!(target: "citadel", "Sender should be spawning tick updater on Send File");
+                                            info!(target: "citadel", "Sender Source CID: {original_source_cid:?} and Actual CID: {cid:?}");
                                             let mut server_connection_map =
                                                 server_connection_map.lock().await;
                                             if let Some(_conn) =
                                                 server_connection_map.get_mut(&original_target_cid)
                                             {
                                                 // The Sender is a local user, so we start the tick updater
+                                                info!(target: "citadel", "Spawning Tick Updater For Send file Target {original_target_cid:?} who is CID {cid:?}");
                                                 spawn_tick_updater(
                                                     handle,
                                                     original_target_cid,
@@ -522,10 +533,9 @@ pub async fn handle_request(
                                                     &mut server_connection_map,
                                                     tcp_connection_map.clone(),
                                                 );
-                                                Ok(Some(()))
-                                            } else {
-                                                Ok(None)
+                                                return Ok(Some(()));
                                             }
+                                            Ok(None)
                                         };
                                     }
 
@@ -537,6 +547,7 @@ pub async fn handle_request(
                                     }
                                 }
                             };
+                            info!(target: "citadel", "Send File Remote Method Call");
                             peer_remote
                                 .send_file_with_custom_opts_and_with_fn(
                                     source,
@@ -574,7 +585,9 @@ pub async fn handle_request(
                                 }
                             }
                         };
-                        conn.client_server_remote
+                        let client_server_remote = conn.client_server_remote.clone();
+                        drop(lock);
+                        client_server_remote
                             .send_file_with_custom_opts_and_with_fn(
                                 source,
                                 chunk_size.unwrap_or_default(),
@@ -717,40 +730,73 @@ pub async fn handle_request(
                         ticket: _ticket,
                         mut handle,
                     }) => {
-                        let (implicated_cid, _peer_cid) =
-                            if let ObjectTransferOrientation::Receiver {
-                                is_revfs_pull: true,
-                            } = handle.orientation
-                            {
-                                info!(target: "citadel", "Download Orientation: Receiver");
-                                (handle.receiver, handle.source)
+                        if let Some(peer_cid) = peer_cid {
+                            // P2P REVFS Pull - Reroute if needed, otherwise spawn tick updater
+                            info!(target: "citadel", "Download Source: {:?} Receiver: {:?}", handle.source, handle.receiver);
+                            info!(target: "citadel", "Download CID: {cid:?} Peer: {peer_cid:?}");
+                            let (implicated_cid, peer_cid) =
+                                if let ObjectTransferOrientation::Receiver {
+                                    is_revfs_pull: true,
+                                } = handle.orientation
+                                {
+                                    info!(target: "citadel", "Download Orientation: Receiver");
+                                    (handle.receiver, handle.source)
+                                } else {
+                                    info!(target: "citadel", "Download Orientation: Sender");
+                                    (handle.receiver, handle.source)
+                                };
+                            let mut server_connection_map = server_connection_map.lock().await;
+                            if let Some(_conn) = server_connection_map.get_mut(&implicated_cid) {
+                                info!(target: "citadel", "Download Peer - Spawning Tick Updater as Receiver");
+                                // let mut local_path = None;
+                                // while let Some(res) = handle.next().await {
+                                //     match res {
+                                //         ObjectTransferStatus::ReceptionBeginning(path, _) => {
+                                //             info!(target: "citadel", "Received ReceptionBeginning Status");
+                                //             local_path = Some(path)
+                                //         }
+                                //         ObjectTransferStatus::ReceptionComplete => {
+                                //             info!(target: "citadel", "Received ReceptionComplete Status");
+                                //             break;
+                                //         }
+                                //         ObjectTransferStatus::TransferComplete => {
+                                //             info!(target: "citadel", "Received TransferComplete Status");
+                                //             break;
+                                //         }
+                                //         _ => {
+                                //             info!(target: "citadel", "Received {res:?} Status");
+                                //         }
+                                //     }
+                                // }
+                                spawn_tick_updater(
+                                    handle,
+                                    implicated_cid,
+                                    Some(peer_cid),
+                                    &mut server_connection_map,
+                                    tcp_connection_map.clone(),
+                                );
+                                // if local_path.is_some() {
+                                //     Ok(local_path)
+                                // } else {
+                                //     Err(NetworkError::InternalError("Local path never loaded"))
+                                // }
+                                Ok(Some(PathBuf::default()))
                             } else {
-                                info!(target: "citadel", "Download Orientation: Sender");
-                                (handle.source, handle.receiver)
-                            };
-
-                        let mut server_connection_map = server_connection_map.lock().await;
-                        if let Some(_conn) = server_connection_map.get_mut(&implicated_cid) {
-                            let mut local_path = None;
-                            while let Some(res) = handle.next().await {
-                                match res {
-                                    ObjectTransferStatus::ReceptionBeginning(path, _) => {
-                                        local_path = Some(path)
-                                    }
-                                    ObjectTransferStatus::TransferComplete => {
-                                        break;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            if local_path.is_some() {
-                                Ok(local_path)
-                            } else {
-                                Err(NetworkError::InternalError("Local path never loaded"))
+                                info!(target: "citadel", "Download File - Returning None");
+                                Ok(None)
                             }
                         } else {
-                            info!(target: "citadel", "Download File - Returning None");
-                            Ok(None)
+                            // C2S REVFS Pull - We can just start a tick updater
+                            info!(target: "citadel", "Download C2S Receiver Starting Tick Updater");
+                            let mut server_connection_map = server_connection_map.lock().await;
+                            spawn_tick_updater(
+                                handle,
+                                cid,
+                                None,
+                                &mut server_connection_map,
+                                tcp_connection_map.clone(),
+                            );
+                            Ok(Some(PathBuf::default()))
                         }
                     }
 
@@ -793,6 +839,8 @@ pub async fn handle_request(
                             )
                             .await
                     };
+
+                    info!(target: "citadel", "Successfully Finished call to REVFS Pull Method");
 
                     match result {
                         Ok(_) => {
