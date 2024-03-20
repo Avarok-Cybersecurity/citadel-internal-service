@@ -10,9 +10,8 @@ mod tests {
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
         DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess,
-        FileTransferRequestNotification, FileTransferStatusNotification,
-        FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
-        SendFileRequestFailure, SendFileRequestSuccess,
+        FileTransferRequestNotification, FileTransferStatusNotification, InternalServiceRequest,
+        InternalServiceResponse, SendFileRequestFailure,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
@@ -25,7 +24,6 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::mpsc::UnboundedReceiver;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -396,8 +394,8 @@ mod tests {
             }
         }
 
-        //exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
-        //exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+        exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
 
         // Delete file on Peer REVFS
         let delete_file_command = InternalServiceRequest::DeleteVirtualFile {

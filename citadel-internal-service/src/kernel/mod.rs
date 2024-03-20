@@ -282,13 +282,20 @@ impl NetKernel for CitadelWorkspaceService {
                 let object_transfer_handler = object_transfer_handle.handle;
 
                 let (implicated_cid, peer_cid) = if matches!(
+                    // object_transfer_handler.orientation,
+                    // ObjectTransferOrientation::Receiver {
+                    //     is_revfs_pull: true
+                    // }
                     object_transfer_handler.orientation,
-                    ObjectTransferOrientation::Receiver {
-                        is_revfs_pull: true
-                    }
+                    ObjectTransferOrientation::Sender,
                 ) {
                     // When this is a REVFS pull reception handle, THIS node is the source of the file.
                     // The other node, i.e. the peer, is the receiver who is requesting the file.
+                    //let (implicated_cid, peer_cid) = if matches!(object_transfer_handler.metadata.transfer_type, TransferType::RemoteEncryptedVirtualFilesystem { .. }) {
+                    //     (
+                    //         object_transfer_handler.source,
+                    //         object_transfer_handler.receiver,
+                    //     )
                     (
                         object_transfer_handler.source,
                         object_transfer_handler.receiver,

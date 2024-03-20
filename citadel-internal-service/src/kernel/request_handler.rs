@@ -522,14 +522,14 @@ pub async fn handle_request(
                                             let mut server_connection_map =
                                                 server_connection_map.lock().await;
                                             if let Some(_conn) =
-                                                server_connection_map.get_mut(&original_target_cid)
+                                                server_connection_map.get_mut(&original_source_cid)
                                             {
                                                 // The Sender is a local user, so we start the tick updater
                                                 info!(target: "citadel", "Spawning Tick Updater For Send file Target {original_target_cid:?} who is CID {cid:?}");
                                                 spawn_tick_updater(
                                                     handle,
-                                                    original_target_cid,
-                                                    Some(original_source_cid),
+                                                    original_source_cid,
+                                                    Some(original_target_cid),
                                                     &mut server_connection_map,
                                                     tcp_connection_map.clone(),
                                                 );
@@ -728,7 +728,7 @@ pub async fn handle_request(
                 match status {
                     NodeResult::ObjectTransferHandle(ObjectTransferHandle {
                         ticket: _ticket,
-                        mut handle,
+                        handle,
                     }) => {
                         if let Some(peer_cid) = peer_cid {
                             // P2P REVFS Pull - Reroute if needed, otherwise spawn tick updater
@@ -743,7 +743,7 @@ pub async fn handle_request(
                                     (handle.receiver, handle.source)
                                 } else {
                                     info!(target: "citadel", "Download Orientation: Sender");
-                                    (handle.receiver, handle.source)
+                                    (handle.source, handle.receiver)
                                 };
                             let mut server_connection_map = server_connection_map.lock().await;
                             if let Some(_conn) = server_connection_map.get_mut(&implicated_cid) {

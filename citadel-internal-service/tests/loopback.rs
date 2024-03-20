@@ -342,6 +342,7 @@ mod tests {
             request_id: Uuid::new_v4(),
         };
         peer_0_tx.send(download_file_command).unwrap();
+        citadel_logging::info!(target: "citadel", "Peer 0 Waiting for DownloadFileSuccess Response");
         let download_file_response = peer_0_rx.recv().await.unwrap();
         match download_file_response {
             InternalServiceResponse::DownloadFileSuccess(DownloadFileSuccess {
@@ -354,6 +355,9 @@ mod tests {
                 panic!("Didn't get the REVFS DownloadFileSuccess - instead got {download_file_response:?}");
             }
         }
+
+        exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_1_rx).await;
+        exhaust_stream_to_file_completion(file_to_send.clone(), &mut peer_0_rx).await;
 
         citadel_logging::info!(target: "citadel", "Peer 0 Requesting to Delete File");
 
