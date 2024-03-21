@@ -329,6 +329,7 @@ impl NetKernel for CitadelWorkspaceService {
                                     cid: implicated_cid,
                                     peer_cid,
                                     metadata,
+                                    request_id: None,
                                 },
                             );
                             send_response_to_tcp_client(&self.tcp_connection_map, response, uuid)
@@ -565,7 +566,9 @@ fn handle_connection(
 
         let write_task = async move {
             let response =
-                InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted);
+                InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
+                    request_id: None,
+                });
 
             if let Err(err) = sink_send_payload(response, &mut sink).await {
                 error!(target: "citadel", "Failed to send to client: {err:?}");
@@ -823,6 +826,7 @@ fn spawn_tick_updater(
                                 cid: implicated_cid,
                                 peer_cid,
                                 status: status_message,
+                                request_id: None,
                             },
                         );
                         match entry.send(message.clone()) {

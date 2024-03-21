@@ -8,7 +8,7 @@ mod tests {
         spawn_services, test_kv_for_service, InternalServicesFutures, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
-    use citadel_internal_service_connector::util::InternalServiceConnector;
+    use citadel_internal_service_connector::connector::InternalServiceConnector;
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
         PeerConnectNotification, PeerRegisterNotification,
@@ -217,7 +217,7 @@ mod tests {
 
         // begin mocking the GUI/CLI access
         let (mut sink, mut stream) =
-            InternalServiceConnector::connect(bind_address_internal_service)
+            InternalServiceConnector::connect_to_service(bind_address_internal_service)
                 .await?
                 .split();
 

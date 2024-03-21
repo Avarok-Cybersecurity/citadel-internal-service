@@ -6,48 +6,18 @@ use futures::stream::{SplitSink, SplitStream};
 use futures::{Sink, Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
 
-pub struct InternalServiceConnector {
-    pub sink: WrappedSink,
-    pub stream: WrappedStream,
-}
-
 pub struct WrappedStream {
-    inner: SplitStream<Framed<TcpStream, SerializingCodec<InternalServicePayload>>>,
+    pub(crate) inner: SplitStream<Framed<TcpStream, SerializingCodec<InternalServicePayload>>>,
 }
 
 pub struct WrappedSink {
-    inner: SplitSink<
+    pub(crate) inner: SplitSink<
         Framed<TcpStream, SerializingCodec<InternalServicePayload>>,
         InternalServicePayload,
     >,
-}
-
-impl InternalServiceConnector {
-    pub async fn connect<T: ToSocketAddrs>(addr: T) -> Result<Self, Box<dyn std::error::Error>> {
-        let conn = TcpStream::connect(addr).await?;
-        let (sink, mut stream) = wrap_tcp_conn(conn).split();
-        let greeter_packet = stream
-            .next()
-            .await
-            .ok_or("Failed to receive greeting packet")??;
-        if matches!(
-            greeter_packet,
-            InternalServicePayload::Response(InternalServiceResponse::ServiceConnectionAccepted(_))
-        ) {
-            let stream = WrappedStream { inner: stream };
-            let sink = WrappedSink { inner: sink };
-            Ok(Self { sink, stream })
-        } else {
-            Err("Failed to receive greeting packet")?
-        }
-    }
-
-    pub fn split(self) -> (WrappedSink, WrappedStream) {
-        (self.sink, self.stream)
-    }
 }
 
 impl Stream for WrappedStream {
@@ -57,7 +27,6 @@ impl Stream for WrappedStream {
         let item = futures::ready!(self.inner.poll_next_unpin(cx));
         match item {
             Some(Ok(InternalServicePayload::Response(response))) => Poll::Ready(Some(response)),
-
             _ => Poll::Ready(None),
         }
     }
