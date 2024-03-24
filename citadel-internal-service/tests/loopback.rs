@@ -10,7 +10,7 @@ mod tests {
     use citadel_internal_service_types::{
         DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequestNotification,
         FileTransferStatusNotification, InternalServiceRequest, InternalServiceResponse,
-        SendFileRequestSuccess,
+        MessageNotification, MessageSendFailure, MessageSendSuccess, SendFileRequestSuccess,
     };
     use citadel_sdk::prelude::*;
     use std::path::PathBuf;
@@ -79,6 +79,108 @@ mod tests {
             SessionSecuritySettings::default(),
         )
         .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_intra_kernel_peer_message() -> Result<(), Box<dyn std::error::Error>> {
+        crate::common::setup_log();
+
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+
+        let service_addr = "127.0.0.1:55778".parse().unwrap();
+        let service = CitadelWorkspaceService::new(service_addr);
+
+        let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::InMemory)
+            .with_node_type(NodeType::Peer)
+            .with_insecure_skip_cert_verification()
+            .build(service)?;
+
+        tokio::task::spawn(internal_service);
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+        // Now with both the server and the IS running, we can test both peers trying to connect, then to each other
+        // via p2p
+        let to_spawn = vec![
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer 0".to_string(),
+                username: "peer.0".to_string(),
+                password: "secret_0".to_string().into_bytes().to_owned(),
+            },
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer 1".to_string(),
+                username: "peer.1".to_string(),
+                password: "secret_1".to_string().into_bytes().to_owned(),
+            },
+        ];
+
+        let mut returned_service_info = register_and_connect_to_server(to_spawn).await.unwrap();
+        let (mut peer_0_tx, mut peer_0_rx, peer_0_cid) = returned_service_info.remove(0);
+        let (mut peer_1_tx, mut peer_1_rx, peer_1_cid) = returned_service_info.remove(0);
+
+        crate::common::register_p2p(
+            &mut peer_0_tx,
+            &mut peer_0_rx,
+            peer_0_cid,
+            &mut peer_1_tx,
+            &mut peer_1_rx,
+            peer_1_cid,
+            SessionSecuritySettings::default(),
+        )
+        .await?;
+        citadel_logging::info!(target: "citadel", "P2P Register complete");
+        crate::common::connect_p2p(
+            &mut peer_0_tx,
+            &mut peer_0_rx,
+            peer_0_cid,
+            &mut peer_1_tx,
+            &mut peer_1_rx,
+            peer_1_cid,
+            SessionSecuritySettings::default(),
+        )
+        .await?;
+        let message_request = InternalServiceRequest::Message {
+            request_id: Uuid::new_v4(),
+            message: "Test Message From Peer 0.".to_string().into_bytes(),
+            cid: peer_0_cid,
+            peer_cid: Some(peer_1_cid),
+            security_level: Default::default(),
+        };
+        peer_0_tx.send(message_request)?;
+        match peer_0_rx.recv().await.unwrap() {
+            InternalServiceResponse::MessageSendSuccess(MessageSendSuccess { .. }) => {
+                citadel_logging::info!(target: "citadel", "Message Successfully Sent from Peer 0 to Peer 1.");
+            }
+            InternalServiceResponse::MessageSendFailure(MessageSendFailure {
+                cid: _,
+                message,
+                request_id: _,
+            }) => {
+                panic!("Message Sending Failed With Error: {message:?}")
+            }
+            _ => {
+                panic!("Received Unexpected Response When Expecting MessageSend Response.")
+            }
+        }
+        match peer_1_rx.recv().await.unwrap() {
+            InternalServiceResponse::MessageNotification(MessageNotification {
+                message,
+                cid: _,
+                peer_cid: _,
+                request_id: _,
+            }) => {
+                citadel_logging::info!(target: "citadel", "Message from Peer 0 Successfully Received at Peer 1: {message:?}");
+            }
+            _ => {
+                panic!("Received Unexpected Response When Expecting MessageSend Response.")
+            }
+        }
         Ok(())
     }
 

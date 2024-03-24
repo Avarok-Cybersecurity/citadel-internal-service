@@ -368,12 +368,12 @@ pub async fn handle_request(
         } => {
             match server_connection_map.lock().await.get_mut(&cid) {
                 Some(conn) => {
-                    if let Some(peer_cid) = peer_cid {
+                    let result = if let Some(peer_cid) = peer_cid {
                         // send to peer
                         if let Some(peer_conn) = conn.peers.get_mut(&peer_cid) {
                             peer_conn.sink.set_security_level(security_level);
                             // TODO no unwraps on send_message. We need to handle errors properly
-                            peer_conn.sink.send_message(message.into()).await.unwrap();
+                            peer_conn.sink.send_message(message.into()).await
                         } else {
                             // TODO: refactor all connection not found messages, we have too many duplicates
                             info!(target: "citadel","connection not found");
@@ -387,24 +387,28 @@ pub async fn handle_request(
                                 uuid,
                             )
                             .await;
+                            return;
                         }
                     } else {
                         // send to server
                         conn.sink_to_server.set_security_level(security_level);
-                        conn.sink_to_server
-                            .send_message(message.into())
-                            .await
-                            .unwrap();
-                    }
-
-                    let response =
-                        InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
+                        conn.sink_to_server.send_message(message.into()).await
+                    };
+                    let response = match result {
+                        Ok(_) => InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
                             cid,
                             peer_cid,
                             request_id: Some(request_id),
-                        });
+                        }),
+                        Err(err) => {
+                            InternalServiceResponse::MessageSendFailure(MessageSendFailure {
+                                cid,
+                                message: format!("Message Send Failure: {err:?}"),
+                                request_id: Some(request_id),
+                            })
+                        }
+                    };
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
-                    info!(target: "citadel", "Into the message handler command send")
                 }
                 None => {
                     info!(target: "citadel","connection not found");
