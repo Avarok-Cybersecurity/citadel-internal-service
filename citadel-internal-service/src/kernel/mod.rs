@@ -4,6 +4,7 @@ use citadel_internal_service_connector::util::wrap_tcp_conn;
 use citadel_internal_service_types::*;
 use citadel_logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
+use citadel_sdk::prelude::remote_specialization::PeerRemote;
 use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
 use futures::stream::{SplitSink, StreamExt};
@@ -50,7 +51,7 @@ pub struct Connection {
 #[allow(dead_code)]
 struct PeerConnection {
     sink: PeerChannelSendHalf,
-    remote: SymmetricIdentifierHandle,
+    remote: PeerRemote,
     handler_map: HashMap<u64, Option<ObjectTransferHandler>>,
     associated_tcp_connection: Uuid,
 }
@@ -82,7 +83,7 @@ impl Connection {
         &mut self,
         peer_cid: u64,
         sink: PeerChannelSendHalf,
-        remote: SymmetricIdentifierHandle,
+        remote: PeerRemote,
     ) {
         self.peers.insert(
             peer_cid,
@@ -167,7 +168,7 @@ impl NetKernel for CitadelWorkspaceService {
     }
 
     async fn on_start(&self) -> Result<(), NetworkError> {
-        let mut remote = self.remote.clone().unwrap();
+        let remote = self.remote.clone().unwrap();
         let remote_for_closure = remote.clone();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
 
@@ -198,14 +199,20 @@ impl NetKernel for CitadelWorkspaceService {
         let inbound_command_task = async move {
             while let Some((command, conn_id)) = rx.recv().await {
                 // TODO: handle error once payload_handler is fallible
-                handle_request(
-                    command,
-                    conn_id,
-                    server_connection_map,
-                    &mut remote,
-                    tcp_connection_map,
-                )
-                .await;
+                let mut remote = remote.clone();
+                let server_connection_map = server_connection_map.clone();
+                let tcp_connection_map = tcp_connection_map.clone();
+                // Spawn the task, that way, we can handle multiple requests in parallel
+                tokio::task::spawn(async move {
+                    handle_request(
+                        command,
+                        conn_id,
+                        &server_connection_map,
+                        &mut remote,
+                        &tcp_connection_map,
+                    )
+                    .await;
+                });
             }
             Ok(())
         };
@@ -221,7 +228,6 @@ impl NetKernel for CitadelWorkspaceService {
     }
 
     async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
-        info!(target: "citadel", "NODE EVENT RECEIVED WITH MESSAGE: {message:?}");
         match message {
             NodeResult::Disconnect(disconnect) => {
                 if let Some(conn) = disconnect.v_conn_type {
@@ -276,13 +282,20 @@ impl NetKernel for CitadelWorkspaceService {
                 let object_transfer_handler = object_transfer_handle.handle;
 
                 let (implicated_cid, peer_cid) = if matches!(
+                    // object_transfer_handler.orientation,
+                    // ObjectTransferOrientation::Receiver {
+                    //     is_revfs_pull: true
+                    // }
                     object_transfer_handler.orientation,
-                    ObjectTransferOrientation::Receiver {
-                        is_revfs_pull: true
-                    }
+                    ObjectTransferOrientation::Sender,
                 ) {
                     // When this is a REVFS pull reception handle, THIS node is the source of the file.
                     // The other node, i.e. the peer, is the receiver who is requesting the file.
+                    //let (implicated_cid, peer_cid) = if matches!(object_transfer_handler.metadata.transfer_type, TransferType::RemoteEncryptedVirtualFilesystem { .. }) {
+                    //     (
+                    //         object_transfer_handler.source,
+                    //         object_transfer_handler.receiver,
+                    //     )
                     (
                         object_transfer_handler.source,
                         object_transfer_handler.receiver,
@@ -318,7 +331,7 @@ impl NetKernel for CitadelWorkspaceService {
                             spawn_tick_updater(
                                 object_transfer_handler,
                                 implicated_cid,
-                                peer_cid,
+                                Some(peer_cid),
                                 &mut server_connection_map,
                                 self.tcp_connection_map.clone(),
                             );
@@ -348,7 +361,7 @@ impl NetKernel for CitadelWorkspaceService {
                     spawn_tick_updater(
                         object_transfer_handler,
                         implicated_cid,
-                        peer_cid,
+                        Some(peer_cid),
                         &mut server_connection_map,
                         self.tcp_connection_map.clone(),
                     );
@@ -591,8 +604,8 @@ fn handle_connection(
                             }
                         }
                     }
-                    Err(_) => {
-                        warn!(target: "citadel", "Bad message from client");
+                    Err(err) => {
+                        warn!(target: "citadel", "Bad message from client: {err:?}");
                     }
                 }
             }
@@ -806,7 +819,7 @@ async fn handle_group_broadcast(
 fn spawn_tick_updater(
     object_transfer_handler: ObjectTransferHandler,
     implicated_cid: u64,
-    peer_cid: u64,
+    peer_cid: Option<u64>,
     server_connection_map: &mut HashMap<u64, Connection>,
     tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
 ) {
@@ -827,7 +840,7 @@ fn spawn_tick_updater(
                         );
                         match entry.send(message.clone()) {
                             Ok(_res) => {
-                                info!(target: "citadel", "File Transfer Status Tick Sent");
+                                info!(target: "citadel", "File Transfer Status Tick Sent {status:?}");
                             }
                             Err(err) => {
                                 warn!(target: "citadel", "File Transfer Status Tick Not Sent: {err:?}");

@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 #[derive(Debug, StructOpt)]
 #[structopt(
-    name = "citadel-service-bin",
+    name = "internal-service",
     about = "Used for running a local service for citadel applications"
 )]
 struct Options {
@@ -34,4 +34,33 @@ struct Options {
     bind: SocketAddr,
     #[structopt(short, long)]
     dangerous: Option<bool>,
+}
+
+#[cfg(feature = "deadlock-detection")]
+lazy_static::lazy_static! {
+    static ref DEADLOCK_INIT: () = {
+        let _ = std::thread::spawn(move || {
+            info!(target: "gadget", "Executing deadlock detector ...");
+            use std::thread;
+            use std::time::Duration;
+            use parking_lot::deadlock;
+            use citadel_logging::*;
+            loop {
+                std::thread::sleep(Duration::from_secs(5));
+                let deadlocks = deadlock::check_deadlock();
+                if deadlocks.is_empty() {
+                    continue;
+                }
+
+                error!(target: "citadel", "{} deadlocks detected", deadlocks.len());
+                for (i, threads) in deadlocks.iter().enumerate() {
+                    error!(target: "citadel", "Deadlock #{}", i);
+                    for t in threads {
+                        error!(target: "citadel", "Thread Id {:#?}", t.thread_id());
+                        error!(target: "citadel", "{:#?}", t.backtrace());
+                    }
+                }
+            }
+        });
+    };
 }

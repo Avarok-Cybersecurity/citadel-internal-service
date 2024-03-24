@@ -7,9 +7,12 @@ use citadel_internal_service_types::*;
 use citadel_logging::tracing::log;
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
+use citadel_sdk::prelude::remote_specialization::PeerRemote;
+use citadel_sdk::prelude::results::PeerRegisterStatus;
 use citadel_sdk::prelude::*;
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
@@ -29,7 +32,7 @@ pub async fn handle_request(
                 Ok(peers) => {
                     let mut accounts = HashMap::new();
                     for peer in &peers {
-                        // TOOD: Do not unwrap below
+                        // TODO: Do not unwrap below
                         let peer_username = remote
                             .find_target(cid, peer.cid)
                             .await
@@ -299,7 +302,6 @@ pub async fn handle_request(
             session_security_settings,
             request_id,
         } => {
-            info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
             match remote
                 .register(
                     server_addr,
@@ -330,17 +332,23 @@ pub async fn handle_request(
                             request_id,
                         };
 
-                        handle_request(
-                            connect_command,
-                            uuid,
-                            server_connection_map,
-                            remote,
-                            tcp_connection_map,
-                        )
-                        .await
+                        let server_connection_map = server_connection_map.clone();
+                        let mut remote = remote.clone();
+                        let tcp_connection_map = tcp_connection_map.clone();
+                        tokio::task::spawn(async move {
+                            handle_request(
+                                connect_command,
+                                uuid,
+                                &server_connection_map,
+                                &mut remote,
+                                &tcp_connection_map,
+                            )
+                            .await
+                        });
                     }
                 },
                 Err(err) => {
+                    citadel_logging::error!(target: "citadel", "Failure on register: {err:?}");
                     let response = InternalServiceResponse::RegisterFailure(
                         citadel_internal_service_types::RegisterFailure {
                             message: err.into_string(),
@@ -360,12 +368,12 @@ pub async fn handle_request(
         } => {
             match server_connection_map.lock().await.get_mut(&cid) {
                 Some(conn) => {
-                    if let Some(peer_cid) = peer_cid {
+                    let result = if let Some(peer_cid) = peer_cid {
                         // send to peer
                         if let Some(peer_conn) = conn.peers.get_mut(&peer_cid) {
                             peer_conn.sink.set_security_level(security_level);
                             // TODO no unwraps on send_message. We need to handle errors properly
-                            peer_conn.sink.send_message(message.into()).await.unwrap();
+                            peer_conn.sink.send_message(message.into()).await
                         } else {
                             // TODO: refactor all connection not found messages, we have too many duplicates
                             info!(target: "citadel","connection not found");
@@ -379,24 +387,28 @@ pub async fn handle_request(
                                 uuid,
                             )
                             .await;
+                            return;
                         }
                     } else {
                         // send to server
                         conn.sink_to_server.set_security_level(security_level);
-                        conn.sink_to_server
-                            .send_message(message.into())
-                            .await
-                            .unwrap();
-                    }
-
-                    let response =
-                        InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
+                        conn.sink_to_server.send_message(message.into()).await
+                    };
+                    let response = match result {
+                        Ok(_) => InternalServiceResponse::MessageSendSuccess(MessageSendSuccess {
                             cid,
                             peer_cid,
                             request_id: Some(request_id),
-                        });
+                        }),
+                        Err(err) => {
+                            InternalServiceResponse::MessageSendFailure(MessageSendFailure {
+                                cid,
+                                message: format!("Message Send Failure: {err:?}"),
+                                request_id: Some(request_id),
+                            })
+                        }
+                    };
                     send_response_to_tcp_client(tcp_connection_map, response, uuid).await;
-                    info!(target: "citadel", "Into the message handler command send")
                 }
                 None => {
                     info!(target: "citadel","connection not found");
@@ -455,32 +467,138 @@ pub async fn handle_request(
             let lock = server_connection_map.lock().await;
             match lock.get(&cid) {
                 Some(conn) => {
+                    info!(target: "citadel", "Send File Server Connection Exists");
                     let result = if let Some(peer_cid) = peer_cid {
+                        info!(target: "citadel", "Send File Peer Version");
                         if let Some(peer_remote) = conn.peers.get(&peer_cid) {
-                            let request = NodeRequest::SendObject(SendObject {
-                                source: Box::new(source),
-                                chunk_size,
-                                implicated_cid: cid,
-                                v_conn_type: *peer_remote.remote.user(),
-                                transfer_type,
-                            });
+                            info!(target: "citadel", "Send File Peer Remote Exists");
+                            let peer_remote = &peer_remote.remote.clone();
+                            drop(lock);
+                            let scan_for_status = |status| async move {
+                                info!(target: "citadel", "Send File Scan For Status Entered");
+                                match status {
+                                    NodeResult::ObjectTransferHandle(ObjectTransferHandle {
+                                        ticket: _ticket,
+                                        handle,
+                                    }) => {
+                                        let original_target_cid = handle.receiver;
+                                        let original_source_cid = handle.source;
+                                        let handle_metadata = handle.metadata.clone();
 
-                            remote.send(request).await
+                                        return if let ObjectTransferOrientation::Receiver {
+                                            is_revfs_pull: _,
+                                        } = handle.orientation
+                                        {
+                                            info!(target: "citadel", "Send File Receiver Entered");
+                                            if original_target_cid == peer_cid {
+                                                info!(target: "citadel", "Send File Receiver is targeted at Peer CID");
+                                                let mut lock = server_connection_map.lock().await;
+                                                // Route the signal to the intra-kernel user if possible
+                                                if let Some(peer) =
+                                                    lock.get_mut(&original_target_cid)
+                                                {
+                                                    info!(target: "citadel", "Send File Receiver - Target is local, rerouting");
+                                                    let peer_uuid = peer.associated_tcp_connection;
+                                                    send_response_to_tcp_client(
+                                                        tcp_connection_map,
+                                                        InternalServiceResponse::FileTransferRequestNotification(
+                                                            FileTransferRequestNotification {
+                                                                cid: original_target_cid,
+                                                                peer_cid: original_source_cid,
+                                                                metadata: handle_metadata.clone(),
+                                                            },
+                                                        ),
+                                                        peer_uuid,
+                                                    )
+                                                        .await;
+                                                    peer.add_object_transfer_handler(
+                                                        cid,
+                                                        handle_metadata.object_id,
+                                                        Some(handle),
+                                                    );
+                                                    return Ok(Some(()));
+                                                }
+                                            }
+                                            Ok(None)
+                                        } else {
+                                            info!(target: "citadel", "Sender should be spawning tick updater on Send File");
+                                            info!(target: "citadel", "Sender Source CID: {original_source_cid:?} and Actual CID: {cid:?}");
+                                            let mut server_connection_map =
+                                                server_connection_map.lock().await;
+                                            if let Some(_conn) =
+                                                server_connection_map.get_mut(&original_source_cid)
+                                            {
+                                                // The Sender is a local user, so we start the tick updater
+                                                info!(target: "citadel", "Spawning Tick Updater For Send file Target {original_target_cid:?} who is CID {cid:?}");
+                                                spawn_tick_updater(
+                                                    handle,
+                                                    original_source_cid,
+                                                    Some(original_target_cid),
+                                                    &mut server_connection_map,
+                                                    tcp_connection_map.clone(),
+                                                );
+                                                return Ok(Some(()));
+                                            }
+                                            Ok(None)
+                                        };
+                                    }
+
+                                    res => {
+                                        log::error!(target: "citadel", "Invalid NodeResult for FileTransfer request received: {:?}", res);
+                                        Err(NetworkError::msg(
+                                            "Invalid Response Received During FileTransfer",
+                                        ))
+                                    }
+                                }
+                            };
+                            info!(target: "citadel", "Send File Remote Method Call");
+                            peer_remote
+                                .send_file_with_custom_opts_and_with_fn(
+                                    source,
+                                    chunk_size.unwrap_or_default(),
+                                    transfer_type,
+                                    scan_for_status,
+                                )
+                                .await
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        let request = NodeRequest::SendObject(SendObject {
-                            source: Box::new(source),
-                            chunk_size,
-                            implicated_cid: cid,
-                            v_conn_type: VirtualTargetType::LocalGroupServer {
-                                implicated_cid: cid,
-                            },
-                            transfer_type,
-                        });
-
-                        remote.send(request).await
+                        let send_file_c2s = |status| async move {
+                            match status {
+                                NodeResult::ObjectTransferHandle(ObjectTransferHandle {
+                                    ticket: _ticket,
+                                    handle,
+                                }) => {
+                                    let mut server_connection_map =
+                                        server_connection_map.lock().await;
+                                    spawn_tick_updater(
+                                        handle,
+                                        cid,
+                                        None,
+                                        &mut server_connection_map,
+                                        tcp_connection_map.clone(),
+                                    );
+                                    Ok(Some(()))
+                                }
+                                res => {
+                                    log::error!(target: "citadel", "Invalid NodeResult for FileTransfer request received: {:?}", res);
+                                    Err(NetworkError::msg(
+                                        "Invalid Response Received During FileTransfer",
+                                    ))
+                                }
+                            }
+                        };
+                        let client_server_remote = conn.client_server_remote.clone();
+                        drop(lock);
+                        client_server_remote
+                            .send_file_with_custom_opts_and_with_fn(
+                                source,
+                                chunk_size.unwrap_or_default(),
+                                transfer_type,
+                                send_file_c2s,
+                            )
+                            .await
                     };
 
                     match result {
@@ -550,7 +668,7 @@ pub async fn handle_request(
                             spawn_tick_updater(
                                 owned_handler,
                                 cid,
-                                peer_cid,
+                                Some(peer_cid),
                                 &mut server_connection_map,
                                 tcp_connection_map.clone(),
                             );
@@ -610,32 +728,123 @@ pub async fn handle_request(
             request_id,
         } => {
             let security_level = security_level.unwrap_or_default();
+            let scan_for_status = |status| async move {
+                match status {
+                    NodeResult::ObjectTransferHandle(ObjectTransferHandle {
+                        ticket: _ticket,
+                        handle,
+                    }) => {
+                        if let Some(peer_cid) = peer_cid {
+                            // P2P REVFS Pull - Reroute if needed, otherwise spawn tick updater
+                            info!(target: "citadel", "Download Source: {:?} Receiver: {:?}", handle.source, handle.receiver);
+                            info!(target: "citadel", "Download CID: {cid:?} Peer: {peer_cid:?}");
+                            let (implicated_cid, peer_cid) =
+                                if let ObjectTransferOrientation::Receiver {
+                                    is_revfs_pull: true,
+                                } = handle.orientation
+                                {
+                                    info!(target: "citadel", "Download Orientation: Receiver");
+                                    (handle.receiver, handle.source)
+                                } else {
+                                    info!(target: "citadel", "Download Orientation: Sender");
+                                    (handle.source, handle.receiver)
+                                };
+                            let mut server_connection_map = server_connection_map.lock().await;
+                            if let Some(_conn) = server_connection_map.get_mut(&implicated_cid) {
+                                info!(target: "citadel", "Download Peer - Spawning Tick Updater as Receiver");
+                                // let mut local_path = None;
+                                // while let Some(res) = handle.next().await {
+                                //     match res {
+                                //         ObjectTransferStatus::ReceptionBeginning(path, _) => {
+                                //             info!(target: "citadel", "Received ReceptionBeginning Status");
+                                //             local_path = Some(path)
+                                //         }
+                                //         ObjectTransferStatus::ReceptionComplete => {
+                                //             info!(target: "citadel", "Received ReceptionComplete Status");
+                                //             break;
+                                //         }
+                                //         ObjectTransferStatus::TransferComplete => {
+                                //             info!(target: "citadel", "Received TransferComplete Status");
+                                //             break;
+                                //         }
+                                //         _ => {
+                                //             info!(target: "citadel", "Received {res:?} Status");
+                                //         }
+                                //     }
+                                // }
+                                spawn_tick_updater(
+                                    handle,
+                                    implicated_cid,
+                                    Some(peer_cid),
+                                    &mut server_connection_map,
+                                    tcp_connection_map.clone(),
+                                );
+                                // if local_path.is_some() {
+                                //     Ok(local_path)
+                                // } else {
+                                //     Err(NetworkError::InternalError("Local path never loaded"))
+                                // }
+                                Ok(Some(PathBuf::default()))
+                            } else {
+                                info!(target: "citadel", "Download File - Returning None");
+                                Ok(None)
+                            }
+                        } else {
+                            // C2S REVFS Pull - We can just start a tick updater
+                            info!(target: "citadel", "Download C2S Receiver Starting Tick Updater");
+                            let mut server_connection_map = server_connection_map.lock().await;
+                            spawn_tick_updater(
+                                handle,
+                                cid,
+                                None,
+                                &mut server_connection_map,
+                                tcp_connection_map.clone(),
+                            );
+                            Ok(Some(PathBuf::default()))
+                        }
+                    }
 
-            match server_connection_map.lock().await.get_mut(&cid) {
+                    res => {
+                        log::error!(target: "citadel", "Invalid NodeResult for REVFS DownloadFile request received: {:?}", res);
+                        Err(NetworkError::msg(
+                            "Invalid Response Received During REVFS Pull",
+                        ))
+                    }
+                }
+            };
+
+            let mut lock = server_connection_map.lock().await;
+            match lock.get_mut(&cid) {
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
                         if let Some(peer_remote) = conn.peers.get_mut(&peer_cid) {
-                            let request = NodeRequest::PullObject(PullObject {
-                                v_conn: *peer_remote.remote.user(),
-                                virtual_dir: virtual_directory,
-                                delete_on_pull,
-                                transfer_security_level: security_level,
-                            });
-
-                            peer_remote.remote.send(request).await
+                            let peer_remote = peer_remote.remote.clone();
+                            drop(lock);
+                            peer_remote
+                                .remote_encrypted_virtual_filesystem_pull_with_fn(
+                                    virtual_directory,
+                                    security_level,
+                                    delete_on_pull,
+                                    scan_for_status,
+                                )
+                                .await
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
-                        let request = NodeRequest::PullObject(PullObject {
-                            v_conn: *conn.client_server_remote.user(),
-                            virtual_dir: virtual_directory,
-                            delete_on_pull,
-                            transfer_security_level: security_level,
-                        });
-
-                        conn.client_server_remote.send(request).await
+                        let client_server_remote = conn.client_server_remote.clone();
+                        drop(lock);
+                        client_server_remote
+                            .remote_encrypted_virtual_filesystem_pull_with_fn(
+                                virtual_directory,
+                                security_level,
+                                delete_on_pull,
+                                scan_for_status,
+                            )
+                            .await
                     };
+
+                    info!(target: "citadel", "Successfully Finished call to REVFS Pull Method");
 
                     match result {
                         Ok(_) => {
@@ -777,9 +986,68 @@ pub async fn handle_request(
                 session_security_settings,
             );
 
+            let remote_for_scanner = &remote;
+            let scan_for_status = |status| async move {
+                if let NodeResult::PeerEvent(PeerEvent {
+                    event:
+                        PeerSignal::PostRegister {
+                            peer_conn_type,
+                            inviter_username: _,
+                            invitee_username: _,
+                            ticket_opt: _,
+                            invitee_response: resp,
+                        },
+                    ticket: _,
+                }) = status
+                {
+                    match resp {
+                        Some(PeerResponse::Accept(..)) => Ok(Some(PeerRegisterStatus::Accepted)),
+                        Some(PeerResponse::Decline) => Ok(Some(PeerRegisterStatus::Declined)),
+                        Some(PeerResponse::Timeout) => Ok(Some(PeerRegisterStatus::Failed { reason: Some("Timeout on register request. Peer did not accept in time. Try again later".to_string()) })),
+                        _ => {
+                            // This may be a signal needing to be routed
+                            if peer_conn_type.get_original_target_cid() == peer_cid {
+                                // If the target peer is the same as the peer_cid, that means that
+                                // the peer is in the same kernel space. Route the signal through the TCP client
+                                let lock = server_connection_map.lock().await;
+                                if let Some(peer) = lock.get(&peer_cid) {
+                                    let username_of_sender = remote_for_scanner.account_manager().get_username_by_cid(cid).await
+                                        .map_err(|err| NetworkError::msg(format!("Unable to get username for cid: {cid}. Error: {err:?}")))?
+                                        .ok_or_else(|| NetworkError::msg(format!("Unable to get username for cid: {cid}")))?;
+
+                                    let peer_uuid = peer.associated_tcp_connection;
+                                    drop(lock);
+
+                                    log::debug!(target: "citadel", "Routing signal meant for other peer in intra-kernel space");
+                                    send_response_to_tcp_client(
+                                        tcp_connection_map,
+                                        InternalServiceResponse::PeerRegisterNotification(
+                                            PeerRegisterNotification {
+                                                cid: peer_cid,
+                                                peer_cid: cid,
+                                                peer_username: username_of_sender,
+                                                request_id: Some(request_id),
+                                            },
+                                        ),
+                                        peer_uuid
+                                    ).await
+                                }
+                            }
+
+                            Ok(None)
+                        }
+                    }
+                } else {
+                    Ok(None)
+                }
+            };
+
             match client_to_server_remote.propose_target(cid, peer_cid).await {
                 Ok(symmetric_identifier_handle_ref) => {
-                    match symmetric_identifier_handle_ref.register_to_peer().await {
+                    match symmetric_identifier_handle_ref
+                        .register_to_peer_with_fn(scan_for_status)
+                        .await
+                    {
                         Ok(_peer_register_success) => {
                             let account_manager = symmetric_identifier_handle_ref.account_manager();
                             if let Ok(target_information) =
@@ -796,14 +1064,19 @@ pub async fn handle_request(
                                             request_id,
                                         };
 
-                                        handle_request(
-                                            connect_command,
-                                            uuid,
-                                            server_connection_map,
-                                            remote,
-                                            tcp_connection_map,
-                                        )
-                                        .await;
+                                        let server_connection_map = server_connection_map.clone();
+                                        let mut remote = remote.clone();
+                                        let tcp_connection_map = tcp_connection_map.clone();
+                                        tokio::task::spawn(async move {
+                                            handle_request(
+                                                connect_command,
+                                                uuid,
+                                                &server_connection_map,
+                                                &mut remote,
+                                                &tcp_connection_map,
+                                            )
+                                            .await;
+                                        });
                                     }
                                     false => {
                                         send_response_to_tcp_client(
@@ -864,7 +1137,6 @@ pub async fn handle_request(
             session_security_settings,
             request_id,
         } => {
-            // TODO: check to see if peer is already in the hashmap
             let client_to_server_remote = ClientServerRemote::new(
                 VirtualTargetType::LocalGroupPeer {
                     implicated_cid: cid,
@@ -873,14 +1145,101 @@ pub async fn handle_request(
                 remote.clone(),
                 session_security_settings,
             );
+
             match client_to_server_remote.find_target(cid, peer_cid).await {
-                Ok(symmetric_identifier_handle_ref) => {
-                    match symmetric_identifier_handle_ref
-                        .connect_to_peer_custom(session_security_settings, udp_mode)
+                Ok(symmetric_identifier_handle) => {
+                    let symmetric_identifier_handle = &symmetric_identifier_handle.into_owned();
+
+                    let remote_for_scanner = &remote;
+                    let signal_scanner = |status| async move {
+                        match status {
+                            NodeResult::PeerChannelCreated(PeerChannelCreated {
+                                ticket: _,
+                                channel,
+                                udp_rx_opt,
+                            }) => {
+                                let username =
+                                    symmetric_identifier_handle.target_username().cloned();
+
+                                let remote = PeerRemote {
+                                    inner: (*remote_for_scanner).clone(),
+                                    peer: symmetric_identifier_handle
+                                        .try_as_peer_connection()
+                                        .await?
+                                        .as_virtual_connection(),
+                                    username,
+                                    session_security_settings,
+                                };
+
+                                Ok(Some(results::PeerConnectSuccess {
+                                    remote,
+                                    channel,
+                                    udp_channel_rx: udp_rx_opt,
+                                    incoming_object_transfer_handles: None,
+                                }))
+                            }
+
+                            NodeResult::PeerEvent(PeerEvent {
+                                event:
+                                    PeerSignal::PostConnect {
+                                        peer_conn_type: _,
+                                        ticket_opt: _,
+                                        invitee_response: Some(PeerResponse::Decline),
+                                        ..
+                                    },
+                                ..
+                            }) => Err(NetworkError::msg(format!(
+                                "Peer {peer_cid} declined connection"
+                            ))),
+
+                            NodeResult::PeerEvent(PeerEvent {
+                                event:
+                                    PeerSignal::PostConnect {
+                                        peer_conn_type,
+                                        ticket_opt: _,
+                                        invitee_response: None,
+                                        ..
+                                    },
+                                ..
+                            }) => {
+                                // Route the signal to the intra-kernel user
+                                if peer_conn_type.get_original_target_cid() == peer_cid {
+                                    let lock = server_connection_map.lock().await;
+                                    if let Some(conn) = lock.get(&peer_cid) {
+                                        let peer_uuid = conn.associated_tcp_connection;
+                                        send_response_to_tcp_client(
+                                            tcp_connection_map,
+                                            InternalServiceResponse::PeerConnectNotification(
+                                                PeerConnectNotification {
+                                                    cid: peer_cid,
+                                                    peer_cid: cid,
+                                                    session_security_settings,
+                                                    udp_mode,
+                                                    request_id: Some(request_id),
+                                                },
+                                            ),
+                                            peer_uuid,
+                                        )
+                                        .await
+                                    }
+                                }
+
+                                Ok(None)
+                            }
+
+                            _ => Ok(None),
+                        }
+                    };
+
+                    match symmetric_identifier_handle
+                        .connect_to_peer_with_fn(
+                            session_security_settings,
+                            udp_mode,
+                            signal_scanner,
+                        )
                         .await
                     {
                         Ok(peer_connect_success) => {
-                            let connection_cid = peer_connect_success.channel.get_peer_cid();
                             let (sink, mut stream) = peer_connect_success.channel.split();
                             server_connection_map
                                 .lock()
@@ -890,7 +1249,7 @@ pub async fn handle_request(
                                 .add_peer_connection(
                                     peer_cid,
                                     sink,
-                                    symmetric_identifier_handle_ref.into_owned(),
+                                    peer_connect_success.remote, //symmetric_identifier_handle.clone(),
                                 );
 
                             let hm_for_conn = tcp_connection_map.clone();
@@ -899,6 +1258,7 @@ pub async fn handle_request(
                                 tcp_connection_map,
                                 InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
                                     cid,
+                                    peer_cid,
                                     request_id: Some(request_id),
                                 }),
                                 uuid,
@@ -909,7 +1269,7 @@ pub async fn handle_request(
                                     let message = InternalServiceResponse::MessageNotification(
                                         MessageNotification {
                                             message: message.into_buffer(),
-                                            cid: connection_cid,
+                                            cid,
                                             peer_cid,
                                             request_id: Some(request_id),
                                         },
@@ -994,7 +1354,7 @@ pub async fn handle_request(
                     None => {
                         // TODO: handle none case
                     }
-                    Some(target_peer) => match target_peer.remote.send(request).await {
+                    Some(target_peer) => match target_peer.remote.inner.send(request).await {
                         Ok(ticket) => {
                             conn.clear_peer_connection(peer_cid);
                             let peer_disconnect_success =
@@ -1741,7 +2101,7 @@ pub async fn handle_request(
                         command: GroupBroadcast::ListGroupsFor { cid: peer_cid },
                     });
                     if let Ok(mut subscription) =
-                        peer_remote.send_callback_subscription(request).await
+                        peer_remote.inner.send_callback_subscription(request).await
                     {
                         if let Some(evt) = subscription.next().await {
                             if let NodeResult::GroupEvent(GroupEvent {
@@ -1860,7 +2220,7 @@ pub async fn handle_request(
             if let Some(connection) = server_connection_map.get_mut(&cid) {
                 if let Some(peer_connection) = connection.peers.get_mut(&peer_cid) {
                     let peer_remote = peer_connection.remote.clone();
-                    match peer_remote.send_callback_subscription(request).await {
+                    match peer_remote.inner.send_callback_subscription(request).await {
                         Ok(mut subscription) => {
                             let mut result = false;
                             if invitation {
@@ -2000,7 +2360,7 @@ pub async fn handle_request(
                         implicated_cid: cid,
                         command: group_request,
                     });
-                    match peer_remote.send_callback_subscription(request).await {
+                    match peer_remote.inner.send_callback_subscription(request).await {
                         Ok(mut subscription) => {
                             let mut result = Err("Group Request Join Failed".to_string());
                             while let Some(evt) = subscription.next().await {
