@@ -373,7 +373,7 @@ mod tests {
             // Service B Requests to Join and Service A Accepts
             let service_b_group_outbound = InternalServiceRequest::GroupListGroupsFor {
                 cid: cid_b,
-                peer_cid: cid_a,
+                peer_cid: Some(cid_a),
                 request_id: Uuid::new_v4(),
             };
             to_service_b.send(service_b_group_outbound).unwrap();
@@ -475,7 +475,7 @@ mod tests {
             // Service C Requests to Join and Service A Declines
             let service_c_group_outbound = InternalServiceRequest::GroupListGroupsFor {
                 cid: cid_c,
-                peer_cid: cid_a,
+                peer_cid: Some(cid_a),
                 request_id: Uuid::new_v4(),
             };
             to_service_c.send(service_c_group_outbound).unwrap();
