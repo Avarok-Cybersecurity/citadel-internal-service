@@ -365,8 +365,11 @@ mod tests {
             panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
         }
 
+        citadel_logging::error!(target: "citadel", "AB0");
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
+        citadel_logging::error!(target: "citadel", "AB1");
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
+        citadel_logging::error!(target: "citadel", "AB2");
 
         // Download P2P REVFS file - without delete on pull
         let download_file_command = InternalServiceRequest::DownloadFile {
@@ -425,6 +428,7 @@ mod tests {
         let mut is_revfs = false;
         loop {
             let tick_response = svc.recv().await.unwrap();
+            citadel_logging::trace!(target: "citadel", "RECV signal {tick_response:?}");
             match tick_response {
                 InternalServiceResponse::FileTransferTickNotification(
                     FileTransferTickNotification {
@@ -483,6 +487,7 @@ mod tests {
                         panic!("File Send Reception Status Yielded Unexpected Response")
                     }
                 },
+
                 unexpected_response => {
                     citadel_logging::warn!(target: "citadel", "Unexpected signal {unexpected_response:?}")
                 }

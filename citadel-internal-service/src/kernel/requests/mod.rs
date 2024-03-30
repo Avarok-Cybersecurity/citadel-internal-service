@@ -18,16 +18,13 @@ pub(crate) struct HandledRequestResult {
 }
 
 mod connect;
-mod delete_virtual_file;
 mod disconnect;
-mod download_file;
 mod get_account_information;
 mod get_sessions;
 mod message;
 mod register;
-mod respond_file_transfer;
-mod send_file;
 
+mod file;
 mod group;
 mod local_db;
 mod peer;
@@ -60,19 +57,19 @@ pub async fn handle_request(
         }
 
         InternalServiceRequest::SendFile { .. } => {
-            return send_file::handle(this, uuid, command).await
+            return file::upload::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::RespondFileTransfer { .. } => {
-            return respond_file_transfer::handle(this, uuid, command).await
+            return file::respond_file_transfer::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::DownloadFile { .. } => {
-            return download_file::handle(this, uuid, command).await
+            return file::download::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::DeleteVirtualFile { .. } => {
-            return delete_virtual_file::handle(this, uuid, command).await
+            return file::delete_virtual_file::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::ListRegisteredPeers { .. } => {

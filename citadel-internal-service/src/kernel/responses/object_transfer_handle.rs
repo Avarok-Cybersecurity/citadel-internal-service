@@ -9,29 +9,16 @@ pub async fn handle(
 ) -> Result<(), NetworkError> {
     let metadata = object_transfer_handle.handle.metadata.clone();
     let object_id = metadata.object_id;
+    let implicated_cid = object_transfer_handle.implicated_cid;
+    let peer_cid = if object_transfer_handle.handle.receiver != implicated_cid {
+        object_transfer_handle.handle.receiver
+    } else {
+        object_transfer_handle.handle.source
+    };
     let object_transfer_handler = object_transfer_handle.handle;
 
-    let (implicated_cid, peer_cid) = if matches!(
-        object_transfer_handler.orientation,
-        ObjectTransferOrientation::Receiver {
-            is_revfs_pull: true
-        }
-    ) {
-        // When this is a REVFS pull reception handle, THIS node is the source of the file.
-        // The other node, i.e. the peer, is the receiver who is requesting the file.
-        (
-            object_transfer_handler.source,
-            object_transfer_handler.receiver,
-        )
-    } else {
-        (
-            object_transfer_handler.receiver,
-            object_transfer_handler.source,
-        )
-    };
-
     citadel_logging::info!(target: "citadel", "Orientation: {:?}", object_transfer_handler.orientation);
-    info!(target: "citadel", "ObjectTransferHandle has implicated_cid: {implicated_cid:?} and peer_cid {peer_cid:?}");
+    citadel_logging::info!(target: "citadel", "ObjectTransferHandle has implicated_cid: {implicated_cid:?} and peer_cid {peer_cid:?}");
 
     // When we receive a handle, there are two possibilities:
     // A: We are the sender of the file transfer, in which case we can assume the adjacent node
