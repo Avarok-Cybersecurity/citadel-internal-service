@@ -464,40 +464,38 @@ pub async fn handle_request(
             let lock = server_connection_map.lock().await;
             match lock.get(&cid) {
                 Some(conn) => {
-                    info!(target: "citadel", "Send File Server Connection Exists");
                     let result = if let Some(peer_cid) = peer_cid {
-                        info!(target: "citadel", "Send File Peer Version");
                         if let Some(peer_remote) = conn.peers.get(&peer_cid) {
-                            info!(target: "citadel", "Send File Peer Remote Exists");
                             let peer_remote = &peer_remote.remote.clone();
                             drop(lock);
-
-                            info!(target: "citadel", "Send File Remote Method Call");
-                            peer_remote
-                                .send_file_with_custom_opts(
-                                    source,
-                                    chunk_size.unwrap_or_default(),
-                                    transfer_type,
-                                )
-                                .await
+                            let request = NodeRequest::SendObject(SendObject {
+                                source: Box::new(source),
+                                chunk_size,
+                                implicated_cid: cid,
+                                v_conn_type: *peer_remote.user(),
+                                transfer_type,
+                            });
+                            peer_remote.remote().send(request).await
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
                         let client_server_remote = conn.client_server_remote.clone();
                         drop(lock);
-                        client_server_remote
-                            .send_file_with_custom_opts(
-                                source,
-                                chunk_size.unwrap_or_default(),
-                                transfer_type,
-                            )
-                            .await
+                        let request = NodeRequest::SendObject(SendObject {
+                            source: Box::new(source),
+                            chunk_size,
+                            implicated_cid: cid,
+                            v_conn_type: VirtualTargetType::LocalGroupServer {
+                                implicated_cid: cid,
+                            },
+                            transfer_type,
+                        });
+                        client_server_remote.remote().send(request).await
                     };
 
                     match result {
                         Ok(_) => {
-                            info!(target: "citadel","InternalServiceRequest Send File Success");
                             send_response_to_tcp_client(
                                 tcp_connection_map,
                                 InternalServiceResponse::SendFileRequestSuccess(
@@ -512,7 +510,6 @@ pub async fn handle_request(
                         }
 
                         Err(err) => {
-                            info!(target: "citadel","InternalServiceRequest Send File Failure");
                             send_response_to_tcp_client(
                                 tcp_connection_map,
                                 InternalServiceResponse::SendFileRequestFailure(
@@ -529,7 +526,6 @@ pub async fn handle_request(
                     }
                 }
                 None => {
-                    info!(target: "citadel","server connection not found");
                     send_response_to_tcp_client(
                         tcp_connection_map,
                         InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
@@ -627,31 +623,30 @@ pub async fn handle_request(
                 Some(conn) => {
                     let result = if let Some(peer_cid) = peer_cid {
                         if let Some(peer_remote) = conn.peers.get_mut(&peer_cid) {
-                            let peer_remote = peer_remote.remote.clone();
+                            let peer_remote = &peer_remote.remote.clone();
                             drop(lock);
-                            peer_remote
-                                .remote_encrypted_virtual_filesystem_pull(
-                                    virtual_directory,
-                                    security_level,
-                                    delete_on_pull,
-                                )
-                                .await
+                            let request = NodeRequest::PullObject(PullObject {
+                                v_conn: *peer_remote.user(),
+                                virtual_dir: virtual_directory,
+                                delete_on_pull,
+                                transfer_security_level: security_level,
+                            });
+
+                            peer_remote.remote().send(request).await
                         } else {
                             Err(NetworkError::msg("Peer Connection Not Found"))
                         }
                     } else {
                         let client_server_remote = conn.client_server_remote.clone();
                         drop(lock);
-                        client_server_remote
-                            .remote_encrypted_virtual_filesystem_pull(
-                                virtual_directory,
-                                security_level,
-                                delete_on_pull,
-                            )
-                            .await
+                        let request = NodeRequest::PullObject(PullObject {
+                            v_conn: *client_server_remote.user(),
+                            virtual_dir: virtual_directory,
+                            delete_on_pull,
+                            transfer_security_level: security_level,
+                        });
+                        client_server_remote.remote().send(request).await
                     };
-
-                    info!(target: "citadel", "Successfully Finished call to REVFS Pull Method");
 
                     match result {
                         Ok(_) => {
@@ -681,7 +676,6 @@ pub async fn handle_request(
                     }
                 }
                 None => {
-                    info!(target: "citadel","server connection not found");
                     send_response_to_tcp_client(
                         tcp_connection_map,
                         InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
@@ -761,7 +755,6 @@ pub async fn handle_request(
                     }
                 }
                 None => {
-                    info!(target: "citadel","server connection not found");
                     send_response_to_tcp_client(
                         tcp_connection_map,
                         InternalServiceResponse::DeleteVirtualFileFailure(
