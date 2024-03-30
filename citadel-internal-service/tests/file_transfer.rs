@@ -365,11 +365,8 @@ mod tests {
             panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
         }
 
-        citadel_logging::error!(target: "citadel", "AB0");
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
-        citadel_logging::error!(target: "citadel", "AB1");
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;
-        citadel_logging::error!(target: "citadel", "AB2");
 
         // Download P2P REVFS file - without delete on pull
         let download_file_command = InternalServiceRequest::DownloadFile {
