@@ -1,4 +1,4 @@
-use crate::kernel::request_handler::handle_request;
+use crate::kernel::requests::{handle_request, HandledRequestResult};
 use citadel_internal_service_connector::codec::{CodecError, SerializingCodec};
 use citadel_internal_service_connector::util::wrap_tcp_conn;
 use citadel_internal_service_types::*;
@@ -17,8 +17,10 @@ use tokio::sync::Mutex;
 use tokio_util::codec::Framed;
 use uuid::Uuid;
 
-pub(crate) mod request_handler;
+pub(crate) mod requests;
+pub(crate) mod responses;
 
+#[derive(Clone)]
 pub struct CitadelWorkspaceService {
     pub remote: Option<NodeRemote>,
     pub bind_address: SocketAddr,
@@ -34,6 +36,10 @@ impl CitadelWorkspaceService {
             server_connection_map: Arc::new(Mutex::new(Default::default())),
             tcp_connection_map: Arc::new(Mutex::new(Default::default())),
         }
+    }
+
+    pub fn remote(&self) -> &NodeRemote {
+        self.remote.as_ref().expect("Kernel not loaded")
     }
 }
 
@@ -167,7 +173,7 @@ impl NetKernel for CitadelWorkspaceService {
     }
 
     async fn on_start(&self) -> Result<(), NetworkError> {
-        let mut remote = self.remote.clone().unwrap();
+        let remote = self.remote.clone().unwrap();
         let remote_for_closure = remote.clone();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
 
@@ -193,19 +199,34 @@ impl NetKernel for CitadelWorkspaceService {
             Ok(())
         };
 
-        let server_connection_map = &self.server_connection_map;
+        let this = self.clone();
+        let _server_connection_map = &self.server_connection_map;
 
         let inbound_command_task = async move {
             while let Some((command, conn_id)) = rx.recv().await {
-                // TODO: handle error once payload_handler is fallible
-                handle_request(
-                    command,
-                    conn_id,
-                    server_connection_map,
-                    &mut remote,
-                    tcp_connection_map,
-                )
-                .await;
+                let this = this.clone();
+
+                let task = async move {
+                    if let Some(HandledRequestResult { response, uuid }) =
+                        handle_request(&this, conn_id, command).await
+                    {
+                        if let Err(err) =
+                            send_response_to_tcp_client(&this.tcp_connection_map, response, uuid)
+                                .await
+                        {
+                            // The TCP connection no longer exists. Delete it from both maps
+                            error!(target: "citadel", "Failed to send response to TCP client: {err:?}");
+                            this.tcp_connection_map.lock().await.remove(&uuid);
+                            this.server_connection_map
+                                .lock()
+                                .await
+                                .retain(|_, v| v.associated_tcp_connection != uuid);
+                        }
+                    }
+                };
+
+                // Spawn the task to allow for parallel request handling
+                tokio::task::spawn(task);
             }
             Ok(())
         };
@@ -221,288 +242,7 @@ impl NetKernel for CitadelWorkspaceService {
     }
 
     async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
-        info!(target: "citadel", "NODE EVENT RECEIVED WITH MESSAGE: {message:?}");
-        match message {
-            NodeResult::Disconnect(disconnect) => {
-                if let Some(conn) = disconnect.v_conn_type {
-                    let (signal, conn_uuid) = match conn {
-                        VirtualTargetType::LocalGroupServer { implicated_cid } => {
-                            let mut server_connection_map = self.server_connection_map.lock().await;
-                            if let Some(conn) = server_connection_map.remove(&implicated_cid) {
-                                (
-                                    InternalServiceResponse::DisconnectNotification(
-                                        DisconnectNotification {
-                                            cid: implicated_cid,
-                                            peer_cid: None,
-                                            request_id: None,
-                                        },
-                                    ),
-                                    conn.associated_tcp_connection,
-                                )
-                            } else {
-                                return Ok(());
-                            }
-                        }
-                        VirtualTargetType::LocalGroupPeer {
-                            implicated_cid,
-                            peer_cid,
-                        } => {
-                            if let Some(conn) =
-                                self.clear_peer_connection(implicated_cid, peer_cid).await
-                            {
-                                (
-                                    InternalServiceResponse::DisconnectNotification(
-                                        DisconnectNotification {
-                                            cid: implicated_cid,
-                                            peer_cid: Some(peer_cid),
-                                            request_id: None,
-                                        },
-                                    ),
-                                    conn.associated_tcp_connection,
-                                )
-                            } else {
-                                return Ok(());
-                            }
-                        }
-                        _ => return Ok(()),
-                    };
-
-                    send_response_to_tcp_client(&self.tcp_connection_map, signal, conn_uuid).await
-                }
-            }
-            NodeResult::ObjectTransferHandle(object_transfer_handle) => {
-                let metadata = object_transfer_handle.handle.metadata.clone();
-                let object_id = metadata.object_id;
-                let object_transfer_handler = object_transfer_handle.handle;
-
-                let (implicated_cid, peer_cid) = if matches!(
-                    object_transfer_handler.orientation,
-                    ObjectTransferOrientation::Receiver {
-                        is_revfs_pull: true
-                    }
-                ) {
-                    // When this is a REVFS pull reception handle, THIS node is the source of the file.
-                    // The other node, i.e. the peer, is the receiver who is requesting the file.
-                    (
-                        object_transfer_handler.source,
-                        object_transfer_handler.receiver,
-                    )
-                } else {
-                    (
-                        object_transfer_handler.receiver,
-                        object_transfer_handler.source,
-                    )
-                };
-
-                citadel_logging::info!(target: "citadel", "Orientation: {:?}", object_transfer_handler.orientation);
-                info!(target: "citadel", "ObjectTransferHandle has implicated_cid: {implicated_cid:?} and peer_cid {peer_cid:?}");
-
-                // When we receive a handle, there are two possibilities:
-                // A: We are the sender of the file transfer, in which case we can assume the adjacent node
-                // already accepted the file transfer request, and therefore we can spawn a task to forward
-                // the ticks immediately
-                //
-                // B: We are the receiver of the file transfer. We need to wait for the TCP client to accept
-                // the request, thus, we need to store it. UNLESS, this is an revfs pull, in which case we
-                // allow the transfer to proceed immediately since the protocol auto accepts these requests
-                if let ObjectTransferOrientation::Receiver { is_revfs_pull } =
-                    object_transfer_handler.orientation
-                {
-                    info!(target: "citadel", "Receiver Obtained ObjectTransferHandler");
-
-                    let mut server_connection_map = self.server_connection_map.lock().await;
-                    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                        let uuid = connection.associated_tcp_connection;
-
-                        if is_revfs_pull {
-                            spawn_tick_updater(
-                                object_transfer_handler,
-                                implicated_cid,
-                                peer_cid,
-                                &mut server_connection_map,
-                                self.tcp_connection_map.clone(),
-                            );
-                        } else {
-                            // Send an update to the TCP client that way they can choose to accept or reject the transfer
-                            let response = InternalServiceResponse::FileTransferRequestNotification(
-                                FileTransferRequestNotification {
-                                    cid: implicated_cid,
-                                    peer_cid,
-                                    metadata,
-                                },
-                            );
-                            send_response_to_tcp_client(&self.tcp_connection_map, response, uuid)
-                                .await;
-                            connection.add_object_transfer_handler(
-                                peer_cid,
-                                object_id,
-                                Some(object_transfer_handler),
-                            );
-                        }
-                    }
-                } else {
-                    // Sender - Must spawn a task to relay status updates to TCP client. When receiving this handle,
-                    // we know the opposite node agreed to the connection thus we can spawn
-                    let mut server_connection_map = self.server_connection_map.lock().await;
-                    info!(target: "citadel", "Sender Obtained ObjectTransferHandler");
-                    spawn_tick_updater(
-                        object_transfer_handler,
-                        implicated_cid,
-                        peer_cid,
-                        &mut server_connection_map,
-                        self.tcp_connection_map.clone(),
-                    );
-                }
-            }
-            NodeResult::GroupChannelCreated(group_channel_created) => {
-                let channel = group_channel_created.channel;
-                let cid = channel.cid();
-                let key = channel.key();
-                let (tx, rx) = channel.split();
-
-                let mut server_connection_map = self.server_connection_map.lock().await;
-                if let Some(connection) = server_connection_map.get_mut(&cid) {
-                    connection.add_group_channel(key, GroupConnection { key, tx, cid });
-
-                    let uuid = connection.associated_tcp_connection;
-                    request_handler::spawn_group_channel_receiver(
-                        key,
-                        cid,
-                        uuid,
-                        rx,
-                        self.tcp_connection_map.clone(),
-                    );
-
-                    send_response_to_tcp_client(
-                        &self.tcp_connection_map,
-                        InternalServiceResponse::GroupChannelCreateSuccess(
-                            GroupChannelCreateSuccess {
-                                cid,
-                                group_key: key,
-                                request_id: None,
-                            },
-                        ),
-                        connection.associated_tcp_connection,
-                    )
-                    .await;
-                }
-            }
-            NodeResult::PeerEvent(event) => match event.event {
-                PeerSignal::Disconnect {
-                    peer_conn_type:
-                        PeerConnectionType::LocalGroupPeer {
-                            implicated_cid,
-                            peer_cid,
-                        },
-                    disconnect_response: _,
-                } => {
-                    if let Some(conn) = self.clear_peer_connection(implicated_cid, peer_cid).await {
-                        let response = InternalServiceResponse::DisconnectNotification(
-                            DisconnectNotification {
-                                cid: implicated_cid,
-                                peer_cid: Some(peer_cid),
-                                request_id: None,
-                            },
-                        );
-                        send_response_to_tcp_client(
-                            &self.tcp_connection_map,
-                            response,
-                            conn.associated_tcp_connection,
-                        )
-                        .await;
-                    }
-                }
-                PeerSignal::BroadcastConnected {
-                    implicated_cid,
-                    group_broadcast,
-                } => {
-                    let mut server_connection_map = self.server_connection_map.lock().await;
-                    handle_group_broadcast(
-                        group_broadcast,
-                        implicated_cid,
-                        &mut server_connection_map,
-                        self.tcp_connection_map.clone(),
-                    )
-                    .await;
-                }
-                PeerSignal::PostRegister {
-                    peer_conn_type:
-                        PeerConnectionType::LocalGroupPeer {
-                            implicated_cid: peer_cid,
-                            peer_cid: implicated_cid,
-                        },
-                    inviter_username,
-                    invitee_username: _,
-                    ticket_opt: _,
-                    invitee_response: _,
-                } => {
-                    info!(target: "citadel", "User {implicated_cid:?} received Register Request from {peer_cid:?}");
-                    let mut server_connection_map = self.server_connection_map.lock().await;
-                    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                        let response = InternalServiceResponse::PeerRegisterNotification(
-                            PeerRegisterNotification {
-                                cid: implicated_cid,
-                                peer_cid,
-                                peer_username: inviter_username,
-                                request_id: None,
-                            },
-                        );
-                        send_response_to_tcp_client(
-                            &self.tcp_connection_map,
-                            response,
-                            connection.associated_tcp_connection,
-                        )
-                        .await;
-                    }
-                }
-                PeerSignal::PostConnect {
-                    peer_conn_type:
-                        PeerConnectionType::LocalGroupPeer {
-                            implicated_cid: peer_cid,
-                            peer_cid: implicated_cid,
-                        },
-                    ticket_opt: _,
-                    invitee_response: _,
-                    session_security_settings,
-                    udp_mode,
-                } => {
-                    info!(target: "citadel", "User {implicated_cid:?} received Connect Request from {peer_cid:?}");
-                    let mut server_connection_map = self.server_connection_map.lock().await;
-                    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                        let response = InternalServiceResponse::PeerConnectNotification(
-                            PeerConnectNotification {
-                                cid: implicated_cid,
-                                peer_cid,
-                                session_security_settings,
-                                udp_mode,
-                                request_id: None,
-                            },
-                        );
-                        send_response_to_tcp_client(
-                            &self.tcp_connection_map,
-                            response,
-                            connection.associated_tcp_connection,
-                        )
-                        .await;
-                    }
-                }
-                _ => {}
-            },
-
-            NodeResult::GroupEvent(group_event) => {
-                let mut server_connection_map = self.server_connection_map.lock().await;
-                handle_group_broadcast(
-                    group_event.event,
-                    group_event.implicated_cid,
-                    &mut server_connection_map,
-                    self.tcp_connection_map.clone(),
-                )
-                .await;
-            }
-            _ => {}
-        }
-        // TODO: handle disconnect properly by removing entries from the hashmap
-        Ok(())
+        responses::handle_node_result(self, message).await
     }
 
     async fn on_stop(&mut self) -> Result<(), NetworkError> {
@@ -514,14 +254,16 @@ async fn send_response_to_tcp_client(
     hash_map: &Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
     response: InternalServiceResponse,
     uuid: Uuid,
-) {
+) -> Result<(), NetworkError> {
     hash_map
         .lock()
         .await
         .get(&uuid)
-        .unwrap()
+        .ok_or_else(|| NetworkError::Generic(format!("TCP connection not found: {:?}", uuid)))?
         .send(response)
-        .unwrap()
+        .map_err(|err| {
+            NetworkError::Generic(format!("Failed to send response to TCP client: {err:?}"))
+        })
 }
 
 fn create_client_server_remote(
@@ -609,198 +351,6 @@ fn handle_connection(
         // Remove all connections whose associated_tcp_connection is conn_id
         server_connection_map.retain(|_, v| v.associated_tcp_connection != conn_id);
     });
-}
-
-async fn handle_group_broadcast(
-    group_broadcast: GroupBroadcast,
-    implicated_cid: u64,
-    server_connection_map: &mut HashMap<u64, Connection>,
-    tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
-) {
-    if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-        let response = match group_broadcast {
-            GroupBroadcast::Invitation {
-                sender: peer_cid,
-                key: group_key,
-            } => Some(InternalServiceResponse::GroupInviteNotification(
-                GroupInviteNotification {
-                    cid: implicated_cid,
-                    peer_cid,
-                    group_key,
-                    request_id: None,
-                },
-            )),
-
-            GroupBroadcast::RequestJoin {
-                sender: peer_cid,
-                key: group_key,
-            } => connection
-                .groups
-                .get_mut(&group_key)
-                .map(|_group_connection| {
-                    InternalServiceResponse::GroupJoinRequestNotification(
-                        GroupJoinRequestNotification {
-                            cid: implicated_cid,
-                            peer_cid,
-                            group_key,
-                            request_id: None,
-                        },
-                    )
-                }),
-
-            GroupBroadcast::AcceptMembership { target: _, key: _ } => None,
-
-            GroupBroadcast::DeclineMembership { target: _, key } => {
-                Some(InternalServiceResponse::GroupRequestJoinDeclineResponse(
-                    GroupRequestJoinDeclineResponse {
-                        cid: implicated_cid,
-                        group_key: key,
-                        request_id: None,
-                    },
-                ))
-            }
-
-            GroupBroadcast::Message {
-                sender: peer_cid,
-                key: group_key,
-                message,
-            } => connection
-                .groups
-                .get_mut(&group_key)
-                .map(|_group_connection| {
-                    InternalServiceResponse::GroupMessageNotification(GroupMessageNotification {
-                        cid: implicated_cid,
-                        peer_cid,
-                        message: message.into_buffer(),
-                        group_key,
-                        request_id: None,
-                    })
-                }),
-
-            GroupBroadcast::MessageResponse {
-                key: group_key,
-                success,
-            } => connection
-                .groups
-                .get_mut(&group_key)
-                .map(|_group_connection| {
-                    InternalServiceResponse::GroupMessageResponse(GroupMessageResponse {
-                        cid: implicated_cid,
-                        success,
-                        group_key,
-                        request_id: None,
-                    })
-                }),
-
-            GroupBroadcast::MemberStateChanged {
-                key: group_key,
-                state,
-            } => Some(InternalServiceResponse::GroupMemberStateChangeNotification(
-                GroupMemberStateChangeNotification {
-                    cid: implicated_cid,
-                    group_key,
-                    state,
-                    request_id: None,
-                },
-            )),
-
-            GroupBroadcast::LeaveRoomResponse {
-                key: group_key,
-                success,
-                message,
-            } => Some(InternalServiceResponse::GroupLeaveNotification(
-                GroupLeaveNotification {
-                    cid: implicated_cid,
-                    group_key,
-                    success,
-                    message,
-                    request_id: None,
-                },
-            )),
-
-            GroupBroadcast::EndResponse {
-                key: group_key,
-                success,
-            } => Some(InternalServiceResponse::GroupEndNotification(
-                GroupEndNotification {
-                    cid: implicated_cid,
-                    group_key,
-                    success,
-                    request_id: None,
-                },
-            )),
-
-            GroupBroadcast::Disconnected { key: group_key } => connection
-                .groups
-                .get_mut(&group_key)
-                .map(|_group_connection| {
-                    InternalServiceResponse::GroupDisconnectNotification(
-                        GroupDisconnectNotification {
-                            cid: implicated_cid,
-                            group_key,
-                            request_id: None,
-                        },
-                    )
-                }),
-
-            GroupBroadcast::AddResponse {
-                key: _group_key,
-                failed_to_invite_list: _failed_to_invite_list,
-            } => None,
-
-            GroupBroadcast::AcceptMembershipResponse { key, success } => {
-                connection.groups.get_mut(&key).map(|_group_connection| {
-                    InternalServiceResponse::GroupMembershipResponse(GroupMembershipResponse {
-                        cid: implicated_cid,
-                        group_key: key,
-                        success,
-                        request_id: None,
-                    })
-                })
-            }
-
-            GroupBroadcast::KickResponse {
-                key: _group_key,
-                success: _success,
-            } => None,
-
-            GroupBroadcast::ListResponse {
-                groups: _group_list,
-            } => None,
-
-            GroupBroadcast::CreateResponse { key: _group_key } => None,
-
-            GroupBroadcast::GroupNonExists { key: _group_key } => None,
-
-            GroupBroadcast::RequestJoinPending { result, key } => Some(
-                InternalServiceResponse::GroupRequestJoinPendingNotification(
-                    GroupRequestJoinPendingNotification {
-                        cid: implicated_cid,
-                        group_key: key,
-                        result,
-                        request_id: None,
-                    },
-                ),
-            ),
-
-            _ => None,
-        };
-        match response {
-            Some(internal_service_response) => {
-                if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
-                    send_response_to_tcp_client(
-                        &tcp_connection_map,
-                        internal_service_response,
-                        connection.associated_tcp_connection,
-                    )
-                    .await;
-                }
-            }
-            None => {
-                todo!()
-            }
-        }
-    }
 }
 
 fn spawn_tick_updater(

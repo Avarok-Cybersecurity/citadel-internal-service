@@ -425,6 +425,7 @@ mod tests {
         let mut is_revfs = false;
         loop {
             let tick_response = svc.recv().await.unwrap();
+            citadel_logging::trace!(target: "citadel", "RECV signal {tick_response:?}");
             match tick_response {
                 InternalServiceResponse::FileTransferTickNotification(
                     FileTransferTickNotification {
@@ -483,6 +484,7 @@ mod tests {
                         panic!("File Send Reception Status Yielded Unexpected Response")
                     }
                 },
+
                 unexpected_response => {
                     citadel_logging::warn!(target: "citadel", "Unexpected signal {unexpected_response:?}")
                 }
