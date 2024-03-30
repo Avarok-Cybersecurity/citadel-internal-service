@@ -69,7 +69,7 @@ pub async fn handle(
                             peer_cid: 0,
                             request_id: Some(request_id),
                         });
-                    let mut lock = hm_for_conn.lock().await;
+                    let lock = hm_for_conn.lock().await;
                     match lock.get(&uuid) {
                         Some(entry) => {
                             if let Err(err) = entry.send(message) {

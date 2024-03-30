@@ -191,7 +191,7 @@ pub async fn handle(
                     let associated_tcp_connection = connection.associated_tcp_connection;
                     drop(server_connection_map);
                     send_response_to_tcp_client(
-                        &tcp_connection_map,
+                        tcp_connection_map,
                         internal_service_response,
                         associated_tcp_connection,
                     )

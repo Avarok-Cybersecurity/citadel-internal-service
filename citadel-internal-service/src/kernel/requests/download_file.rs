@@ -1,9 +1,9 @@
 use crate::kernel::requests::HandledRequestResult;
-use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_types::{
     DownloadFileFailure, DownloadFileSuccess, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_logging::{error, info};
+use citadel_logging::error;
 use citadel_sdk::prelude::{NetworkError, NodeRequest, PullObject, TargetLockedRemote};
 use uuid::Uuid;
 

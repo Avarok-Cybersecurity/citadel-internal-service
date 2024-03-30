@@ -1,5 +1,5 @@
 use crate::kernel::requests::HandledRequestResult;
-use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, MessageSendFailure, MessageSendSuccess,
 };

@@ -1,5 +1,5 @@
 use crate::kernel::requests::{handle_request, HandledRequestResult};
-use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
 use citadel_logging::info;
 use citadel_sdk::prelude::ProtocolRemoteExt;
@@ -56,7 +56,7 @@ pub async fn handle(
                     request_id,
                 };
 
-                return handle_request(this, uuid, connect_command).await;
+                handle_request(this, uuid, connect_command).await
             }
         },
         Err(err) => {

@@ -1,5 +1,5 @@
 use crate::kernel::requests::HandledRequestResult;
-use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_types::{
     DisconnectFailure, DisconnectNotification, InternalServiceRequest, InternalServiceResponse,
 };
@@ -24,7 +24,7 @@ pub async fn handle(
     this.server_connection_map.lock().await.remove(&cid);
 
     match remote.send(request).await {
-        Ok(res) => {
+        Ok(_res) => {
             let disconnect_success =
                 InternalServiceResponse::DisconnectNotification(DisconnectNotification {
                     cid,

@@ -173,7 +173,7 @@ impl NetKernel for CitadelWorkspaceService {
     }
 
     async fn on_start(&self) -> Result<(), NetworkError> {
-        let mut remote = self.remote.clone().unwrap();
+        let remote = self.remote.clone().unwrap();
         let remote_for_closure = remote.clone();
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
 
@@ -200,7 +200,7 @@ impl NetKernel for CitadelWorkspaceService {
         };
 
         let this = self.clone();
-        let server_connection_map = &self.server_connection_map;
+        let _server_connection_map = &self.server_connection_map;
 
         let inbound_command_task = async move {
             while let Some((command, conn_id)) = rx.recv().await {
