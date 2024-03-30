@@ -204,21 +204,29 @@ impl NetKernel for CitadelWorkspaceService {
 
         let inbound_command_task = async move {
             while let Some((command, conn_id)) = rx.recv().await {
-                if let Some(HandledRequestResult { response, uuid }) =
-                    handle_request(&this, conn_id, command).await
-                {
-                    if let Err(err) =
-                        send_response_to_tcp_client(&this.tcp_connection_map, response, uuid).await
+                let this = this.clone();
+
+                let task = async move {
+                    if let Some(HandledRequestResult { response, uuid }) =
+                        handle_request(&this, conn_id, command).await
                     {
-                        // The TCP connection no longer exists. Delete it from both maps
-                        error!(target: "citadel", "Failed to send response to TCP client: {err:?}");
-                        this.tcp_connection_map.lock().await.remove(&uuid);
-                        this.server_connection_map
-                            .lock()
-                            .await
-                            .retain(|_, v| v.associated_tcp_connection != uuid);
+                        if let Err(err) =
+                            send_response_to_tcp_client(&this.tcp_connection_map, response, uuid)
+                                .await
+                        {
+                            // The TCP connection no longer exists. Delete it from both maps
+                            error!(target: "citadel", "Failed to send response to TCP client: {err:?}");
+                            this.tcp_connection_map.lock().await.remove(&uuid);
+                            this.server_connection_map
+                                .lock()
+                                .await
+                                .retain(|_, v| v.associated_tcp_connection != uuid);
+                        }
                     }
-                }
+                };
+
+                // Spawn the task to allow for parallel request handling
+                tokio::task::spawn(task);
             }
             Ok(())
         };
