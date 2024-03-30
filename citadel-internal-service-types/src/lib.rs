@@ -359,7 +359,7 @@ pub struct GroupKickFailure {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GroupListGroupsSuccess {
     pub cid: u64,
-    pub peer_cid: u64,
+    pub peer_cid: Option<u64>,
     pub group_list: Option<Vec<MessageGroupKey>>,
     pub request_id: Option<Uuid>,
 }
@@ -813,7 +813,7 @@ pub enum InternalServiceRequest {
     },
     GroupListGroupsFor {
         cid: u64,
-        peer_cid: u64,
+        peer_cid: Option<u64>,
         request_id: Uuid,
     },
     GroupRequestJoin {
