@@ -6,7 +6,7 @@ use citadel_internal_service_types::{
     InternalServiceResponse,
 };
 use citadel_sdk::prelude::{
-    GroupBroadcast, GroupBroadcastCommand, GroupEvent, NodeRequest, NodeResult,
+    GroupBroadcast, GroupBroadcastCommand, GroupEvent, NodeRequest, NodeResult, TargetLockedRemote,
 };
 use futures::StreamExt;
 use uuid::Uuid;
@@ -39,7 +39,11 @@ pub async fn handle<T: IOInterface>(
                 implicated_cid: cid,
                 command: group_request,
             });
-            match peer_remote.send_callback_subscription(request).await {
+            match peer_remote
+                .remote()
+                .send_callback_subscription(request)
+                .await
+            {
                 Ok(mut subscription) => {
                     let mut result = Err("Group Request Join Failed".to_string());
                     while let Some(evt) = subscription.next().await {

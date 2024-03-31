@@ -11,7 +11,6 @@ mod tests {
     use citadel_internal_service_connector::util::InternalServiceConnector;
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
-        PeerConnectNotification, PeerRegisterNotification,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
@@ -503,97 +502,26 @@ mod tests {
             let (ref mut to_service_a, ref mut from_service_a, cid_a) = item;
             for neighbor in neighbor_items {
                 let (ref mut to_service_b, ref mut from_service_b, cid_b) = neighbor;
-                let session_security_settings =
-                    SessionSecuritySettingsBuilder::default().build().unwrap();
-
-                // Service A Requests to Register with Service B
-                to_service_a
-                    .send(InternalServiceRequest::PeerRegister {
-                        request_id: Uuid::new_v4(),
-                        cid: *cid_a,
-                        peer_cid: (*cid_b),
-                        session_security_settings,
-                        connect_after_register: false,
-                    })
-                    .unwrap();
-
-                // Service B receives Register Request from Service A
-                let inbound_response = from_service_b.recv().await.unwrap();
-                match inbound_response {
-                    InternalServiceResponse::PeerRegisterNotification(
-                        PeerRegisterNotification {
-                            cid,
-                            peer_cid,
-                            peer_username: _,
-                            request_id: _,
-                        },
-                    ) => {
-                        assert_eq!(cid, *cid_b);
-                        assert_eq!(peer_cid, *cid_a);
-                    }
-                    _ => {
-                        panic!("Peer B didn't get the PeerRegisterNotification, instead got {inbound_response:?}");
-                    }
-                }
-
-                // Service B Sends Register Request to Accept
-                to_service_b
-                    .send(InternalServiceRequest::PeerRegister {
-                        request_id: Uuid::new_v4(),
-                        cid: *cid_b,
-                        peer_cid: (*cid_a),
-                        session_security_settings,
-                        connect_after_register: false,
-                    })
-                    .unwrap();
-
-                // Receive Register Success Responses
-                let _ = from_service_a.recv().await.unwrap();
-                let _ = from_service_b.recv().await.unwrap();
-
-                // Service A Requests To Connect
-                to_service_a
-                    .send(InternalServiceRequest::PeerConnect {
-                        request_id: Uuid::new_v4(),
-                        cid: *cid_a,
-                        peer_cid: *cid_b,
-                        udp_mode: Default::default(),
-                        session_security_settings,
-                    })
-                    .unwrap();
-
-                // Service B Receives Connect Request from Service A
-                let inbound_response = from_service_b.recv().await.unwrap();
-                match inbound_response {
-                    InternalServiceResponse::PeerConnectNotification(PeerConnectNotification {
-                        cid,
-                        peer_cid,
-                        session_security_settings: _,
-                        udp_mode: _,
-                        request_id: _,
-                    }) => {
-                        assert_eq!(cid, *cid_b);
-                        assert_eq!(peer_cid, *cid_a);
-                    }
-                    _ => {
-                        panic!("Peer B didn't get the PeerConnectNotification");
-                    }
-                }
-
-                // Service B Sends Connect Request to Accept
-                to_service_b
-                    .send(InternalServiceRequest::PeerConnect {
-                        request_id: Uuid::new_v4(),
-                        cid: *cid_b,
-                        peer_cid: *cid_a,
-                        udp_mode: Default::default(),
-                        session_security_settings,
-                    })
-                    .unwrap();
-
-                // Receive Connect Success Responses
-                let _ = from_service_a.recv().await.unwrap();
-                let _ = from_service_b.recv().await.unwrap();
+                crate::common::register_p2p(
+                    to_service_a,
+                    from_service_a,
+                    *cid_a,
+                    to_service_b,
+                    from_service_b,
+                    *cid_b,
+                    SessionSecuritySettings::default(),
+                )
+                .await?;
+                crate::common::connect_p2p(
+                    to_service_a,
+                    from_service_a,
+                    *cid_a,
+                    to_service_b,
+                    from_service_b,
+                    *cid_b,
+                    SessionSecuritySettings::default(),
+                )
+                .await?;
             }
         }
         Ok(())
