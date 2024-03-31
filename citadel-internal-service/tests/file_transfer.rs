@@ -11,7 +11,7 @@ mod tests {
     use citadel_internal_service_types::{
         DeleteVirtualFileSuccess, DownloadFileFailure, DownloadFileSuccess,
         FileTransferRequestNotification, FileTransferStatusNotification, InternalServiceRequest,
-        InternalServiceResponse, SendFileRequestFailure,
+        InternalServiceResponse, SendFileRequestFailure, SendFileRequestSuccess,
     };
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
@@ -24,7 +24,6 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::mpsc::UnboundedReceiver;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -369,13 +368,6 @@ mod tests {
 
         let deserialized_service_a_payload_response = from_service_a.recv().await.unwrap();
         info!(target: "citadel","{deserialized_service_a_payload_response:?}");
-
-        // if let InternalServiceResponse::SendFileRequestSuccess(SendFileRequestSuccess { .. }) =
-        //     &deserialized_service_a_payload_response
-        // {
-        // } else {
-        //     panic!("File Transfer Request failed: {deserialized_service_a_payload_response:?}");
-        // }
 
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_b).await;
         exhaust_stream_to_file_completion(file_to_send.clone(), from_service_a).await;

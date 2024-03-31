@@ -32,7 +32,7 @@ pub async fn handle(
                     spawn_tick_updater(
                         owned_handler,
                         cid,
-                        peer_cid,
+                        Some(peer_cid),
                         &mut server_connection_map,
                         this.tcp_connection_map.clone(),
                     );

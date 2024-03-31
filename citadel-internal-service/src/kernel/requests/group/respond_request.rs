@@ -5,7 +5,8 @@ use citadel_internal_service_types::{
     InternalServiceResponse,
 };
 use citadel_sdk::prelude::{
-    GroupBroadcast, GroupBroadcastCommand, GroupChannelCreated, GroupEvent, NodeRequest, NodeResult,
+    GroupBroadcast, GroupBroadcastCommand, GroupChannelCreated, GroupEvent, NodeRequest,
+    NodeResult, TargetLockedRemote,
 };
 use futures::StreamExt;
 use uuid::Uuid;
@@ -52,7 +53,11 @@ pub async fn handle(
             let peer_remote = peer_connection.remote.clone();
             drop(server_connection_map);
 
-            match peer_remote.send_callback_subscription(request).await {
+            match peer_remote
+                .remote()
+                .send_callback_subscription(request)
+                .await
+            {
                 Ok(mut subscription) => {
                     let mut result = false;
                     if invitation {
