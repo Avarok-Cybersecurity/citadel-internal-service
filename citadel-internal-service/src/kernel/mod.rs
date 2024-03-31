@@ -1,42 +1,64 @@
+use crate::kernel::ext::IOInterfaceExt;
 use crate::kernel::requests::{handle_request, HandledRequestResult};
-use citadel_internal_service_connector::codec::{CodecError, SerializingCodec};
-use citadel_internal_service_connector::util::wrap_tcp_conn;
+use citadel_internal_service_connector::connector::{
+    InternalServiceConnector, WrappedSink, WrappedStream,
+};
+use citadel_internal_service_connector::io_interface::in_memory::{
+    InMemoryInterface, InMemorySink, InMemoryStream,
+};
+use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::*;
 use citadel_logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::remote_specialization::PeerRemote;
 use citadel_sdk::prelude::VirtualTargetType;
 use citadel_sdk::prelude::*;
-use futures::stream::{SplitSink, StreamExt};
-use futures::SinkExt;
+use futures::stream::StreamExt;
+use futures::{Sink, SinkExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
-use tokio_util::codec::Framed;
 use uuid::Uuid;
 
+pub(crate) mod ext;
 pub(crate) mod requests;
 pub(crate) mod responses;
 
-#[derive(Clone)]
-pub struct CitadelWorkspaceService {
+pub struct CitadelWorkspaceService<T> {
     pub remote: Option<NodeRemote>,
-    pub bind_address: SocketAddr,
     pub server_connection_map: Arc<Mutex<HashMap<u64, Connection>>>,
     pub tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    io: Arc<Mutex<Option<T>>>,
 }
 
-impl CitadelWorkspaceService {
-    pub fn new(bind_address: SocketAddr) -> Self {
-        Self {
+impl<T> Clone for CitadelWorkspaceService<T> {
+    fn clone(&self) -> Self {
+        CitadelWorkspaceService {
+            remote: self.remote.clone(),
+            server_connection_map: self.server_connection_map.clone(),
+            tcp_connection_map: self.tcp_connection_map.clone(),
+            io: self.io.clone(),
+        }
+    }
+}
+
+impl<T: IOInterface> From<T> for CitadelWorkspaceService<T> {
+    fn from(io: T) -> Self {
+        CitadelWorkspaceService {
             remote: None,
-            bind_address,
             server_connection_map: Arc::new(Mutex::new(Default::default())),
             tcp_connection_map: Arc::new(Mutex::new(Default::default())),
+            io: Arc::new(Mutex::new(Some(io))),
         }
+    }
+}
+
+impl<T: IOInterface> CitadelWorkspaceService<T> {
+    pub fn new(io: T) -> Self {
+        io.into()
     }
 
     pub fn remote(&self) -> &NodeRemote {
@@ -44,18 +66,52 @@ impl CitadelWorkspaceService {
     }
 }
 
-#[allow(dead_code)]
-pub struct Connection {
-    sink_to_server: PeerChannelSendHalf,
-    client_server_remote: ClientServerRemote,
-    peers: HashMap<u64, PeerConnection>,
-    associated_tcp_connection: Uuid,
-    c2s_file_transfer_handlers: HashMap<u64, Option<ObjectTransferHandler>>,
-    groups: HashMap<MessageGroupKey, GroupConnection>,
+impl CitadelWorkspaceService<TcpIOInterface> {
+    pub async fn new_tcp(
+        bind_address: SocketAddr,
+    ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface>> {
+        Ok(TcpIOInterface::new(bind_address).await?.into())
+    }
+}
+
+impl CitadelWorkspaceService<InMemoryInterface> {
+    /// Generates an in-memory service connector and kernel. This is useful for programs that do not need
+    /// networking to connect between the application and the internal service
+    pub fn new_in_memory() -> (
+        InternalServiceConnector<InMemoryInterface>,
+        CitadelWorkspaceService<InMemoryInterface>,
+    ) {
+        let (tx_to_consumer, rx_from_consumer) = futures::channel::mpsc::unbounded();
+        let (tx_to_svc, rx_from_svc) = futures::channel::mpsc::unbounded();
+        let connector = InternalServiceConnector {
+            sink: WrappedSink {
+                inner: InMemorySink(tx_to_svc),
+            },
+            stream: WrappedStream {
+                inner: InMemoryStream(rx_from_svc),
+            },
+        };
+        let kernel = InMemoryInterface {
+            sink: Some(tx_to_consumer),
+            stream: Some(rx_from_consumer),
+        }
+        .into();
+        (connector, kernel)
+    }
 }
 
 #[allow(dead_code)]
-struct PeerConnection {
+pub struct Connection {
+    pub sink_to_server: PeerChannelSendHalf,
+    pub client_server_remote: ClientServerRemote,
+    pub peers: HashMap<u64, PeerConnection>,
+    pub(crate) associated_tcp_connection: Uuid,
+    pub c2s_file_transfer_handlers: HashMap<u64, Option<ObjectTransferHandler>>,
+    pub groups: HashMap<MessageGroupKey, GroupConnection>,
+}
+
+#[allow(dead_code)]
+pub struct PeerConnection {
     sink: PeerChannelSendHalf,
     remote: PeerRemote,
     handler_map: HashMap<u64, Option<ObjectTransferHandler>>,
@@ -152,7 +208,7 @@ impl Connection {
     }
 }
 
-impl CitadelWorkspaceService {
+impl<T: IOInterface> CitadelWorkspaceService<T> {
     async fn clear_peer_connection(
         &self,
         implicated_cid: u64,
@@ -167,16 +223,17 @@ impl CitadelWorkspaceService {
 }
 
 #[async_trait]
-impl NetKernel for CitadelWorkspaceService {
+impl<T: IOInterface> NetKernel for CitadelWorkspaceService<T> {
     fn load_remote(&mut self, node_remote: NodeRemote) -> Result<(), NetworkError> {
         self.remote = Some(node_remote);
         Ok(())
     }
 
     async fn on_start(&self) -> Result<(), NetworkError> {
+        let this = self.clone();
         let remote = self.remote.clone().unwrap();
         let remote_for_closure = remote.clone();
-        let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
+        let mut io = self.io.lock().await.take().expect("Already called");
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -184,12 +241,13 @@ impl NetKernel for CitadelWorkspaceService {
         let server_connection_map = &self.server_connection_map;
 
         let listener_task = async move {
-            while let Ok((conn, _addr)) = listener.accept().await {
+            while let Some((sink, stream)) = io.next_connection().await {
                 let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel::<InternalServiceResponse>();
                 let id = Uuid::new_v4();
                 tcp_connection_map.lock().await.insert(id, tx1);
-                handle_connection(
-                    conn,
+                io.spawn_connection_handler(
+                    sink,
+                    stream,
                     tx.clone(),
                     rx1,
                     id,
@@ -200,7 +258,6 @@ impl NetKernel for CitadelWorkspaceService {
             Ok(())
         };
 
-        let this = self.clone();
         let _server_connection_map = &self.server_connection_map;
 
         let inbound_command_task = async move {
@@ -275,83 +332,20 @@ fn create_client_server_remote(
     ClientServerRemote::new(conn_type, remote, security_settings)
 }
 
-async fn sink_send_payload(
+pub(crate) async fn sink_send_payload<T: IOInterface>(
     payload: InternalServiceResponse,
-    sink: &mut SplitSink<
-        Framed<TcpStream, SerializingCodec<InternalServicePayload>>,
-        InternalServicePayload,
-    >,
-) -> Result<(), CodecError> {
+    sink: &mut T::Sink,
+) -> Result<(), <T::Sink as Sink<InternalServicePayload>>::Error> {
     sink.send(InternalServicePayload::Response(payload)).await
 }
 
-fn send_to_kernel(
+pub(crate) fn send_to_kernel(
     request: InternalServiceRequest,
     sender: &UnboundedSender<(InternalServiceRequest, Uuid)>,
     conn_id: Uuid,
 ) -> Result<(), NetworkError> {
     sender.send((request, conn_id))?;
     Ok(())
-}
-
-fn handle_connection(
-    conn: TcpStream,
-    to_kernel: UnboundedSender<(InternalServiceRequest, Uuid)>,
-    mut from_kernel: tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
-    conn_id: Uuid,
-    tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
-    server_connection_map: Arc<Mutex<HashMap<u64, Connection>>>,
-) {
-    tokio::task::spawn(async move {
-        let framed = wrap_tcp_conn(conn);
-        let (mut sink, mut stream) = framed.split();
-
-        let write_task = async move {
-            let response =
-                InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted);
-
-            if let Err(err) = sink_send_payload(response, &mut sink).await {
-                error!(target: "citadel", "Failed to send to client: {err:?}");
-                return;
-            }
-
-            while let Some(kernel_response) = from_kernel.recv().await {
-                if let Err(err) = sink_send_payload(kernel_response, &mut sink).await {
-                    error!(target: "citadel", "Failed to send to client: {err:?}");
-                    return;
-                }
-            }
-        };
-
-        let read_task = async move {
-            while let Some(message) = stream.next().await {
-                match message {
-                    Ok(message) => {
-                        if let InternalServicePayload::Request(request) = message {
-                            if let Err(err) = send_to_kernel(request, &to_kernel, conn_id) {
-                                error!(target: "citadel", "Failed to send to kernel: {:?}", err);
-                                break;
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        warn!(target: "citadel", "Bad message from client: {err:?}");
-                    }
-                }
-            }
-            info!(target: "citadel", "Disconnected");
-        };
-
-        tokio::select! {
-            res0 = write_task => res0,
-            res1 = read_task => res1,
-        }
-
-        tcp_connection_map.lock().await.remove(&conn_id);
-        let mut server_connection_map = server_connection_map.lock().await;
-        // Remove all connections whose associated_tcp_connection is conn_id
-        server_connection_map.retain(|_, v| v.associated_tcp_connection != conn_id);
-    });
 }
 
 fn spawn_tick_updater(

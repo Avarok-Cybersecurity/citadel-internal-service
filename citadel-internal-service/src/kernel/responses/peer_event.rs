@@ -1,4 +1,5 @@
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     DisconnectNotification, InternalServiceResponse, PeerConnectNotification,
     PeerRegisterNotification,
@@ -6,7 +7,10 @@ use citadel_internal_service_types::{
 use citadel_logging::info;
 use citadel_sdk::prelude::{GroupEvent, NetworkError, PeerConnectionType, PeerEvent, PeerSignal};
 
-pub async fn handle(this: &CitadelWorkspaceService, event: PeerEvent) -> Result<(), NetworkError> {
+pub async fn handle<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
+    event: PeerEvent,
+) -> Result<(), NetworkError> {
     match event.event {
         PeerSignal::Disconnect {
             peer_conn_type:

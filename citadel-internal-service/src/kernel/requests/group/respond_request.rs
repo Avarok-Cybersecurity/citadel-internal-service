@@ -1,5 +1,6 @@
 use crate::kernel::requests::{spawn_group_channel_receiver, HandledRequestResult};
 use crate::kernel::{CitadelWorkspaceService, GroupConnection};
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     GroupRespondRequestFailure, GroupRespondRequestSuccess, InternalServiceRequest,
     InternalServiceResponse,
@@ -11,8 +12,8 @@ use citadel_sdk::prelude::{
 use futures::StreamExt;
 use uuid::Uuid;
 
-pub async fn handle(
-    this: &CitadelWorkspaceService,
+pub async fn handle<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {

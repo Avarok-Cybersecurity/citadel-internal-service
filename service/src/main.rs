@@ -8,7 +8,7 @@ use structopt::StructOpt;
 async fn main() -> Result<(), Box<dyn Error>> {
     citadel_logging::setup_log();
     let opts: Options = Options::from_args();
-    let service = CitadelWorkspaceService::new(opts.bind);
+    let service = CitadelWorkspaceService::new_tcp(opts.bind).await?;
 
     let mut builder = NodeBuilder::default();
     let mut builder = builder

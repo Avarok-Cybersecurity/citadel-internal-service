@@ -1,10 +1,11 @@
 use crate::kernel::{send_response_to_tcp_client, spawn_tick_updater, CitadelWorkspaceService};
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
 use citadel_logging::info;
 use citadel_sdk::prelude::{NetworkError, ObjectTransferHandle, ObjectTransferOrientation};
 
-pub async fn handle(
-    this: &CitadelWorkspaceService,
+pub async fn handle<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
     object_transfer_handle: ObjectTransferHandle,
 ) -> Result<(), NetworkError> {
     let metadata = object_transfer_handle.handle.metadata.clone();

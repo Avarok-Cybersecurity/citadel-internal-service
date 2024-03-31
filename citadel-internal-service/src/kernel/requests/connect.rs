@@ -1,5 +1,6 @@
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::{create_client_server_remote, CitadelWorkspaceService, Connection};
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     ConnectFailure, InternalServiceRequest, InternalServiceResponse, MessageNotification,
 };
@@ -7,8 +8,8 @@ use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt};
 use futures::StreamExt;
 use uuid::Uuid;
 
-pub async fn handle(
-    this: &CitadelWorkspaceService,
+pub async fn handle<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {

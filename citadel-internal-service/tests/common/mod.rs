@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use citadel_internal_service::kernel::CitadelWorkspaceService;
-use citadel_internal_service_connector::util::{InternalServiceConnector, WrappedSink};
+use citadel_internal_service_connector::connector::{InternalServiceConnector, WrappedSink};
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
     PeerConnectNotification, PeerConnectSuccess, PeerRegisterNotification, PeerRegisterSuccess,
@@ -192,7 +193,8 @@ pub async fn register_and_connect_to_server_then_peers(
         let bind_address_internal_service = int_svc_addr_iter;
 
         info!(target: "citadel", "Internal Service Spawning");
-        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
+        let internal_service_kernel =
+            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
@@ -429,8 +431,8 @@ pub fn spawn_services(futures_to_spawn: Vec<InternalServicesFutures>) {
     tokio::task::spawn(services_to_spawn);
 }
 
-pub async fn send(
-    sink: &mut WrappedSink,
+pub async fn send<T: IOInterface>(
+    sink: &mut WrappedSink<T>,
     command: InternalServiceRequest,
 ) -> Result<(), Box<dyn Error>> {
     sink.send(command).await?;

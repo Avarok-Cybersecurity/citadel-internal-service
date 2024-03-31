@@ -1,5 +1,6 @@
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, ListRegisteredPeersFailure,
     ListRegisteredPeersResponse, PeerSessionInformation,
@@ -8,8 +9,8 @@ use citadel_sdk::prelude::{ProtocolRemoteExt, TargetLockedRemote};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub async fn handle(
-    this: &CitadelWorkspaceService,
+pub async fn handle<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {

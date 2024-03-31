@@ -8,7 +8,7 @@ mod tests {
         spawn_services, test_kv_for_service, InternalServicesFutures, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
-    use citadel_internal_service_connector::util::InternalServiceConnector;
+    use citadel_internal_service_connector::connector::InternalServiceConnector;
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
     };
@@ -33,7 +33,8 @@ mod tests {
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
 
-        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
+        let internal_service_kernel =
+            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -99,7 +100,8 @@ mod tests {
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
+        let internal_service_kernel =
+            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -199,7 +201,8 @@ mod tests {
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
+        let internal_service_kernel =
+            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -383,9 +386,7 @@ mod tests {
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
-            .build(CitadelWorkspaceService::new(
-                bind_address_internal_service_a,
-            ))
+            .build(CitadelWorkspaceService::new_tcp(bind_address_internal_service_a).await?)
             .unwrap();
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
@@ -458,7 +459,7 @@ mod tests {
         for internal_service_address in internal_service_addresses.clone() {
             let bind_address_internal_service = internal_service_address;
             let internal_service_kernel =
-                CitadelWorkspaceService::new(bind_address_internal_service);
+                CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
             let internal_service = NodeBuilder::default()
                 .with_node_type(NodeType::Peer)
                 .with_insecure_skip_cert_verification()

@@ -24,7 +24,7 @@ mod tests {
         tokio::task::spawn(server);
 
         let service_addr = "127.0.0.1:55778".parse().unwrap();
-        let service = CitadelWorkspaceService::new(service_addr);
+        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::InMemory)
@@ -90,7 +90,7 @@ mod tests {
         tokio::task::spawn(server);
 
         let service_addr = "127.0.0.1:55778".parse().unwrap();
-        let service = CitadelWorkspaceService::new(service_addr);
+        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::InMemory)
@@ -192,7 +192,7 @@ mod tests {
         tokio::task::spawn(server);
 
         let service_addr = "127.0.0.1:55778".parse().unwrap();
-        let service = CitadelWorkspaceService::new(service_addr);
+        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
@@ -329,7 +329,7 @@ mod tests {
         tokio::task::spawn(server);
 
         let service_addr = "127.0.0.1:55778".parse().unwrap();
-        let service = CitadelWorkspaceService::new(service_addr);
+        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
