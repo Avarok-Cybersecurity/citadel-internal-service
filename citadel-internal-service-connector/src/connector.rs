@@ -1,56 +1,28 @@
 use crate::codec::SerializingCodec;
+use crate::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
-use futures::stream::{SplitSink, SplitStream};
 use futures::{Sink, Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
 
-pub struct InternalServiceConnector {
-    pub sink: WrappedSink,
-    pub stream: WrappedStream,
+pub struct InternalServiceConnector<T: IOInterface> {
+    pub sink: WrappedSink<T>,
+    pub stream: WrappedStream<T>,
 }
 
-pub struct WrappedStream {
-    inner: SplitStream<Framed<TcpStream, SerializingCodec<InternalServicePayload>>>,
+pub struct WrappedStream<T: IOInterface> {
+    pub inner: T::Stream,
 }
 
-pub struct WrappedSink {
-    inner: SplitSink<
-        Framed<TcpStream, SerializingCodec<InternalServicePayload>>,
-        InternalServicePayload,
-    >,
+pub struct WrappedSink<T: IOInterface> {
+    pub inner: T::Sink,
 }
 
-impl InternalServiceConnector {
-    pub async fn connect<T: ToSocketAddrs>(addr: T) -> Result<Self, Box<dyn std::error::Error>> {
-        let conn = TcpStream::connect(addr).await?;
-        let (sink, mut stream) = wrap_tcp_conn(conn).split();
-        let greeter_packet = stream
-            .next()
-            .await
-            .ok_or("Failed to receive greeting packet")??;
-        if matches!(
-            greeter_packet,
-            InternalServicePayload::Response(InternalServiceResponse::ServiceConnectionAccepted(_))
-        ) {
-            let stream = WrappedStream { inner: stream };
-            let sink = WrappedSink { inner: sink };
-            Ok(Self { sink, stream })
-        } else {
-            Err("Failed to receive greeting packet")?
-        }
-    }
-
-    pub fn split(self) -> (WrappedSink, WrappedStream) {
-        (self.sink, self.stream)
-    }
-}
-
-impl Stream for WrappedStream {
+impl<T: IOInterface> Stream for WrappedStream<T> {
     type Item = InternalServiceResponse;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -63,7 +35,7 @@ impl Stream for WrappedStream {
     }
 }
 
-impl Sink<InternalServiceRequest> for WrappedSink {
+impl<T: IOInterface> Sink<InternalServiceRequest> for WrappedSink<T> {
     type Error = std::io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

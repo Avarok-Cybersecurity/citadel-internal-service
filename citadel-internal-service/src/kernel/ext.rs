@@ -1,28 +1,18 @@
-use crate::kernel::{send_to_kernel, sink_send_payload, CitadelWorkspaceService, Connection};
+use crate::kernel::{send_to_kernel, sink_send_payload, Connection};
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
     ServiceConnectionAccepted,
 };
 use citadel_logging::{error, info, warn};
-use citadel_sdk::async_trait;
-use futures::{Sink, Stream, StreamExt};
+use futures::StreamExt;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
-use tcp::TcpIOInterface;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-pub mod in_memory;
-pub mod tcp;
-
-#[async_trait]
-pub trait IOInterface: Sized + Send + 'static {
-    type Sink: Sink<InternalServicePayload, Error = std::io::Error> + Unpin + Send + 'static;
-    type Stream: Stream<Item = std::io::Result<InternalServicePayload>> + Unpin + Send + 'static;
-    async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)>;
-
+pub trait IOInterfaceExt: IOInterface {
     #[allow(clippy::too_many_arguments)]
     fn spawn_connection_handler(
         &mut self,
@@ -84,10 +74,4 @@ pub trait IOInterface: Sized + Send + 'static {
     }
 }
 
-impl CitadelWorkspaceService<TcpIOInterface> {
-    pub async fn new_tcp(
-        bind_address: SocketAddr,
-    ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface>> {
-        Ok(TcpIOInterface::new(bind_address).await?.into())
-    }
-}
+impl<T: IOInterface> IOInterfaceExt for T {}

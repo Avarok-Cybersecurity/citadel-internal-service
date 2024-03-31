@@ -1,7 +1,7 @@
-use crate::io_interface::IOInterface;
 use crate::kernel::{
     requests, send_response_to_tcp_client, CitadelWorkspaceService, GroupConnection,
 };
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{GroupChannelCreateSuccess, InternalServiceResponse};
 use citadel_sdk::prelude::{GroupChannelCreated, NetworkError};
 

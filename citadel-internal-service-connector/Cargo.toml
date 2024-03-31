@@ -12,3 +12,6 @@ tokio-util = { workspace = true, features = ["codec"] }
 bincode2 = { workspace = true }
 serde = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
+uuid = { workspace = true }
+citadel_logging = { workspace = true }
+async-trait = "0.1.79"

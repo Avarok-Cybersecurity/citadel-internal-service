@@ -1,5 +1,5 @@
-use crate::io_interface::IOInterface;
 use crate::kernel::{send_response_to_tcp_client, spawn_tick_updater, CitadelWorkspaceService};
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
 use citadel_logging::info;
 use citadel_sdk::prelude::{NetworkError, ObjectTransferHandle, ObjectTransferOrientation};

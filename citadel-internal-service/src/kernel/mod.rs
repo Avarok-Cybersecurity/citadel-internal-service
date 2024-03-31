@@ -1,5 +1,13 @@
-use crate::io_interface::IOInterface;
+use crate::kernel::ext::IOInterfaceExt;
 use crate::kernel::requests::{handle_request, HandledRequestResult};
+use citadel_internal_service_connector::connector::{
+    InternalServiceConnector, WrappedSink, WrappedStream,
+};
+use citadel_internal_service_connector::io_interface::in_memory::{
+    InMemoryInterface, InMemorySink, InMemoryStream,
+};
+use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::*;
 use citadel_logging::{error, info, warn};
 use citadel_sdk::prefabs::ClientServerRemote;
@@ -9,11 +17,13 @@ use citadel_sdk::prelude::*;
 use futures::stream::StreamExt;
 use futures::{Sink, SinkExt};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+pub(crate) mod ext;
 pub(crate) mod requests;
 pub(crate) mod responses;
 
@@ -56,18 +66,52 @@ impl<T: IOInterface> CitadelWorkspaceService<T> {
     }
 }
 
-#[allow(dead_code)]
-pub struct Connection {
-    sink_to_server: PeerChannelSendHalf,
-    client_server_remote: ClientServerRemote,
-    peers: HashMap<u64, PeerConnection>,
-    pub(crate) associated_tcp_connection: Uuid,
-    c2s_file_transfer_handlers: HashMap<u64, Option<ObjectTransferHandler>>,
-    groups: HashMap<MessageGroupKey, GroupConnection>,
+impl CitadelWorkspaceService<TcpIOInterface> {
+    pub async fn new_tcp(
+        bind_address: SocketAddr,
+    ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface>> {
+        Ok(TcpIOInterface::new(bind_address).await?.into())
+    }
+}
+
+impl CitadelWorkspaceService<InMemoryInterface> {
+    /// Generates an in-memory service connector and kernel. This is useful for programs that do not need
+    /// networking to connect between the application and the internal service
+    pub fn new_in_memory() -> (
+        InternalServiceConnector<InMemoryInterface>,
+        CitadelWorkspaceService<InMemoryInterface>,
+    ) {
+        let (tx_to_consumer, rx_from_consumer) = futures::channel::mpsc::unbounded();
+        let (tx_to_svc, rx_from_svc) = futures::channel::mpsc::unbounded();
+        let connector = InternalServiceConnector {
+            sink: WrappedSink {
+                inner: InMemorySink(tx_to_svc),
+            },
+            stream: WrappedStream {
+                inner: InMemoryStream(rx_from_svc),
+            },
+        };
+        let kernel = InMemoryInterface {
+            sink: Some(tx_to_consumer),
+            stream: Some(rx_from_consumer),
+        }
+        .into();
+        (connector, kernel)
+    }
 }
 
 #[allow(dead_code)]
-struct PeerConnection {
+pub struct Connection {
+    pub sink_to_server: PeerChannelSendHalf,
+    pub client_server_remote: ClientServerRemote,
+    pub peers: HashMap<u64, PeerConnection>,
+    pub(crate) associated_tcp_connection: Uuid,
+    pub c2s_file_transfer_handlers: HashMap<u64, Option<ObjectTransferHandler>>,
+    pub groups: HashMap<MessageGroupKey, GroupConnection>,
+}
+
+#[allow(dead_code)]
+pub struct PeerConnection {
     sink: PeerChannelSendHalf,
     remote: PeerRemote,
     handler_map: HashMap<u64, Option<ObjectTransferHandler>>,

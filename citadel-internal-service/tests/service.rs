@@ -8,7 +8,7 @@ mod tests {
         spawn_services, test_kv_for_service, InternalServicesFutures, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
-    use citadel_internal_service_connector::util::InternalServiceConnector;
+    use citadel_internal_service_connector::connector::InternalServiceConnector;
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageNotification, MessageSendSuccess,
     };

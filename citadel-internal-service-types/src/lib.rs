@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
 
+pub mod service;
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectSuccess {
     pub cid: u64,

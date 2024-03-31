@@ -1,5 +1,5 @@
-use crate::io_interface::IOInterface;
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     DisconnectNotification, InternalServiceResponse, PeerConnectNotification,
     PeerRegisterNotification,

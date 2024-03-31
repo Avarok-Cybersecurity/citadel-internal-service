@@ -1,13 +1,13 @@
 use crate::io_interface::IOInterface;
+use async_trait::async_trait;
 use citadel_internal_service_types::InternalServicePayload;
-use citadel_sdk::async_trait;
 use futures::Sink;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 pub struct InMemoryInterface {
-    sink: Option<futures::channel::mpsc::UnboundedSender<InternalServicePayload>>,
-    stream: Option<futures::channel::mpsc::UnboundedReceiver<InternalServicePayload>>,
+    pub sink: Option<futures::channel::mpsc::UnboundedSender<InternalServicePayload>>,
+    pub stream: Option<futures::channel::mpsc::UnboundedReceiver<InternalServicePayload>>,
 }
 
 #[async_trait]
@@ -25,7 +25,7 @@ impl IOInterface for InMemoryInterface {
     }
 }
 
-pub struct InMemorySink(futures::channel::mpsc::UnboundedSender<InternalServicePayload>);
+pub struct InMemorySink(pub futures::channel::mpsc::UnboundedSender<InternalServicePayload>);
 
 impl Sink<InternalServicePayload> for InMemorySink {
     type Error = std::io::Error;
@@ -58,7 +58,7 @@ impl Sink<InternalServicePayload> for InMemorySink {
     }
 }
 
-pub struct InMemoryStream(futures::channel::mpsc::UnboundedReceiver<InternalServicePayload>);
+pub struct InMemoryStream(pub futures::channel::mpsc::UnboundedReceiver<InternalServicePayload>);
 
 impl futures::Stream for InMemoryStream {
     type Item = std::io::Result<InternalServicePayload>;

@@ -1,6 +1,6 @@
-use crate::io_interface::IOInterface;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, MessageSendFailure, MessageSendSuccess,
 };

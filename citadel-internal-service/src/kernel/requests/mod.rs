@@ -4,7 +4,7 @@ use citadel_internal_service_types::*;
 use citadel_logging::info;
 use citadel_logging::tracing::log;
 
-use crate::io_interface::IOInterface;
+use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_sdk::prelude::*;
 use futures::StreamExt;
 use std::collections::HashMap;
