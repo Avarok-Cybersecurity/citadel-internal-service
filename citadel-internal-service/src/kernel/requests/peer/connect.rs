@@ -38,6 +38,7 @@ pub async fn handle(
     if already_connected {
         let response = InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
             cid,
+            peer_cid,
             request_id: Some(request_id),
         });
 
@@ -67,11 +68,7 @@ pub async fn handle(
                         .await
                         .get_mut(&cid)
                         .unwrap()
-                        .add_peer_connection(
-                            peer_cid,
-                            sink,
-                            symmetric_identifier_handle_ref.into_owned(),
-                        );
+                        .add_peer_connection(peer_cid, sink, peer_connect_success.remote);
 
                     let hm_for_conn = this.tcp_connection_map.clone();
 
@@ -101,6 +98,7 @@ pub async fn handle(
 
                     InternalServiceResponse::PeerConnectSuccess(PeerConnectSuccess {
                         cid,
+                        peer_cid,
                         request_id: Some(request_id),
                     })
                 }

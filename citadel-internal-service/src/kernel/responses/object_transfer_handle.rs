@@ -41,7 +41,7 @@ pub async fn handle(
                 spawn_tick_updater(
                     object_transfer_handler,
                     implicated_cid,
-                    peer_cid,
+                    Some(peer_cid),
                     &mut server_connection_map,
                     this.tcp_connection_map.clone(),
                 );
@@ -74,7 +74,7 @@ pub async fn handle(
         spawn_tick_updater(
             object_transfer_handler,
             implicated_cid,
-            peer_cid,
+            Some(peer_cid),
             &mut server_connection_map,
             this.tcp_connection_map.clone(),
         );
