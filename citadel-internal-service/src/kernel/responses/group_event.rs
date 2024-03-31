@@ -1,3 +1,4 @@
+use crate::io_interface::IOInterface;
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
 use citadel_internal_service_types::{
     GroupDisconnectNotification, GroupEndNotification, GroupInviteNotification,
@@ -7,8 +8,8 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::prelude::{GroupBroadcast, GroupEvent, NetworkError};
 
-pub async fn handle(
-    this: &CitadelWorkspaceService,
+pub async fn handle<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
     group_event: GroupEvent,
 ) -> Result<(), NetworkError> {
     let server_connection_map = &this.server_connection_map;

@@ -1,3 +1,4 @@
+use crate::io_interface::IOInterface;
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_types::{
@@ -9,8 +10,8 @@ use citadel_sdk::prelude::{
 };
 use uuid::Uuid;
 
-pub async fn handle(
-    this: &CitadelWorkspaceService,
+pub async fn handle<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {

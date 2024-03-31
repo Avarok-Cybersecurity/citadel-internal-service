@@ -48,7 +48,8 @@ mod tests {
         tokio::task::spawn(server);
 
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
+        let internal_service_kernel =
+            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
@@ -195,7 +196,8 @@ mod tests {
         tokio::task::spawn(server);
 
         info!(target: "citadel", "sub server spawn");
-        let internal_service_kernel = CitadelWorkspaceService::new(bind_address_internal_service);
+        let internal_service_kernel =
+            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()

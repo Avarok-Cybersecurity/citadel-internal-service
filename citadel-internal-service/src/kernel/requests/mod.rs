@@ -4,6 +4,7 @@ use citadel_internal_service_types::*;
 use citadel_logging::info;
 use citadel_logging::tracing::log;
 
+use crate::io_interface::IOInterface;
 use citadel_sdk::prelude::*;
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -30,8 +31,8 @@ mod local_db;
 mod peer;
 
 #[async_recursion]
-pub async fn handle_request(
-    this: &CitadelWorkspaceService,
+pub async fn handle_request<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
     uuid: Uuid,
     command: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {

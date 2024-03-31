@@ -1,4 +1,4 @@
-use crate::codec::{CodecError, SerializingCodec};
+use crate::codec::SerializingCodec;
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
@@ -64,7 +64,7 @@ impl Stream for WrappedStream {
 }
 
 impl Sink<InternalServiceRequest> for WrappedSink {
-    type Error = CodecError;
+    type Error = std::io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.inner).poll_ready(cx)

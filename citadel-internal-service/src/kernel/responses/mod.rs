@@ -1,5 +1,6 @@
 use crate::kernel::CitadelWorkspaceService;
 
+use crate::io_interface::IOInterface;
 use citadel_logging::info;
 use citadel_sdk::prelude::{NetworkError, NodeResult};
 
@@ -10,8 +11,8 @@ mod group_channel_created;
 pub(crate) mod group_event;
 mod peer_event;
 
-pub async fn handle_node_result(
-    this: &CitadelWorkspaceService,
+pub async fn handle_node_result<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
     result: NodeResult,
 ) -> Result<(), NetworkError> {
     info!(target: "citadel", "NODE EVENT RECEIVED WITH MESSAGE: {result:?}");

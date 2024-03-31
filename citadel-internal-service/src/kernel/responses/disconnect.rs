@@ -1,9 +1,10 @@
+use crate::io_interface::IOInterface;
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
 use citadel_internal_service_types::{DisconnectNotification, InternalServiceResponse};
 use citadel_sdk::prelude::{Disconnect, NetworkError, VirtualTargetType};
 
-pub async fn handle(
-    this: &CitadelWorkspaceService,
+pub async fn handle<T: IOInterface>(
+    this: &CitadelWorkspaceService<T>,
     disconnect: Disconnect,
 ) -> Result<(), NetworkError> {
     if let Some(conn) = disconnect.v_conn_type {

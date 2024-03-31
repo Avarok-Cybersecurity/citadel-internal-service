@@ -31,8 +31,14 @@ impl From<std::io::Error> for CodecError {
     }
 }
 
+impl From<CodecError> for std::io::Error {
+    fn from(value: CodecError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, value.reason)
+    }
+}
+
 impl<T: Serialize> Encoder<T> for SerializingCodec<T> {
-    type Error = CodecError;
+    type Error = std::io::Error;
 
     fn encode(&mut self, item: T, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let bytes = bincode2::serialize(&item)
@@ -51,7 +57,7 @@ impl<T: Serialize> Encoder<T> for SerializingCodec<T> {
 
 impl<T: DeserializeOwned> Decoder for SerializingCodec<T> {
     type Item = T;
-    type Error = CodecError;
+    type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let bytes = self.inner.decode(src).map_err(|rr| CodecError {
