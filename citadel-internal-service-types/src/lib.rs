@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
 
+pub mod service;
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectSuccess {
     pub cid: u64,
@@ -117,6 +119,7 @@ pub struct DeleteVirtualFileFailure {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PeerConnectSuccess {
     pub cid: u64,
+    pub peer_cid: u64,
     pub request_id: Option<Uuid>,
 }
 
@@ -361,7 +364,7 @@ pub struct GroupKickFailure {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GroupListGroupsSuccess {
     pub cid: u64,
-    pub peer_cid: u64,
+    pub peer_cid: Option<u64>,
     pub group_list: Option<Vec<MessageGroupKey>>,
     pub request_id: Option<Uuid>,
 }
@@ -560,7 +563,7 @@ pub struct FileTransferStatusNotification {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileTransferTickNotification {
     pub cid: u64,
-    pub peer_cid: u64,
+    pub peer_cid: Option<u64>,
     pub status: ObjectTransferStatus,
     pub request_id: Option<Uuid>,
 }
@@ -817,7 +820,7 @@ pub enum InternalServiceRequest {
     },
     GroupListGroupsFor {
         cid: u64,
-        peer_cid: u64,
+        peer_cid: Option<u64>,
         request_id: Uuid,
     },
     GroupRequestJoin {

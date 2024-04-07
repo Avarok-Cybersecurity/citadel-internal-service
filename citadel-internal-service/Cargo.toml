@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
+default = []
 vendored = ["citadel_sdk/vendored"]
 
 [dependencies]
@@ -21,9 +22,9 @@ uuid = { workspace = true, features = [
     "fast-rng",          # Use a faster (but still sufficiently random) RNG
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ]}
-citadel_logging = {workspace = true}
-bytes = {workspace = true}
-async-recursion = {workspace = true}
+citadel_logging = { workspace = true }
+bytes = { workspace = true }
+async-recursion = { workspace = true }
 
 [dev-dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }

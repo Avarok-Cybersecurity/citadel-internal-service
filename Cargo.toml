@@ -22,9 +22,9 @@ citadel-internal-service-connector = { path = "./citadel-internal-service-connec
 citadel-internal-service-macros = { path = "./citadel-internal-service-macros", default-features = false, version = "0.1.0" }
 
 # Avarok deps
-citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol" }
-citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", default-features = false }
+citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol/" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol/" }
+citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol/" }
 
 # Standard deps
 serde = { version = "1.0.104", features = ["derive"] }
@@ -42,3 +42,4 @@ anyhow = "1.0.71"
 async-recursion = { version = "1.0.4" }
 parking_lot = { version = "0.12.1" }
 structopt = { version = "0.3.26" }
+lazy_static = "1.4.0"

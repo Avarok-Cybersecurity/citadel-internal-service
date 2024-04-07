@@ -1,21 +1,35 @@
 use crate::util;
 use crate::util::{WrappedSink, WrappedStream};
+use crate::codec::SerializingCodec;
+use crate::io_interface::IOInterface;
 use citadel_internal_service_types::{
     ConnectMode, ConnectSuccess, InternalServicePayload, InternalServiceRequest,
     InternalServiceResponse, PeerConnectSuccess, PeerRegisterSuccess, RegisterSuccess, SecBuffer,
     SessionSecuritySettings, UdpMode,
 };
-use futures::{SinkExt, StreamExt};
+use futures::{Sink, Stream, StreamExt};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use uuid::Uuid;
+use tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
 
-pub struct InternalServiceConnector {
-    pub sink: WrappedSink,
-    pub stream: WrappedStream,
+
+pub struct InternalServiceConnector<T: IOInterface> {
+    pub sink: WrappedSink<T>,
+    pub stream: WrappedStream<T>,
+}
+
+pub struct WrappedStream<T: IOInterface> {
+    pub inner: T::Stream,
+}
+
+pub struct WrappedSink<T: IOInterface> {
+    pub inner: T::Sink,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +71,70 @@ macro_rules! scan_for_response {
         }
     }};
 }
+
+impl<T: IOInterface> Stream for WrappedStream<T> {
+    pub struct WrappedStream {
+        pub(crate) inner: SplitStream<Framed<TcpStream, SerializingCodec<InternalServicePayload>>>,
+    }
+
+    pub struct WrappedSink {
+        pub(crate) inner: SplitSink<
+            Framed<TcpStream, SerializingCodec<InternalServicePayload>>,
+            InternalServicePayload,
+        >,
+    }
+
+    impl Stream for WrappedStream {
+        type Item = InternalServiceResponse;
+
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let item = futures::ready!(self.inner.poll_next_unpin(cx));
+            match item {
+                Some(Ok(InternalServicePayload::Response(response))) => Poll::Ready(Some(response)),
+                _ => Poll::Ready(None),
+            }
+        }
+    }
+
+    impl<T: IOInterface> Sink<InternalServiceRequest> for WrappedSink<T> {
+        type Error = std::io::Error;
+
+        fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Pin::new(&mut self.inner).poll_ready(cx)
+        }
+
+        fn start_send(
+            mut self: Pin<&mut Self>,
+            item: InternalServiceRequest,
+        ) -> Result<(), Self::Error> {
+            Pin::new(&mut self.inner).start_send(InternalServicePayload::Request(item))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Pin::new(&mut self.inner).poll_flush(cx)
+        }
+
+        fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Pin::new(&mut self.inner).poll_close(cx)
+        }
+    }
+
+    pub fn wrap_tcp_conn(
+        conn: TcpStream,
+    ) -> Framed<TcpStream, SerializingCodec<InternalServicePayload>> {
+        let length_delimited = LengthDelimitedCodec::builder()
+            .length_field_offset(0) // default value
+            .max_frame_length(1024 * 1024 * 64) // 64 MB
+            .length_field_type::<u32>()
+            .length_adjustment(0)
+            .new_codec();
+
+        let serializing_codec = SerializingCodec {
+            inner: length_delimited,
+            _pd: std::marker::PhantomData,
+        };
+        serializing_codec.framed(conn)
+    }
 
 impl InternalServiceConnector {
     /// Establishes a connection with the Internal Service running at the given address. Returns an
