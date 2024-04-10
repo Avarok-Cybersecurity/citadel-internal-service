@@ -36,11 +36,11 @@ pub async fn handle<T: IOInterface>(
     if let Some(cid) = cid {
         let account = filtered_accounts.into_iter().find(|r| r.cid == cid);
         if let Some(account) = account {
-            add_account_to_map(&mut accounts_ret, account, remote).await;
+            add_account_to_map(&mut accounts_ret, account, remote, request_id).await;
         }
     } else {
         for account in filtered_accounts {
-            add_account_to_map(&mut accounts_ret, account, remote).await;
+            add_account_to_map(&mut accounts_ret, account, remote, request_id).await;
         }
     }
 
@@ -56,6 +56,7 @@ async fn add_account_to_map(
     accounts_ret: &mut HashMap<u64, AccountInformation>,
     account: CNACMetadata,
     remote: &NodeRemote,
+    request_id: Uuid,
 ) {
     let username = account.username.clone();
     let full_name = account.full_name.clone();
@@ -93,6 +94,7 @@ async fn add_account_to_map(
             username,
             full_name,
             peers,
+            request_id: Some(request_id),
         },
     );
 }

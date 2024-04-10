@@ -268,6 +268,7 @@ impl<T: IOInterface> NetKernel for CitadelWorkspaceService<T> {
                     if let Some(HandledRequestResult { response, uuid }) =
                         handle_request(&this, conn_id, command).await
                     {
+                        info!(target: "citadel", "Sending response to TCP client: {response:?}");
                         if let Err(err) =
                             send_response_to_tcp_client(&this.tcp_connection_map, response, uuid)
                                 .await
@@ -368,6 +369,7 @@ fn spawn_tick_updater(
                                 cid: implicated_cid,
                                 peer_cid,
                                 status: status_message,
+                                request_id: None,
                             },
                         );
                         match entry.send(message.clone()) {

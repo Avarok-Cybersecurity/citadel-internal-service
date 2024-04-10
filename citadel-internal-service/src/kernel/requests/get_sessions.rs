@@ -25,6 +25,7 @@ pub async fn handle<T: IOInterface>(
             let mut session = SessionInformation {
                 cid: *cid,
                 peer_connections: HashMap::new(),
+                request_id: Some(request_id),
             };
             for (peer_cid, conn) in connection.peers.iter() {
                 session.peer_connections.insert(

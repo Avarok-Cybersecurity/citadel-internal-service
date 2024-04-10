@@ -53,6 +53,7 @@ pub async fn handle<T: IOInterface>(
                         cid: implicated_cid,
                         peer_cid,
                         metadata,
+                        request_id: None,
                     },
                 );
 
