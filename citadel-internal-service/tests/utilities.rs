@@ -7,9 +7,11 @@ mod tests {
     use citadel_internal_service_connector::connector::{ClientError, InternalServiceConnector};
     use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
     use citadel_internal_service_connector::scan_for_response;
-    use citadel_internal_service_types::InternalServiceResponse::PeerConnectSuccess;
-    use citadel_internal_service_types::{ConnectSuccess, InternalServiceResponse};
+    use citadel_internal_service_types::{
+        ConnectSuccess, InternalServiceResponse, MessageNotification,
+    };
     use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, SecBuffer};
+    use futures::StreamExt;
     use std::error::Error;
     use std::net::SocketAddr;
     use std::str::FromStr;
@@ -106,11 +108,44 @@ mod tests {
         } else {
             panic!("Peer Register and Connect Error")
         }
-        // service_connector_0.peer_register_with_defaults(cid_0, cid_1).await?;
-        // service_connector_1.peer_register_with_defaults(cid_1, cid_0).await?;
-        //
-        // service_connector_0.peer_connect_with_defaults(cid_0, cid_1).await?;
-        // service_connector_1.peer_connect_with_defaults(cid_1, cid_0).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_utilities_peer_message() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+        let (mut service_connector_0, cid_0) = connector_service_and_server(
+            server_bind_address,
+            SocketAddr::from_str("127.0.0.1:23457")?,
+            "name 0",
+            "username0",
+            "password0",
+        )
+        .await?;
+        let (mut service_connector_1, cid_1) = connector_service_and_server(
+            server_bind_address,
+            SocketAddr::from_str("127.0.0.1:23458")?,
+            "name 1",
+            "username1",
+            "password1",
+        )
+        .await?;
+
+        service_connector_0
+            .message_with_defaults(cid_0, Some(cid_1), "Test Message".to_string().into_bytes())
+            .await?;
+        let InternalServiceResponse::MessageNotification(MessageNotification {
+            message,
+            cid: _,
+            peer_cid: _,
+            request_id: _,
+        }) = scan_for_response!(
+            service_connector_1.stream,
+            InternalServiceResponse::MessageNotification(..)
+        );
+        citadel_logging::info!(target: "citadel", "Peer 1 received message: {message:?}");
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 use crate::connector::*; //{wrap_tcp_conn, InternalServiceConnector, WrappedSink, WrappedStream, scan_for_response};
 use crate::scan_for_response;
 use async_trait::async_trait;
-use citadel_internal_service_types::InternalServicePayload;
+use citadel_internal_service_types::{InternalServicePayload, MessageSendSuccess, SecurityLevel};
 use futures::stream::{SplitSink, SplitStream};
 use futures::SinkExt;
 use tokio::net::TcpListener;
@@ -214,7 +214,6 @@ impl InternalServiceConnector<TcpIOInterface> {
             panic!("Unreachable")
         };
         Ok(success)
-        // Ok(PeerRegisterSuccess{cid: 0, peer_cid: 1, peer_username: "peer".to_string(), request_id: None})
     }
 
     /// Sends a request to register with peer with CID peer_cid. Uses the default values except for
@@ -252,7 +251,6 @@ impl InternalServiceConnector<TcpIOInterface> {
             panic!("Unreachable")
         };
         Ok(success)
-        // Ok(PeerConnectSuccess{cid: 0, peer_cid: 1, request_id: None})
     }
 
     /// Sends a request to register with peer with CID peer_cid. Sends a request to
@@ -293,7 +291,6 @@ impl InternalServiceConnector<TcpIOInterface> {
             panic!("Unreachable")
         };
         Ok(success)
-        // Ok(PeerConnectSuccess{cid: 0, peer_cid: 1, request_id: None})
     }
 
     /// Sends a request to connect to peer with CID peer_cid. Uses default values for connection
@@ -305,6 +302,47 @@ impl InternalServiceConnector<TcpIOInterface> {
         peer_cid: S,
     ) -> Result<PeerConnectSuccess, ClientError> {
         self.peer_connect(cid, peer_cid, Default::default(), Default::default())
+            .await
+    }
+
+    /// Sends a message to given Peer or server if no peer CID was given. Returns a
+    /// Result with an InternalServiceResponse that specifies whether or not the request
+    /// was successfully sent.
+    pub async fn message<S: Into<u64>>(
+        &mut self,
+        cid: S,
+        peer_cid: Option<S>,
+        message: Vec<u8>,
+        security_level: SecurityLevel,
+    ) -> Result<MessageSendSuccess, ClientError> {
+        let peer_cid = peer_cid.map(|i| i.into());
+        let outbound_request = InternalServiceRequest::Message {
+            request_id: Uuid::new_v4(),
+            message,
+            cid: cid.into(),
+            peer_cid,
+            security_level,
+        };
+
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::MessageSendSuccess(success) =
+            scan_for_response!(self.stream, InternalServiceResponse::MessageSendSuccess(..))
+        else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Sends a message to given Peer or server if no peer CID was given. Uses the default
+    /// security level. Returns a Result with an InternalServiceResponse that specifies whether
+    /// or not the request was successfully sent.
+    pub async fn message_with_defaults<S: Into<u64>>(
+        &mut self,
+        cid: S,
+        peer_cid: Option<S>,
+        message: Vec<u8>,
+    ) -> Result<MessageSendSuccess, ClientError> {
+        self.message(cid, peer_cid, message, Default::default())
             .await
     }
 
