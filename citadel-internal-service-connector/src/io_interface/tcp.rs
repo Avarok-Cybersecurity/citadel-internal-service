@@ -1,7 +1,10 @@
 use crate::connector::*; //{wrap_tcp_conn, InternalServiceConnector, WrappedSink, WrappedStream, scan_for_response};
 use crate::scan_for_response;
 use async_trait::async_trait;
-use citadel_internal_service_types::{InternalServicePayload, MessageSendSuccess, SecurityLevel};
+use citadel_internal_service_types::{
+    DisconnectSuccess, InternalServicePayload, MessageSendSuccess, PeerDisconnectSuccess,
+    SecurityLevel,
+};
 use futures::stream::{SplitSink, SplitStream};
 use futures::SinkExt;
 use tokio::net::TcpListener;
@@ -60,7 +63,7 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a request to register at server running at the given address. Returns a Result with
-    /// an InternalServiceResponse that specifies whether or not the request was successfully sent.
+    /// a RegisterSuccess on success or ClientError on failure.
     pub async fn register<U: Into<SocketAddr>, S: Into<String>, R: Into<SecBuffer>>(
         &mut self,
         server_address: U,
@@ -89,8 +92,8 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a request to register at server running at the given address. Uses the default values
-    /// except for proposed credentials and the target server's address. Returns a Result with an
-    /// InternalServiceResponse that specifies whether or not the request was successfully sent.
+    /// except for proposed credentials and the target server's address. Returns a Result with a
+    /// RegisterSuccess on success or ClientError on failure.
     pub async fn register_with_defaults<
         U: Into<SocketAddr>,
         S: Into<String>,
@@ -113,8 +116,8 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a request to register at server running at the given address. Sends a request to
-    /// connect immediately following a successful registration. Returns a Result with an
-    /// InternalServiceResponse that specifies whether or not the request was successfully sent.
+    /// connect immediately following a successful registration. Returns a Result with a
+    /// ConnectSuccess on success or ClientError on failure.
     pub async fn register_and_connect<U: Into<SocketAddr>, S: Into<String>, R: Into<SecBuffer>>(
         &mut self,
         server_address: U,
@@ -142,8 +145,7 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a request to connect to the current server with the given credentials. Returns a
-    /// Result with an InternalServiceResponse that specifies whether or not the request
-    /// was successfully sent.
+    /// Result with a ConnectSuccess on success or ClientError on failure.
     pub async fn connect<S: Into<String>, R: Into<SecBuffer>>(
         &mut self,
         username: S,
@@ -172,8 +174,8 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a request to connect to the current server with the given credentials. Uses default
-    /// values for all parameters other than credentials. Returns a Result with an
-    /// InternalServiceResponse that specifies whether or not the request was successfully sent.
+    /// values for all parameters other than credentials. Returns a Result with a ConnectSuccess
+    /// on success or ClientError on failure.
     pub async fn connect_with_defaults<S: Into<String>, R: Into<SecBuffer>>(
         &mut self,
         username: S,
@@ -190,8 +192,8 @@ impl InternalServiceConnector<TcpIOInterface> {
         .await
     }
 
-    /// Sends a request to register with peer with CID peer_cid. Returns a Result with an
-    /// InternalServiceResponse that specifies whether or not the request was successfully sent.
+    /// Sends a request to register with peer with CID peer_cid. Returns a Result with a
+    /// PeerRegisterSuccess on success or ClientError on failure.
     pub async fn peer_register<S: Into<u64>>(
         &mut self,
         cid: S,
@@ -217,8 +219,8 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a request to register with peer with CID peer_cid. Uses the default values except for
-    /// proposed credentials. Returns a Result with an InternalServiceResponse that specifies
-    /// whether or not the request was successfully sent.
+    /// proposed credentials. Returns a Result with a PeerRegisterSuccess on success or
+    /// ClientError on failure.
     pub async fn peer_register_with_defaults<S: Into<u64>>(
         &mut self,
         cid: S,
@@ -228,8 +230,8 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a request to register with peer with CID peer_cid. Sends a request to
-    /// connect immediately following a successful registration. Returns a Result with an
-    /// InternalServiceResponse that specifies whether or not the request was successfully sent.
+    /// connect immediately following a successful registration. Returns a Result with a
+    /// PeerConnectSuccess on success or ClientError on failure.
     pub async fn peer_register_and_connect<S: Into<u64>>(
         &mut self,
         cid: S,
@@ -255,8 +257,8 @@ impl InternalServiceConnector<TcpIOInterface> {
 
     /// Sends a request to register with peer with CID peer_cid. Sends a request to
     /// connect immediately following a successful registration. Requests use the default
-    /// SessionSecuritySettings Value. Returns a Result with an InternalServiceResponse that
-    /// specifies whether or not the request was successfully sent.
+    /// SessionSecuritySettings Value. Returns a Result with a PeerConnectSuccess on
+    /// success or ClientError on failure.
     pub async fn peer_register_and_connect_with_defaults<S: Into<u64>>(
         &mut self,
         cid: S,
@@ -267,8 +269,7 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a request to connect to peer with CID peer_cid. Returns a
-    /// Result with an InternalServiceResponse that specifies whether or not the request
-    /// was successfully sent.
+    /// Result with a PeerConnectSuccess on success or ClientError on failure.
     pub async fn peer_connect<S: Into<u64>>(
         &mut self,
         cid: S,
@@ -294,8 +295,7 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a request to connect to peer with CID peer_cid. Uses default values for connection
-    /// parameters. Returns a Result with an InternalServiceResponse that specifies whether or
-    /// not the request was successfully sent.
+    /// parameters. Returns a Result with a PeerConnectSuccess on success or ClientError on failure.
     pub async fn peer_connect_with_defaults<S: Into<u64>>(
         &mut self,
         cid: S,
@@ -306,8 +306,7 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a message to given Peer or server if no peer CID was given. Returns a
-    /// Result with an InternalServiceResponse that specifies whether or not the request
-    /// was successfully sent.
+    /// Result with a MessageSendSuccess on success or ClientError on failure.
     pub async fn message<S: Into<u64>>(
         &mut self,
         cid: S,
@@ -334,8 +333,8 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 
     /// Sends a message to given Peer or server if no peer CID was given. Uses the default
-    /// security level. Returns a Result with an InternalServiceResponse that specifies whether
-    /// or not the request was successfully sent.
+    /// security level. Returns a Result with a MessageSendSuccess on success or ClientError
+    /// on failure.
     pub async fn message_with_defaults<S: Into<u64>>(
         &mut self,
         cid: S,
@@ -344,6 +343,47 @@ impl InternalServiceConnector<TcpIOInterface> {
     ) -> Result<MessageSendSuccess, ClientError> {
         self.message(cid, peer_cid, message, Default::default())
             .await
+    }
+
+    /// Disconnects from connected server. Returns a Result with a DisconnectSuccess on success
+    /// or ClientError on failure.
+    pub async fn disconnect<S: Into<u64>>(
+        &mut self,
+        cid: S,
+    ) -> Result<DisconnectSuccess, ClientError> {
+        let outbound_request = InternalServiceRequest::Disconnect {
+            request_id: Uuid::new_v4(),
+            cid: cid.into(),
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::DisconnectSuccess(success) =
+            scan_for_response!(self.stream, InternalServiceResponse::DisconnectSuccess(..))
+        else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Disconnects from the given peer. Returns a Result with a PeerDisconnectSuccess on
+    /// success or ClientError on failure.
+    pub async fn peer_disconnect<S: Into<u64>>(
+        &mut self,
+        cid: S,
+        peer_cid: S,
+    ) -> Result<PeerDisconnectSuccess, ClientError> {
+        let outbound_request = InternalServiceRequest::PeerDisconnect {
+            request_id: Uuid::new_v4(),
+            cid: cid.into(),
+            peer_cid: peer_cid.into(),
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::PeerDisconnectSuccess(success) = scan_for_response!(
+            self.stream,
+            InternalServiceResponse::PeerDisconnectSuccess(..)
+        ) else {
+            panic!("Unreachable")
+        };
+        Ok(success)
     }
 
     /// Sends a raw request to the internal service

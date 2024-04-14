@@ -70,6 +70,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_utilities_disconnect() -> Result<(), ClientError> {
+        crate::common::setup_log();
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+        let (mut service_connector_0, cid_0) = connector_service_and_server(
+            server_bind_address,
+            SocketAddr::from_str("127.0.0.1:23457").unwrap(),
+            "name 0",
+            "username0",
+            "password0",
+        )
+        .await?;
+        service_connector_0.disconnect(cid_0).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_utilities_peer_register_and_connect() -> Result<(), ClientError> {
         crate::common::setup_log();
         let (server, server_bind_address) = server_info_skip_cert_verification();

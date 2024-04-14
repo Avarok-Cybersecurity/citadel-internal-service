@@ -71,6 +71,12 @@ pub struct DisconnectNotification {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DisconnectSuccess {
+    pub cid: u64,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DisconnectFailure {
     pub cid: u64,
     pub message: String,
@@ -579,6 +585,7 @@ pub enum InternalServiceResponse {
     MessageSendFailure(MessageSendFailure),
     MessageNotification(MessageNotification),
     DisconnectNotification(DisconnectNotification),
+    DisconnectSuccess(DisconnectSuccess),
     DisconnectFailure(DisconnectFailure),
     SendFileRequestSuccess(SendFileRequestSuccess),
     SendFileRequestFailure(SendFileRequestFailure),

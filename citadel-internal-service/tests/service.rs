@@ -68,7 +68,7 @@ mod tests {
 
             assert!(matches!(
                 disconnect_response,
-                InternalServiceResponse::DisconnectNotification { .. }
+                InternalServiceResponse::DisconnectSuccess { .. }
             ));
 
             Ok(())
@@ -169,7 +169,7 @@ mod tests {
 
             assert!(matches!(
                 disconnect_response,
-                InternalServiceResponse::DisconnectNotification { .. }
+                InternalServiceResponse::DisconnectSuccess { .. }
             ));
 
             Ok(())
