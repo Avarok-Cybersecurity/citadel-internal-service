@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_internal_service_macros::{IsError, IsNotification};
+use citadel_internal_service_macros::{IsError, IsNotification, RequestId};
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -37,7 +37,9 @@ pub struct RegisterFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceConnectionAccepted;
+pub struct ServiceConnectionAccepted {
+    pub request_id: Option<Uuid>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MessageSendSuccess {
@@ -65,6 +67,12 @@ pub struct MessageNotification {
 pub struct DisconnectNotification {
     pub cid: u64,
     pub peer_cid: Option<u64>,
+    pub request_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DisconnectSuccess {
+    pub cid: u64,
     pub request_id: Option<Uuid>,
 }
 
@@ -545,6 +553,7 @@ pub struct FileTransferRequestNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub metadata: VirtualObjectMetadata,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -562,9 +571,10 @@ pub struct FileTransferTickNotification {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub status: ObjectTransferStatus,
+    pub request_id: Option<Uuid>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification)]
+#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification, RequestId)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectFailure(ConnectFailure),
@@ -575,6 +585,7 @@ pub enum InternalServiceResponse {
     MessageSendFailure(MessageSendFailure),
     MessageNotification(MessageNotification),
     DisconnectNotification(DisconnectNotification),
+    DisconnectSuccess(DisconnectSuccess),
     DisconnectFailure(DisconnectFailure),
     SendFileRequestSuccess(SendFileRequestSuccess),
     SendFileRequestFailure(SendFileRequestFailure),
@@ -830,6 +841,7 @@ pub enum InternalServiceRequest {
 pub struct SessionInformation {
     pub cid: u64,
     pub peer_connections: HashMap<u64, PeerSessionInformation>,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -843,6 +855,7 @@ pub struct AccountInformation {
     pub username: String,
     pub full_name: String,
     pub peers: HashMap<u64, PeerSessionInformation>,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -891,5 +904,15 @@ mod tests {
             });
         assert!(!success_response.is_notification());
         assert!(notification_response.is_notification());
+    }
+
+    #[test]
+    fn test_request_id_macro() {
+        let request_id = Uuid::new_v4();
+        let response = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
+            cid: 0,
+            request_id: Some(request_id),
+        });
+        assert_eq!(response.request_id(), Some(&request_id));
     }
 }

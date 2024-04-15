@@ -2,7 +2,7 @@ use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
-    DisconnectFailure, DisconnectNotification, InternalServiceRequest, InternalServiceResponse,
+    DisconnectFailure, DisconnectSuccess, InternalServiceRequest, InternalServiceResponse,
 };
 use citadel_logging::info;
 use citadel_sdk::prelude::{DisconnectFromHypernode, NodeRequest};
@@ -27,9 +27,8 @@ pub async fn handle<T: IOInterface>(
     match remote.send(request).await {
         Ok(_res) => {
             let disconnect_success =
-                InternalServiceResponse::DisconnectNotification(DisconnectNotification {
+                InternalServiceResponse::DisconnectSuccess(DisconnectSuccess {
                     cid,
-                    peer_cid: None,
                     request_id: Some(request_id),
                 });
             Some(HandledRequestResult {

@@ -1,3 +1,4 @@
+use crate::connector::ClientError;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::error::Error;
@@ -34,6 +35,18 @@ impl From<std::io::Error> for CodecError {
 impl From<CodecError> for std::io::Error {
     fn from(value: CodecError) -> Self {
         std::io::Error::new(std::io::ErrorKind::Other, value.reason)
+    }
+}
+
+impl From<CodecError> for ClientError {
+    fn from(value: CodecError) -> Self {
+        ClientError::CodecError(value.reason)
+    }
+}
+
+impl From<std::io::Error> for ClientError {
+    fn from(value: std::io::Error) -> Self {
+        ClientError::SendError(value.to_string())
     }
 }
 

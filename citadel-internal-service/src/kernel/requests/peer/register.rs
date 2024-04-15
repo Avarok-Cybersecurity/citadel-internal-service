@@ -35,6 +35,17 @@ pub async fn handle<T: IOInterface>(
 
     let response = match client_to_server_remote.propose_target(cid, peer_cid).await {
         Ok(symmetric_identifier_handle_ref) => {
+            // let peer_command = NodeRequest::PeerCommand(PeerCommand {
+            //     implicated_cid,
+            //     command: PeerSignal::PostRegister {
+            //         peer_conn_type: PeerConnectionType::LocalGroupPeer { implicated_cid: cid, peer_cid },
+            //         inviter_username: symmetric_identifier_handle_ref.remote().account_manager().get_username_by_cid(cid).await.unwrap().ok_or_else(|| NetworkError::msg("Unable to find username for local user")).unwrap(),
+            //         invitee_username: symmetric_identifier_handle_ref.target_username().cloned(),
+            //         ticket_opt: None,
+            //         invitee_response: None,
+            //     },
+            // });
+            // symmetric_identifier_handle_ref.send(peer_command).await?;
             match symmetric_identifier_handle_ref.register_to_peer().await {
                 Ok(_peer_register_success) => {
                     let account_manager = symmetric_identifier_handle_ref.account_manager();

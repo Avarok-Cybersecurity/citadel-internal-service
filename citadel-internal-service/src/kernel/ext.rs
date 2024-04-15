@@ -27,7 +27,9 @@ pub trait IOInterfaceExt: IOInterface {
         tokio::task::spawn(async move {
             let write_task = async move {
                 let response =
-                    InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted);
+                    InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
+                        request_id: None,
+                    });
 
                 if let Err(err) = sink_send_payload::<Self>(response, &mut sink).await {
                     error!(target: "citadel", "Failed to send to client: {err:?}");

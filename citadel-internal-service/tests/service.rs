@@ -68,7 +68,7 @@ mod tests {
 
             assert!(matches!(
                 disconnect_response,
-                InternalServiceResponse::DisconnectNotification { .. }
+                InternalServiceResponse::DisconnectSuccess { .. }
             ));
 
             Ok(())
@@ -169,7 +169,7 @@ mod tests {
 
             assert!(matches!(
                 disconnect_response,
-                InternalServiceResponse::DisconnectNotification { .. }
+                InternalServiceResponse::DisconnectSuccess { .. }
             ));
 
             Ok(())
@@ -219,7 +219,7 @@ mod tests {
 
         // begin mocking the GUI/CLI access
         let (mut sink, mut stream) =
-            InternalServiceConnector::connect(bind_address_internal_service)
+            InternalServiceConnector::connect_to_service(bind_address_internal_service)
                 .await?
                 .split();
 

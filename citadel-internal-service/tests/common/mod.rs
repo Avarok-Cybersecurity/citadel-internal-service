@@ -89,9 +89,10 @@ pub async fn register_and_connect_to_server<
     )> = Vec::new();
 
     for item in services_to_create {
-        let (mut sink, mut stream) = InternalServiceConnector::connect(item.internal_service_addr)
-            .await?
-            .split();
+        let (mut sink, mut stream) =
+            InternalServiceConnector::connect_to_service(item.internal_service_addr)
+                .await?
+                .split();
 
         let username = item.username.into();
         let full_name = item.full_name.into();
@@ -573,6 +574,7 @@ pub async fn exhaust_stream_to_file_completion(
                     cid: _,
                     peer_cid: _,
                     status,
+                    request_id: _,
                 },
             ) => match status {
                 ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {

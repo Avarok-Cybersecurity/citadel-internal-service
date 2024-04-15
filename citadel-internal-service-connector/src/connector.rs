@@ -4,6 +4,8 @@ use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
 use futures::{Sink, Stream, StreamExt};
+use std::error::Error;
+use std::fmt::{Display, Formatter};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::net::TcpStream;
@@ -20,6 +22,47 @@ pub struct WrappedStream<T: IOInterface> {
 
 pub struct WrappedSink<T: IOInterface> {
     pub inner: T::Sink,
+}
+
+#[derive(Debug, Clone)]
+pub enum ClientError {
+    ConnectionToInternalServiceFailed(String),
+    InternalServiceDisconnected,
+    InternalServiceInvalidResponse(String),
+    CodecError(String),
+    SendError(String),
+}
+
+impl Display for ClientError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self, f)
+    }
+}
+
+impl Error for ClientError {}
+
+#[macro_export]
+macro_rules! scan_for_response {
+    ($stream:expr, $required_packet:pat) => {{
+        loop {
+            match $stream.next().await {
+                Some(response) => {
+                    if response.is_error() {
+                        return Err(ClientError::InternalServiceInvalidResponse(format!(
+                            "{response:?}"
+                        )));
+                    }
+
+                    if matches!(response, $required_packet) {
+                        break response;
+                    }
+
+                    citadel_logging::trace!("Service Connector - Unrelated response: {response:?}");
+                }
+                None => return Err(ClientError::InternalServiceDisconnected)?,
+            }
+        }
+    }};
 }
 
 impl<T: IOInterface> Stream for WrappedStream<T> {
