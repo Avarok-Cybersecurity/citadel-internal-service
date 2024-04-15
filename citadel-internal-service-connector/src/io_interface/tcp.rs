@@ -1,23 +1,22 @@
-use crate::connector::*; //{wrap_tcp_conn, InternalServiceConnector, WrappedSink, WrappedStream, scan_for_response};
+use crate::connector::*;
 use crate::scan_for_response;
 use async_trait::async_trait;
-use citadel_internal_service_types::{
-    DisconnectSuccess, InternalServicePayload, MessageSendSuccess, PeerDisconnectSuccess,
-    SecurityLevel,
-};
+// use citadel_internal_service_types::{DisconnectSuccess, InternalServicePayload, MessageSendSuccess, PeerDisconnectSuccess, SecurityLevel, SendFileRequestSuccess, TransferType};
 use futures::stream::{SplitSink, SplitStream};
 use futures::SinkExt;
 use tokio::net::TcpListener;
 
 use crate::codec::SerializingCodec;
 use crate::io_interface::IOInterface;
-use citadel_internal_service_types::{
-    ConnectMode, ConnectSuccess, InternalServiceRequest, InternalServiceResponse,
-    PeerConnectSuccess, PeerRegisterSuccess, RegisterSuccess, SecBuffer, SessionSecuritySettings,
-    UdpMode,
-};
+// use citadel_internal_service_types::{
+//     ConnectMode, ConnectSuccess, InternalServiceRequest, InternalServiceResponse,
+//     PeerConnectSuccess, PeerRegisterSuccess, RegisterSuccess, SecBuffer, SessionSecuritySettings,
+//     UdpMode,
+// };
+use citadel_internal_service_types::*;
 use futures::StreamExt;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio_util::codec::Framed;
@@ -380,6 +379,242 @@ impl InternalServiceConnector<TcpIOInterface> {
         let InternalServiceResponse::PeerDisconnectSuccess(success) = scan_for_response!(
             self.stream,
             InternalServiceResponse::PeerDisconnectSuccess(..)
+        ) else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Requests to Send a file to the given peer or server if no peer CID was given. Allows for
+    /// the chunk size to be controlled. Returns a Result with a SendFileRequestSuccess
+    /// on success or Client Error on failure.
+    pub async fn file_send<S: Into<u64>, R: Into<PathBuf>>(
+        &mut self,
+        cid: S,
+        peer_cid: Option<S>,
+        source: R,
+        chunk_size: Option<usize>,
+    ) -> Result<SendFileRequestSuccess, ClientError> {
+        let outbound_request = InternalServiceRequest::SendFile {
+            request_id: Uuid::new_v4(),
+            source: source.into(),
+            cid: cid.into(),
+            peer_cid: peer_cid.map(|i| i.into()),
+            chunk_size,
+            transfer_type: TransferType::FileTransfer,
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::SendFileRequestSuccess(success) = scan_for_response!(
+            self.stream,
+            InternalServiceResponse::SendFileRequestSuccess(..)
+        ) else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Requests to Send a file to the given peer or server if no peer CID was given. Uses the
+    /// default chunk size. Returns a Result with a SendFileRequestSuccess
+    /// on success or Client Error on failure.
+    pub async fn file_send_with_defaults<S: Into<u64>, R: Into<PathBuf>>(
+        &mut self,
+        cid: S,
+        peer_cid: Option<S>,
+        source: R,
+    ) -> Result<SendFileRequestSuccess, ClientError> {
+        let outbound_request = InternalServiceRequest::SendFile {
+            request_id: Uuid::new_v4(),
+            source: source.into(),
+            cid: cid.into(),
+            peer_cid: peer_cid.map(|i| i.into()),
+            chunk_size: None,
+            transfer_type: TransferType::FileTransfer,
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::SendFileRequestSuccess(success) = scan_for_response!(
+            self.stream,
+            InternalServiceResponse::SendFileRequestSuccess(..)
+        ) else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Respond to a File Transfer Request by accepting or declining. A Download Location can be
+    /// given for the received file. Returns a Result with a SendFileRequestSuccess
+    /// on success or Client Error on failure.
+    pub async fn respond_file_transfer<S: Into<u64>, R: Into<PathBuf>>(
+        &mut self,
+        cid: S,
+        peer_cid: S,
+        object_id: u64,
+        accept: bool,
+        download_location: Option<R>,
+    ) -> Result<FileTransferStatusNotification, ClientError> {
+        let outbound_request = InternalServiceRequest::RespondFileTransfer {
+            request_id: Uuid::new_v4(),
+            cid: cid.into(),
+            peer_cid: peer_cid.into(),
+            object_id,
+            accept,
+            download_location: download_location.map(|i| i.into()),
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::FileTransferStatusNotification(success) = scan_for_response!(
+            self.stream,
+            InternalServiceResponse::FileTransferStatusNotification(..)
+        ) else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Respond to a File Transfer Request by accepting or declining. Download Location is set to
+    /// Default. Returns a Result with a SendFileRequestSuccess on success or Client Error
+    /// on failure.
+    pub async fn respond_file_transfer_with_defaults<S: Into<u64>>(
+        &mut self,
+        cid: S,
+        peer_cid: S,
+        object_id: u64,
+        accept: bool,
+    ) -> Result<FileTransferStatusNotification, ClientError> {
+        let outbound_request = InternalServiceRequest::RespondFileTransfer {
+            request_id: Uuid::new_v4(),
+            cid: cid.into(),
+            peer_cid: peer_cid.into(),
+            object_id,
+            accept,
+            download_location: None,
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::FileTransferStatusNotification(success) = scan_for_response!(
+            self.stream,
+            InternalServiceResponse::FileTransferStatusNotification(..)
+        ) else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Requests to Send a file for REVFS (Remote Encrypted Virtual File System) at the given peer
+    /// or server if no peer CID was given. Allows for the chunk size to be controlled. Returns a
+    /// Result with a SendFileRequestSuccess on success or Client Error on failure.
+    pub async fn revfs_push<S: Into<u64>, R: Into<PathBuf>>(
+        &mut self,
+        cid: S,
+        peer_cid: Option<S>,
+        source: R,
+        chunk_size: Option<usize>,
+        virtual_path: R,
+        security_level: SecurityLevel,
+    ) -> Result<SendFileRequestSuccess, ClientError> {
+        let outbound_request = InternalServiceRequest::SendFile {
+            request_id: Uuid::new_v4(),
+            source: source.into(),
+            cid: cid.into(),
+            peer_cid: peer_cid.map(|i| i.into()),
+            chunk_size,
+            transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
+                virtual_path: virtual_path.into(),
+                security_level,
+            },
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::SendFileRequestSuccess(success) = scan_for_response!(
+            self.stream,
+            InternalServiceResponse::SendFileRequestSuccess(..)
+        ) else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Requests to Send a file for REVFS (Remote Encrypted Virtual File System) at the given peer
+    /// or server if no peer CID was given. Allows for the chunk size to be controlled. Returns a
+    /// Result with a SendFileRequestSuccess on success or Client Error on failure.
+    pub async fn revfs_push_with_defaults<S: Into<u64>, R: Into<PathBuf>>(
+        &mut self,
+        cid: S,
+        peer_cid: Option<S>,
+        source: R,
+        virtual_path: R,
+    ) -> Result<SendFileRequestSuccess, ClientError> {
+        let outbound_request = InternalServiceRequest::SendFile {
+            request_id: Uuid::new_v4(),
+            source: source.into(),
+            cid: cid.into(),
+            peer_cid: peer_cid.map(|i| i.into()),
+            chunk_size: None,
+            transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
+                virtual_path: virtual_path.into(),
+                security_level: Default::default(),
+            },
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::SendFileRequestSuccess(success) = scan_for_response!(
+            self.stream,
+            InternalServiceResponse::SendFileRequestSuccess(..)
+        ) else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Downloads a file from REVFS (Remote Encrypted Virtual File System) at the given peer
+    /// or server if no peer CID was given. Uses a custom Security Level and can delete the file
+    /// upon pulling. Returns a Result with a SendFileRequestSuccess on success or Client Error
+    /// on failure.
+    pub async fn revfs_pull<S: Into<u64>, R: Into<PathBuf>>(
+        &mut self,
+        cid: S,
+        peer_cid: Option<S>,
+        virtual_directory: R,
+        security_level: Option<SecurityLevel>,
+        delete_on_pull: bool,
+    ) -> Result<SendFileRequestSuccess, ClientError> {
+        let outbound_request = InternalServiceRequest::DownloadFile {
+            virtual_directory: virtual_directory.into(),
+            security_level,
+            delete_on_pull,
+            cid: cid.into(),
+            peer_cid: peer_cid.map(|i| i.into()),
+            request_id: Uuid::new_v4(),
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::SendFileRequestSuccess(success) = scan_for_response!(
+            self.stream,
+            InternalServiceResponse::SendFileRequestSuccess(..)
+        ) else {
+            panic!("Unreachable")
+        };
+        Ok(success)
+    }
+
+    /// Downloads a file from REVFS (Remote Encrypted Virtual File System) at the given peer
+    /// or server if no peer CID was given. Uses default Security Level and does not delete the
+    /// file on pull. Returns a Result with a SendFileRequestSuccess on success or Client Error
+    /// on failure.
+    pub async fn revfs_pull_with_defaults<S: Into<u64>, R: Into<PathBuf>>(
+        &mut self,
+        cid: S,
+        peer_cid: Option<S>,
+        virtual_directory: R,
+        security_level: Option<SecurityLevel>,
+        delete_on_pull: bool,
+    ) -> Result<SendFileRequestSuccess, ClientError> {
+        let outbound_request = InternalServiceRequest::DownloadFile {
+            virtual_directory: virtual_directory.into(),
+            security_level,
+            delete_on_pull,
+            cid: cid.into(),
+            peer_cid: peer_cid.map(|i| i.into()),
+            request_id: Uuid::new_v4(),
+        };
+        self.send_raw_request(outbound_request).await?;
+        let InternalServiceResponse::SendFileRequestSuccess(success) = scan_for_response!(
+            self.stream,
+            InternalServiceResponse::SendFileRequestSuccess(..)
         ) else {
             panic!("Unreachable")
         };

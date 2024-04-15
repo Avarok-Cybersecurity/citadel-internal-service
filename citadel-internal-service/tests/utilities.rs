@@ -8,11 +8,13 @@ mod tests {
     use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
     use citadel_internal_service_connector::scan_for_response;
     use citadel_internal_service_types::{
-        ConnectSuccess, InternalServiceResponse, MessageNotification,
+        ConnectSuccess, DisconnectNotification, FileTransferRequestNotification,
+        InternalServiceResponse, MessageNotification,
     };
     use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, SecBuffer};
     use futures::StreamExt;
     use std::net::SocketAddr;
+    use std::path::PathBuf;
     use std::str::FromStr;
 
     #[tokio::test]
@@ -130,6 +132,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_utilities_peer_disconnect() -> Result<(), ClientError> {
+        crate::common::setup_log();
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+        let (mut service_connector_0, cid_0) = connector_service_and_server(
+            server_bind_address,
+            SocketAddr::from_str("127.0.0.1:23457").unwrap(),
+            "name 0",
+            "username0",
+            "password0",
+        )
+        .await?;
+        let (mut service_connector_1, cid_1) = connector_service_and_server(
+            server_bind_address,
+            SocketAddr::from_str("127.0.0.1:23458").unwrap(),
+            "name 1",
+            "username1",
+            "password1",
+        )
+        .await?;
+
+        let peer_0_task = tokio::task::spawn(async move {
+            service_connector_0
+                .peer_register_and_connect_with_defaults(cid_0, cid_1)
+                .await?;
+            service_connector_0.peer_disconnect(cid_0, cid_1).await?;
+            citadel_logging::info!(target: "citadel", "Peer 0 Disconnected from Peer 1");
+            Ok(())
+        });
+        let peer_1_task = tokio::task::spawn(async move {
+            service_connector_1
+                .peer_register_and_connect_with_defaults(cid_1, cid_0)
+                .await?;
+            let InternalServiceResponse::DisconnectNotification(DisconnectNotification {
+                cid: _,
+                peer_cid: _,
+                request_id: _,
+            }) = scan_for_response!(
+                service_connector_1.stream,
+                InternalServiceResponse::DisconnectNotification(..)
+            )
+            else {
+                panic!("Unreachable");
+            };
+            citadel_logging::info!(target: "citadel", "Peer 1 Received Disconnect Notification");
+            Ok(())
+        });
+        let result = futures::future::join_all([peer_0_task, peer_1_task]).await;
+        if result.iter().all(|i| i.is_ok()) {
+            citadel_logging::info!(target: "citadel", "Peers Successfully Disconnected");
+        } else {
+            panic!("Peer Disconnect Error")
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_utilities_peer_message() -> Result<(), ClientError> {
         crate::common::setup_log();
         let (server, server_bind_address) = server_info_skip_cert_verification();
@@ -151,7 +210,7 @@ mod tests {
         )
         .await?;
 
-        let peer_0_register_and_connect = tokio::task::spawn(async move {
+        let peer_0_task = tokio::task::spawn(async move {
             service_connector_0
                 .peer_register_and_connect_with_defaults(cid_0, cid_1)
                 .await?;
@@ -173,7 +232,7 @@ mod tests {
             citadel_logging::info!(target: "citadel", "Peer 0 received message: {message:?}");
             result
         });
-        let peer_1_register_and_connect = tokio::task::spawn(async move {
+        let peer_1_task = tokio::task::spawn(async move {
             service_connector_1
                 .peer_register_and_connect_with_defaults(cid_1, cid_0)
                 .await?;
@@ -195,13 +254,80 @@ mod tests {
             citadel_logging::info!(target: "citadel", "Peer 1 received message: {message:?}");
             result
         });
-        let result =
-            futures::future::join_all([peer_0_register_and_connect, peer_1_register_and_connect])
-                .await;
+        let result = futures::future::join_all([peer_0_task, peer_1_task]).await;
         if result.iter().all(|i| i.is_ok()) {
             citadel_logging::info!(target: "citadel", "Peers Successfully Registered, Connected, and Sent Message");
         } else {
             panic!("Peer Message Error")
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_utilities_peer_file_transfer() -> Result<(), ClientError> {
+        crate::common::setup_log();
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+        let (mut service_connector_0, cid_0) = connector_service_and_server_with_backend(
+            server_bind_address,
+            SocketAddr::from_str("127.0.0.1:23457").unwrap(),
+            "name 0",
+            "username0",
+            "password0",
+            BackendType::Filesystem("peer0".to_string()),
+        )
+        .await?;
+        let (mut service_connector_1, cid_1) = connector_service_and_server_with_backend(
+            server_bind_address,
+            SocketAddr::from_str("127.0.0.1:23458").unwrap(),
+            "name 1",
+            "username1",
+            "password1",
+            BackendType::Filesystem("peer1".to_string()),
+        )
+        .await?;
+
+        let file_to_send = PathBuf::from("../resources/test.txt");
+        let _virtual_path = PathBuf::from("/vfs/test.txt");
+        let peer_0_task = tokio::task::spawn(async move {
+            service_connector_0
+                .peer_register_and_connect_with_defaults(cid_0, cid_1)
+                .await?;
+            service_connector_0
+                .file_send_with_defaults(cid_0, Some(cid_1), file_to_send)
+                .await?;
+            citadel_logging::info!(target: "citadel", "Peer 0 Successfully Sent File to Peer 1");
+            Ok(())
+        });
+        let peer_1_task = tokio::task::spawn(async move {
+            service_connector_1
+                .peer_register_and_connect_with_defaults(cid_1, cid_0)
+                .await?;
+            let InternalServiceResponse::FileTransferRequestNotification(
+                FileTransferRequestNotification {
+                    cid: _,
+                    peer_cid: _,
+                    metadata,
+                    request_id: _,
+                },
+            ) = scan_for_response!(
+                service_connector_1.stream,
+                InternalServiceResponse::FileTransferRequestNotification(..)
+            )
+            else {
+                panic!("Unreachable");
+            };
+            service_connector_1
+                .respond_file_transfer_with_defaults(cid_1, cid_0, metadata.object_id, true)
+                .await?;
+            citadel_logging::info!(target: "citadel", "Peer 1 Received Disconnect Notification");
+            Ok(())
+        });
+        let result = futures::future::join_all([peer_0_task, peer_1_task]).await;
+        if result.iter().all(|i| i.is_ok()) {
+            citadel_logging::info!(target: "citadel", "File Transfer Succeeded");
+        } else {
+            panic!("File Transfer Error")
         }
         Ok(())
     }
@@ -213,10 +339,54 @@ mod tests {
         username: S,
         password: R,
     ) -> Result<(InternalServiceConnector<TcpIOInterface>, u64), ClientError> {
+        connector_service_and_server_with_backend(
+            server_addr,
+            service_addr,
+            full_name,
+            username,
+            password,
+            BackendType::InMemory,
+        )
+        .await
+        // let internal_service_kernel = CitadelWorkspaceService::new_tcp(service_addr).await?;
+        // let internal_service = NodeBuilder::default()
+        //     .with_node_type(NodeType::Peer)
+        //     .with_backend(BackendType::InMemory)
+        //     .with_insecure_skip_cert_verification()
+        //     .build(internal_service_kernel)
+        //     .unwrap();
+        // tokio::task::spawn(internal_service);
+        //
+        // // Connect to Internal Service via TCP
+        // let mut service_connector =
+        //     InternalServiceConnector::connect_to_service(service_addr).await?;
+        // match service_connector
+        //     .register_and_connect(
+        //         server_addr,
+        //         full_name,
+        //         username,
+        //         password,
+        //         Default::default(),
+        //     )
+        //     .await
+        // {
+        //     Ok(ConnectSuccess { cid, request_id: _ }) => Ok((service_connector, cid)),
+        //     Err(err) => Err(err),
+        // }
+    }
+
+    async fn connector_service_and_server_with_backend<S: Into<String>, R: Into<SecBuffer>>(
+        server_addr: SocketAddr,
+        service_addr: SocketAddr,
+        full_name: S,
+        username: S,
+        password: R,
+        backend: BackendType,
+    ) -> Result<(InternalServiceConnector<TcpIOInterface>, u64), ClientError> {
         let internal_service_kernel = CitadelWorkspaceService::new_tcp(service_addr).await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
-            .with_backend(BackendType::InMemory)
+            .with_backend(backend)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)
             .unwrap();
