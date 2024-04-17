@@ -33,7 +33,7 @@ mod tests {
             bind_address_internal_service_a,
             bind_address_internal_service_b,
             bind_address_internal_service_c,
-        ])
+        ], None, None)
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -179,7 +179,7 @@ mod tests {
             bind_address_internal_service_a,
             bind_address_internal_service_b,
             bind_address_internal_service_c,
-        ])
+        ], None, None)
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -348,7 +348,7 @@ mod tests {
             bind_address_internal_service_a,
             bind_address_internal_service_b,
             bind_address_internal_service_c,
-        ])
+        ], None, None)
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -580,7 +580,7 @@ mod tests {
             bind_address_internal_service_a,
             bind_address_internal_service_b,
             bind_address_internal_service_c,
-        ])
+        ], None, None)
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -789,7 +789,7 @@ mod tests {
             bind_address_internal_service_a,
             bind_address_internal_service_b,
             bind_address_internal_service_c,
-        ])
+        ], None, None)
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -1009,7 +1009,7 @@ mod tests {
             bind_address_internal_service_a,
             bind_address_internal_service_b,
             bind_address_internal_service_c,
-        ])
+        ], None, None)
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =

@@ -69,6 +69,7 @@ mod tests {
             full_name: "John Doe",
             username: "john.doe",
             password: "secret",
+            pre_shared_key: None,
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
@@ -100,10 +101,14 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-        ])
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
@@ -218,6 +223,7 @@ mod tests {
             full_name: "John Doe",
             username: "john.doe",
             password: "secret",
+            pre_shared_key: None::<PreSharedKey>,
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
@@ -314,10 +320,14 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-        ])
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);

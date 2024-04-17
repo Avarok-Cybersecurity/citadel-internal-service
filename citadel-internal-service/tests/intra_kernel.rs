@@ -44,6 +44,7 @@ mod tests {
                 full_name: "Peer 0".to_string(),
                 username: "peer.0".to_string(),
                 password: "secret_0".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
                 internal_service_addr: service_addr,
@@ -51,6 +52,7 @@ mod tests {
                 full_name: "Peer 1".to_string(),
                 username: "peer.1".to_string(),
                 password: "secret_1".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
             },
         ];
 
@@ -66,6 +68,7 @@ mod tests {
             &mut peer_1_rx,
             peer_1_cid,
             SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
         )
         .await?;
         citadel_logging::info!(target: "citadel", "P2P Register complete");
@@ -77,6 +80,7 @@ mod tests {
             &mut peer_1_rx,
             peer_1_cid,
             SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
         )
         .await?;
         Ok(())
@@ -110,6 +114,7 @@ mod tests {
                 full_name: "Peer 0".to_string(),
                 username: "peer.0".to_string(),
                 password: "secret_0".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
                 internal_service_addr: service_addr,
@@ -117,6 +122,7 @@ mod tests {
                 full_name: "Peer 1".to_string(),
                 username: "peer.1".to_string(),
                 password: "secret_1".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
             },
         ];
 
@@ -132,6 +138,7 @@ mod tests {
             &mut peer_1_rx,
             peer_1_cid,
             SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
         )
         .await?;
         citadel_logging::info!(target: "citadel", "P2P Register complete");
@@ -143,6 +150,7 @@ mod tests {
             &mut peer_1_rx,
             peer_1_cid,
             SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
         )
         .await?;
         let message_request = InternalServiceRequest::Message {
@@ -212,6 +220,7 @@ mod tests {
                 full_name: "Peer 0".to_string(),
                 username: "peer.0".to_string(),
                 password: "secret_0".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
                 internal_service_addr: service_addr,
@@ -219,6 +228,7 @@ mod tests {
                 full_name: "Peer 1".to_string(),
                 username: "peer.1".to_string(),
                 password: "secret_1".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
             },
         ];
 
@@ -234,6 +244,7 @@ mod tests {
             &mut peer_1_rx,
             peer_1_cid,
             SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
         )
         .await?;
         citadel_logging::info!(target: "citadel", "P2P Register complete");
@@ -245,6 +256,7 @@ mod tests {
             &mut peer_1_rx,
             peer_1_cid,
             SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
         )
         .await?;
 
@@ -349,6 +361,7 @@ mod tests {
                 full_name: "Peer 0".to_string(),
                 username: "peer.0".to_string(),
                 password: "secret_0".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
                 internal_service_addr: service_addr,
@@ -356,6 +369,7 @@ mod tests {
                 full_name: "Peer 1".to_string(),
                 username: "peer.1".to_string(),
                 password: "secret_1".to_string().into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
             },
         ];
 
@@ -371,6 +385,7 @@ mod tests {
             &mut peer_1_rx,
             peer_1_cid,
             SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
         )
         .await?;
         citadel_logging::info!(target: "citadel", "P2P Register complete");
@@ -382,6 +397,7 @@ mod tests {
             &mut peer_1_rx,
             peer_1_cid,
             SessionSecuritySettings::default(),
+            None::<PreSharedKey>,
         )
         .await?;
 

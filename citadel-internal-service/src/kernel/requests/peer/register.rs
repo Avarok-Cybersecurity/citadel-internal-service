@@ -50,7 +50,7 @@ pub async fn handle<T: IOInterface>(
                                         udp_mode: Default::default(),
                                         session_security_settings,
                                         request_id,
-                                        peer_session_password
+                                        peer_session_password,
                                     };
 
                                     return handle_request(this, uuid, connect_command).await;

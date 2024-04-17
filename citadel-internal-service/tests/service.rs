@@ -5,7 +5,8 @@ mod tests {
     use crate::common::{
         register_and_connect_to_server, register_and_connect_to_server_then_peers, send,
         server_info_reactive_skip_cert_verification, server_info_skip_cert_verification,
-        spawn_services, test_kv_for_service, InternalServicesFutures, RegisterAndConnectItems,
+        server_info_skip_cert_verification_with_password, spawn_services, test_kv_for_service,
+        InternalServicesFutures, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_connector::connector::InternalServiceConnector;
@@ -55,6 +56,65 @@ mod tests {
             full_name: "John Doe",
             username: "john.doe",
             password: "secret",
+            pre_shared_key: None::<PreSharedKey>,
+        }];
+        let returned_service_info = register_and_connect_to_server(to_spawn).await;
+        let mut service_vec = returned_service_info.unwrap();
+        if let Some((to_service, from_service, cid)) = service_vec.get_mut(0_usize) {
+            let disconnect_command = InternalServiceRequest::Disconnect {
+                cid: *cid,
+                request_id: Uuid::new_v4(),
+            };
+            to_service.send(disconnect_command).unwrap();
+            let disconnect_response = from_service.recv().await.unwrap();
+
+            assert!(matches!(
+                disconnect_response,
+                InternalServiceResponse::DisconnectNotification { .. }
+            ));
+
+            Ok(())
+        } else {
+            panic!("Service Spawn Error")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_internal_service_server_password() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        info!(target: "citadel", "above server spawn");
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+
+        // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
+        let (server, server_bind_address) =
+            server_info_skip_cert_verification_with_password("SecretPassword".as_bytes().into());
+
+        tokio::task::spawn(server);
+        info!(target: "citadel", "sub server spawn");
+
+        let internal_service_kernel =
+            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
+            .build(internal_service_kernel)?;
+
+        tokio::task::spawn(internal_service);
+
+        // give time for both the server and internal service to run
+
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        info!(target: "citadel", "about to connect to internal service");
+
+        let to_spawn = vec![RegisterAndConnectItems {
+            internal_service_addr: bind_address_internal_service,
+            server_addr: server_bind_address,
+            full_name: "John Doe",
+            username: "john.doe",
+            password: "secret",
+            pre_shared_key: Some("SecretPassword".as_bytes()),
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
@@ -122,6 +182,7 @@ mod tests {
             full_name: "John Doe",
             username: "john.doe",
             password: "secret",
+            pre_shared_key: None::<PreSharedKey>,
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
@@ -231,6 +292,7 @@ mod tests {
             session_security_settings: Default::default(),
             connect_after_register: true,
             request_id: Uuid::new_v4(),
+            server_password: None,
         };
 
         send(&mut sink, register_command).await?;
@@ -291,10 +353,29 @@ mod tests {
     #[tokio::test]
     async fn test_internal_service_peer_test() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let _ = register_and_connect_to_server_then_peers(vec![
-            "127.0.0.1:55526".parse().unwrap(),
-            "127.0.0.1:55527".parse().unwrap(),
-        ])
+        let _ = register_and_connect_to_server_then_peers(
+            vec![
+                "127.0.0.1:55526".parse().unwrap(),
+                "127.0.0.1:55527".parse().unwrap(),
+            ],
+            None,
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_internal_service_peer_with_psk() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let _ = register_and_connect_to_server_then_peers(
+            vec![
+                "127.0.0.1:55526".parse().unwrap(),
+                "127.0.0.1:55527".parse().unwrap(),
+            ],
+            "SecretServerPassword".as_bytes().into(),
+            "SecretPeerPassword".as_bytes().into(),
+        )
         .await?;
         Ok(())
     }
@@ -303,10 +384,14 @@ mod tests {
     async fn test_internal_service_peer_test_list_peers() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            "127.0.0.1:55526".parse().unwrap(),
-            "127.0.0.1:55527".parse().unwrap(),
-        ])
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                "127.0.0.1:55526".parse().unwrap(),
+                "127.0.0.1:55527".parse().unwrap(),
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
@@ -329,10 +414,14 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-        ])
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
@@ -411,6 +500,7 @@ mod tests {
             full_name: "peer a",
             username: "peer.a",
             password: "password",
+            pre_shared_key: None::<PreSharedKey>,
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
@@ -429,10 +519,14 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-        ])
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
@@ -476,7 +570,7 @@ mod tests {
         spawn_services(internal_services);
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
-        let mut to_spawn: Vec<RegisterAndConnectItems<String, String, Vec<u8>>> = Vec::new();
+        let mut to_spawn: Vec<RegisterAndConnectItems<String, Vec<u8>, PreSharedKey>> = Vec::new();
         for (peer_number, internal_service_address) in
             internal_service_addresses.clone().iter().enumerate()
         {
@@ -487,6 +581,7 @@ mod tests {
                 full_name: format!("Peer {}", peer_number),
                 username: format!("peer.{}", peer_number),
                 password: format!("secret_{}", peer_number).into_bytes().to_owned(),
+                pre_shared_key: None,
             });
         }
 
@@ -510,6 +605,7 @@ mod tests {
                     from_service_b,
                     *cid_b,
                     SessionSecuritySettings::default(),
+                    None::<PreSharedKey>,
                 )
                 .await?;
                 crate::common::connect_p2p(
@@ -520,6 +616,7 @@ mod tests {
                     from_service_b,
                     *cid_b,
                     SessionSecuritySettings::default(),
+                    None::<PreSharedKey>,
                 )
                 .await?;
             }
