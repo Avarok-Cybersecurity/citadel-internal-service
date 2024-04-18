@@ -114,7 +114,7 @@ mod tests {
             full_name: "John Doe",
             username: "john.doe",
             password: "secret",
-            pre_shared_key: Some("SecretPassword".as_bytes()),
+            pre_shared_key: Some(PreSharedKey::from("SecretPassword".as_bytes())),
         }];
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
@@ -373,8 +373,8 @@ mod tests {
                 "127.0.0.1:55526".parse().unwrap(),
                 "127.0.0.1:55527".parse().unwrap(),
             ],
-            "SecretServerPassword".as_bytes().into(),
-            "SecretPeerPassword".as_bytes().into(),
+            Some(PreSharedKey::from("SecretServerPassword".as_bytes())),
+            Some(PreSharedKey::from("SecretPeerPassword".as_bytes())),
         )
         .await?;
         Ok(())
@@ -570,7 +570,7 @@ mod tests {
         spawn_services(internal_services);
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
-        let mut to_spawn: Vec<RegisterAndConnectItems<String, Vec<u8>, PreSharedKey>> = Vec::new();
+        let mut to_spawn: Vec<RegisterAndConnectItems<String, Vec<u8>>> = Vec::new();
         for (peer_number, internal_service_address) in
             internal_service_addresses.clone().iter().enumerate()
         {

@@ -29,11 +29,15 @@ mod tests {
         // internal service for peer C
         let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-            bind_address_internal_service_c,
-        ], None, None)
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+                bind_address_internal_service_c,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -175,11 +179,15 @@ mod tests {
         // internal service for peer C
         let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-            bind_address_internal_service_c,
-        ], None, None)
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+                bind_address_internal_service_c,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -344,11 +352,15 @@ mod tests {
         // internal service for peer C
         let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-            bind_address_internal_service_c,
-        ], None, None)
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+                bind_address_internal_service_c,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -576,11 +588,15 @@ mod tests {
         // internal service for peer C
         let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-            bind_address_internal_service_c,
-        ], None, None)
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+                bind_address_internal_service_c,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -785,11 +801,15 @@ mod tests {
         // internal service for peer C
         let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-            bind_address_internal_service_c,
-        ], None, None)
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+                bind_address_internal_service_c,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
@@ -1005,11 +1025,15 @@ mod tests {
         // internal service for peer C
         let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(vec![
-            bind_address_internal_service_a,
-            bind_address_internal_service_b,
-            bind_address_internal_service_c,
-        ], None, None)
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+                bind_address_internal_service_c,
+            ],
+            None,
+            None,
+        )
         .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
