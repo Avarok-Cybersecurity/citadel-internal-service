@@ -16,7 +16,7 @@ mod tests {
     use citadel_logging::info;
     use citadel_sdk::prelude::*;
     use core::panic;
-    use futures::StreamExt;
+    use futures::{SinkExt, StreamExt};
     use std::error::Error;
     use std::net::SocketAddr;
     use std::time::Duration;
@@ -135,6 +135,167 @@ mod tests {
         } else {
             panic!("Service Spawn Error")
         }
+    }
+
+    #[tokio::test]
+    async fn test_internal_service_server_password_negative_case() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        info!(target: "citadel", "above server spawn");
+        let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+
+        // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
+        let (server, server_bind_address) =
+            server_info_skip_cert_verification_with_password("SecretPassword".as_bytes().into());
+
+        tokio::task::spawn(server);
+        info!(target: "citadel", "sub server spawn");
+
+        let internal_service_kernel =
+            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+        let internal_service = NodeBuilder::default()
+            .with_node_type(NodeType::Peer)
+            .with_backend(BackendType::InMemory)
+            .with_insecure_skip_cert_verification()
+            .build(internal_service_kernel)?;
+
+        tokio::task::spawn(internal_service);
+
+        // give time for both the server and internal service to run
+        let (mut sink, mut stream) = InternalServiceConnector::connect(bind_address_internal_service).await?.split();
+
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        // Send Register WITHOUT PSK when it is required
+        info!(target: "citadel", "C2S Attempting to register without PSK");
+        let register_command = InternalServiceRequest::Register {
+            request_id: Uuid::new_v4(),
+            server_addr: server_bind_address,
+            full_name: "Full Name".into(),
+            username: "Username".into(),
+            proposed_password: "Password".into(),
+            session_security_settings: Default::default(),
+            connect_after_register: false,
+            server_password: None,
+        };
+        sink.send(register_command).await.unwrap();
+        let response_packet = stream.next().await.unwrap();
+        if let InternalServiceResponse::RegisterSuccess(
+            citadel_internal_service_types::RegisterSuccess { request_id: _ },
+        ) = response_packet
+        {
+            panic!("Received Unexpected RegisterSuccess");
+        }
+
+        // Send Register with INCORRECT PSK
+        info!(target: "citadel", "C2S Attempting to register with Incorrect PSK");
+        let register_command = InternalServiceRequest::Register {
+            request_id: Uuid::new_v4(),
+            server_addr: server_bind_address,
+            full_name: "Full Name".into(),
+            username: "Username".into(),
+            proposed_password: "Password".into(),
+            session_security_settings: Default::default(),
+            connect_after_register: false,
+            server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
+        };
+        sink.send(register_command).await.unwrap();
+        let response_packet = stream.next().await.unwrap();
+        if let InternalServiceResponse::RegisterSuccess(
+            citadel_internal_service_types::RegisterSuccess { request_id: _ },
+        ) = response_packet
+        {
+            panic!("Received Unexpected RegisterSuccess");
+        }
+
+        // Send Register with correct PSK
+        info!(target: "citadel", "C2S Attempting to register with correct PSK");
+        let register_command = InternalServiceRequest::Register {
+            request_id: Uuid::new_v4(),
+            server_addr: server_bind_address,
+            full_name: "Full Name".into(),
+            username: "Username".into(),
+            proposed_password: "Password".into(),
+            session_security_settings: Default::default(),
+            connect_after_register: false,
+            server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
+        };
+        sink.send(register_command).await.unwrap();
+        let response_packet = stream.next().await.unwrap();
+        if let InternalServiceResponse::RegisterSuccess(
+            citadel_internal_service_types::RegisterSuccess { request_id: _ },
+        ) = response_packet
+        {
+            info!(target: "citadel", "Successfully Registered to Server using Pre-Shared Key");
+        } else {
+            panic!("Didn't Receive Expected RegisterSuccess");
+        }
+
+        // Send Connect WITHOUT PSK when it is required
+        info!(target: "citadel", "C2S Attempting to connect without PSK");
+        let connect_command = InternalServiceRequest::Connect {
+            request_id: Uuid::new_v4(),
+            username: "Username".into(),
+            password: "Password".into(),
+            connect_mode: Default::default(),
+            udp_mode: Default::default(),
+            keep_alive_timeout: None,
+            session_security_settings: Default::default(),
+            server_password: None,
+        };
+        sink.send(connect_command).await.unwrap();
+        let response_packet = stream.next().await.unwrap();
+        if let InternalServiceResponse::ConnectSuccess(
+            citadel_internal_service_types::ConnectSuccess { cid: _, request_id: _ },
+        ) = response_packet
+        {
+            panic!("Received Unexpected ConnectSuccess");
+        }
+
+        // Send Connect with INCORRECT PSK
+        info!(target: "citadel", "C2S Attempting to connect with incorrect PSK");
+        let connect_command = InternalServiceRequest::Connect {
+            request_id: Uuid::new_v4(),
+            username: "Username".into(),
+            password: "Password".into(),
+            connect_mode: Default::default(),
+            udp_mode: Default::default(),
+            keep_alive_timeout: None,
+            session_security_settings: Default::default(),
+            server_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
+        };
+        sink.send(connect_command).await.unwrap();
+        let response_packet = stream.next().await.unwrap();
+        if let InternalServiceResponse::ConnectSuccess(
+            citadel_internal_service_types::ConnectSuccess { cid: _, request_id: _ },
+        ) = response_packet
+        {
+            panic!("Received Unexpected ConnectSuccess");
+        }
+
+        // Send Connect with correct PSK
+        info!(target: "citadel", "C2S Attempting to connect with correct PSK");
+        let connect_command = InternalServiceRequest::Connect {
+            request_id: Uuid::new_v4(),
+            username: "Username".into(),
+            password: "Password".into(),
+            connect_mode: Default::default(),
+            udp_mode: Default::default(),
+            keep_alive_timeout: None,
+            session_security_settings: Default::default(),
+            server_password: Some(PreSharedKey::from("SecretPassword".as_bytes())),
+        };
+        sink.send(connect_command).await.unwrap();
+        let response_packet = stream.next().await.unwrap();
+        if let InternalServiceResponse::ConnectSuccess(
+            citadel_internal_service_types::ConnectSuccess { cid: _, request_id: _ },
+        ) = response_packet
+        {
+            info!(target: "citadel", "Successfully Connected to Server using Pre-Shared Key");
+        } else {
+            panic!("Didn't Receive Expected ConnectSuccess");
+        }
+
+        Ok(())
     }
 
     // test
