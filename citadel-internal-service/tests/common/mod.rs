@@ -283,6 +283,7 @@ pub async fn register_and_connect_to_server_then_peers(
     Ok(returned_service_info)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn register_p2p(
     to_service_a: &mut UnboundedSender<InternalServiceRequest>,
     from_service_a: &mut UnboundedReceiver<InternalServiceResponse>,
@@ -358,6 +359,7 @@ pub async fn register_p2p(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn connect_p2p(
     to_service_a: &mut UnboundedSender<InternalServiceRequest>,
     from_service_a: &mut UnboundedReceiver<InternalServiceResponse>,
