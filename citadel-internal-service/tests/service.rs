@@ -161,7 +161,10 @@ mod tests {
         tokio::task::spawn(internal_service);
 
         // give time for both the server and internal service to run
-        let (mut sink, mut stream) = InternalServiceConnector::connect(bind_address_internal_service).await?.split();
+        let (mut sink, mut stream) =
+            InternalServiceConnector::connect(bind_address_internal_service)
+                .await?
+                .split();
 
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
@@ -245,7 +248,10 @@ mod tests {
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess { cid: _, request_id: _ },
+            citadel_internal_service_types::ConnectSuccess {
+                cid: _,
+                request_id: _,
+            },
         ) = response_packet
         {
             panic!("Received Unexpected ConnectSuccess");
@@ -266,7 +272,10 @@ mod tests {
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess { cid: _, request_id: _ },
+            citadel_internal_service_types::ConnectSuccess {
+                cid: _,
+                request_id: _,
+            },
         ) = response_packet
         {
             panic!("Received Unexpected ConnectSuccess");
@@ -287,7 +296,10 @@ mod tests {
         sink.send(connect_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::ConnectSuccess(
-            citadel_internal_service_types::ConnectSuccess { cid: _, request_id: _ },
+            citadel_internal_service_types::ConnectSuccess {
+                cid: _,
+                request_id: _,
+            },
         ) = response_packet
         {
             info!(target: "citadel", "Successfully Connected to Server using Pre-Shared Key");
@@ -538,6 +550,131 @@ mod tests {
             Some(PreSharedKey::from("SecretPeerPassword".as_bytes())),
         )
         .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_internal_service_peer_with_psk_negative_case() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+
+        let int_svc_addrs = vec![
+            "127.0.0.1:55526".parse().unwrap(),
+            "127.0.0.1:55527".parse().unwrap(),
+        ];
+
+        let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
+        // Spawn Internal Services with given addresses
+        for int_svc_addr_iter in int_svc_addrs.clone() {
+            let bind_address_internal_service = int_svc_addr_iter;
+
+            info!(target: "citadel", "Internal Service Spawning");
+            let internal_service_kernel =
+                CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            let internal_service = NodeBuilder::default()
+                .with_backend(BackendType::Filesystem("filesystem".into()))
+                .with_node_type(NodeType::Peer)
+                .with_insecure_skip_cert_verification()
+                .build(internal_service_kernel)
+                .unwrap();
+
+            // Add NodeFuture for Internal Service to Vector to be spawned
+            internal_services.push(Box::pin(async move {
+                match internal_service.await {
+                    Err(err) => Err(Box::from(err)),
+                    _ => Ok(()),
+                }
+            }));
+        }
+        spawn_services(internal_services);
+
+        // Give time for both the Server and Internal Service to run
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+
+        // Set Info for Vector of Peers
+        let mut to_spawn: Vec<RegisterAndConnectItems<String, Vec<u8>>> = Vec::new();
+        for (peer_number, int_svc_addr_iter) in int_svc_addrs.clone().iter().enumerate() {
+            let bind_address_internal_service = *int_svc_addr_iter;
+            to_spawn.push(RegisterAndConnectItems {
+                internal_service_addr: bind_address_internal_service,
+                server_addr: server_bind_address,
+                full_name: format!("Peer {}", peer_number),
+                username: format!("peer.{}", peer_number),
+                password: format!("secret_{}", peer_number).into_bytes().to_owned(),
+                pre_shared_key: None,
+            });
+        }
+
+        // Registers and Connects all peers to Server
+        let mut returned_service_info = register_and_connect_to_server(to_spawn).await.unwrap();
+        let (first, second) = returned_service_info.split_at_mut(1usize);
+        let (ref mut peer_a_sink, ref mut peer_a_stream, peer_a_cid) = &mut first[0];
+        let (ref mut peer_b_sink, ref mut peer_b_stream, peer_b_cid) = &mut second[0];
+
+        // Peer B Initiates Peer Registration
+        let peer_register = InternalServiceRequest::PeerRegister {
+            request_id: Uuid::new_v4(),
+            cid: *peer_b_cid,
+            peer_cid: *peer_a_cid,
+            session_security_settings: Default::default(),
+            connect_after_register: false,
+            peer_session_password: Some(PreSharedKey::from("PeerSessionPassword".as_bytes())),
+        };
+        peer_b_sink.send(peer_register).unwrap();
+        let _register_request_success = peer_b_stream.recv().await.unwrap();
+        let _register_request_notification = peer_a_stream.recv().await.unwrap();
+
+        // Peer Register WITHOUT PSK when it is expected
+        let peer_register = InternalServiceRequest::PeerRegister {
+            request_id: Uuid::new_v4(),
+            cid: *peer_a_cid,
+            peer_cid: *peer_b_cid,
+            session_security_settings: Default::default(),
+            connect_after_register: false,
+            peer_session_password: None,
+        };
+        peer_a_sink.send(peer_register).unwrap();
+        let inbound_response = peer_a_stream.recv().await.unwrap();
+        if let InternalServiceResponse::PeerRegisterFailure(..) = inbound_response {
+            info!(target: "citadel", "Peer Registration Failed as expected - no Peer Session Password Supplied");
+        } else {
+            panic!("Peer Registration Unexpectedly Succeeded");
+        }
+
+        // Peer Register with INCORRECT PSK when it is expected
+        let peer_register = InternalServiceRequest::PeerRegister {
+            request_id: Uuid::new_v4(),
+            cid: *peer_a_cid,
+            peer_cid: *peer_b_cid,
+            session_security_settings: Default::default(),
+            connect_after_register: false,
+            peer_session_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
+        };
+        peer_a_sink.send(peer_register).unwrap();
+        let inbound_response = peer_a_stream.recv().await.unwrap();
+        if let InternalServiceResponse::PeerRegisterFailure(..) = inbound_response {
+            info!(target: "citadel", "Peer Registration Failed as expected - Incorrect Peer Session Password Supplied");
+        } else {
+            panic!("Peer Registration Unexpectedly Succeeded");
+        }
+
+        // Peer Register with Correct PSK when it is expected
+        let peer_register = InternalServiceRequest::PeerRegister {
+            request_id: Uuid::new_v4(),
+            cid: *peer_a_cid,
+            peer_cid: *peer_b_cid,
+            session_security_settings: Default::default(),
+            connect_after_register: false,
+            peer_session_password: Some(PreSharedKey::from("PeerSessionPassword".as_bytes())),
+        };
+        peer_a_sink.send(peer_register).unwrap();
+        let inbound_response = peer_a_stream.recv().await.unwrap();
+        if let InternalServiceResponse::PeerRegisterSuccess(..) = inbound_response {
+            panic!("Peer Registration Unexpectedly Failed with correct Peer Register");
+        }
+
         Ok(())
     }
 
