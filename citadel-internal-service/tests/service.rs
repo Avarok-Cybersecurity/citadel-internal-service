@@ -20,6 +20,7 @@ mod tests {
     use std::error::Error;
     use std::net::SocketAddr;
     use std::time::Duration;
+    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use uuid::Uuid;
 
     #[tokio::test]
@@ -553,6 +554,78 @@ mod tests {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn peer_connect_psk_attempt(
+        peer_a_sink: &mut UnboundedSender<InternalServiceRequest>,
+        peer_a_stream: &mut UnboundedReceiver<InternalServiceResponse>,
+        peer_a_cid: u64,
+        peer_b_sink: &mut UnboundedSender<InternalServiceRequest>,
+        peer_b_stream: &mut UnboundedReceiver<InternalServiceResponse>,
+        peer_b_cid: u64,
+        expected_psk: Option<PreSharedKey>,
+        given_psk: Option<PreSharedKey>,
+        expects_success: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        // Peer B Initiates Peer Connection
+        info!(target: "citadel", "Peer B Sending First Connect Request with Expected PSK");
+        let peer_connect = InternalServiceRequest::PeerConnect {
+            request_id: Uuid::new_v4(),
+            cid: peer_b_cid,
+            peer_cid: peer_a_cid,
+            udp_mode: Default::default(),
+            session_security_settings: Default::default(),
+            peer_session_password: expected_psk,
+        };
+        peer_b_sink.send(peer_connect).unwrap();
+
+        info!(target: "citadel", "Peer A Waiting to Receive Connect Notification");
+        let _register_connect_notification = peer_a_stream.recv().await.unwrap();
+
+        // Peer Responds with Connect Request with given PSK - may succeed or fail
+        info!(target: "citadel", "Peer A Sending Connect Request with Given PSK");
+        let peer_connect = InternalServiceRequest::PeerConnect {
+            request_id: Uuid::new_v4(),
+            cid: peer_a_cid,
+            peer_cid: peer_b_cid,
+            udp_mode: Default::default(),
+            session_security_settings: Default::default(),
+            peer_session_password: given_psk,
+        };
+        peer_a_sink.send(peer_connect).unwrap();
+        info!(target: "citadel", "Peer A Waiting for Connect Response");
+        let inbound_response = peer_a_stream.recv().await.unwrap();
+        if expects_success {
+            if let InternalServiceResponse::PeerConnectSuccess(..) = inbound_response {
+                info!(target: "citadel", "Peer A Successfully Connected as Expected");
+            } else {
+                panic!(
+                    "Peer Connection Unexpectedly Failed when using the correct Peer Session Password"
+                );
+            }
+            let register_request_response = peer_b_stream.recv().await.unwrap();
+            if let InternalServiceResponse::PeerConnectSuccess(..) = register_request_response {
+                info!(target: "citadel", "Peer B Received Expected PeerConnectSuccess Response");
+            } else {
+                panic!("Peer Connection Unexpectedly Failed with correct Peer Session Password");
+            }
+        } else {
+            if let InternalServiceResponse::PeerConnectFailure(..) = inbound_response {
+                info!(target: "citadel", "Peer A Failed to Connect as Expected");
+            } else {
+                panic!(
+                    "Peer Connection Unexpectedly Succeeded with incorrect Peer Session Password"
+                );
+            }
+            let register_request_response = peer_b_stream.recv().await.unwrap();
+            if let InternalServiceResponse::PeerConnectFailure(..) = register_request_response {
+                info!(target: "citadel", "Peer B Received Expected PeerConnectFailure Response");
+            } else {
+                panic!("Peer Connection Unexpectedly Succeeded with missing Peer Session Password");
+            }
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_internal_service_peer_with_psk_negative_case() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
@@ -621,7 +694,7 @@ mod tests {
             peer_cid: *peer_a_cid,
             session_security_settings: Default::default(),
             connect_after_register: false,
-            peer_session_password: None,//Some(PreSharedKey::from("PeerSessionPassword".as_bytes())),
+            peer_session_password: None,
         };
         peer_b_sink.send(peer_register).unwrap();
 
@@ -636,7 +709,7 @@ mod tests {
             peer_cid: *peer_b_cid,
             session_security_settings: Default::default(),
             connect_after_register: false,
-            peer_session_password: None,//Some(PreSharedKey::from("PeerSessionPassword".as_bytes())),
+            peer_session_password: None,
         };
         peer_a_sink.send(peer_register).unwrap();
         info!(target: "citadel", "Peer A Waiting for Register Response");
@@ -649,60 +722,65 @@ mod tests {
 
         let _register_request_response = peer_b_stream.recv().await.unwrap();
 
-        // Peer B Initiates Peer Registration
-        info!(target: "citadel", "Peer B Sending First Connect Request");
-        let peer_connect = InternalServiceRequest::PeerConnect {
-            request_id: Uuid::new_v4(),
-            cid: *peer_b_cid,
-            peer_cid: *peer_a_cid,
-            udp_mode: Default::default(),
-            session_security_settings: Default::default(),
-            peer_session_password: Some(PreSharedKey::from("PeerSessionPassword".as_bytes())),
-        };
-        peer_b_sink.send(peer_connect).unwrap();
+        // Peer Register with Incorrect PSK when it is expected
+        peer_connect_psk_attempt(
+            peer_a_sink,
+            peer_a_stream,
+            *peer_a_cid,
+            peer_b_sink,
+            peer_b_stream,
+            *peer_b_cid,
+            Some(PreSharedKey::from("PeerSessionPassword".as_bytes())),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
 
-        info!(target: "citadel", "Peer A Waiting to Receive Connect Notification");
-        let _register_connect_notification = peer_a_stream.recv().await.unwrap();
+        // Peer Register WITHOUT PSK when it is expected
+        peer_connect_psk_attempt(
+            peer_a_sink,
+            peer_a_stream,
+            *peer_a_cid,
+            peer_b_sink,
+            peer_b_stream,
+            *peer_b_cid,
+            Some(PreSharedKey::from("PeerSessionPassword".as_bytes())),
+            Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
+            false,
+        )
+        .await
+        .unwrap();
 
-        // Peer Responds with Connect Request WITHOUT PSK that is expected
-        info!(target: "citadel", "Peer A Sending Connect Request without expected PSK");
-        let peer_connect = InternalServiceRequest::PeerConnect {
-            request_id: Uuid::new_v4(),
-            cid: *peer_a_cid,
-            peer_cid: *peer_b_cid,
-            udp_mode: Default::default(),
-            session_security_settings: Default::default(),
-            peer_session_password: None,
-        };
-        peer_a_sink.send(peer_connect).unwrap();
-        info!(target: "citadel", "Peer A Waiting for Connect Response");
-        let inbound_response = peer_a_stream.recv().await.unwrap();
-        if let InternalServiceResponse::PeerConnectFailure(..) = inbound_response {
-            info!(target: "citadel", "Peer A Failed to Connect as Expected");
-        } else {
-            panic!("Peer Connection Unexpectedly Succeeded with incorrect Peer Session Password");
-        }
+        // Peer Register WITH PSK when it is NOT expected
+        peer_connect_psk_attempt(
+            peer_a_sink,
+            peer_a_stream,
+            *peer_a_cid,
+            peer_b_sink,
+            peer_b_stream,
+            *peer_b_cid,
+            None,
+            Some(PreSharedKey::from("UnexpectedPassword".as_bytes())),
+            false,
+        )
+        .await
+        .unwrap();
 
-        // // Peer Responds with Connect Request with INCORRECT PSK that is expected
-        // info!(target: "citadel", "Peer A Sending Connect Request with Incorrect PSK");
-        // let peer_connect = InternalServiceRequest::PeerConnect {
-        //     request_id: Uuid::new_v4(),
-        //     cid: *peer_a_cid,
-        //     peer_cid: *peer_b_cid,
-        //     udp_mode: Default::default(),
-        //     session_security_settings: Default::default(),
-        //     peer_session_password: Some(PreSharedKey::from("IncorrectPassword".as_bytes())),
-        // };
-        // peer_a_sink.send(peer_connect).unwrap();
-        // info!(target: "citadel", "Peer A Waiting for Connect Response");
-        // let inbound_response = peer_a_stream.recv().await.unwrap();
-        // if let InternalServiceResponse::PeerConnectFailure(..) = inbound_response {
-        //     info!(target: "citadel", "Peer A Failed to Connect as Expected");
-        // } else {
-        //     panic!("Peer Connection Unexpectedly Succeeded with incorrect Peer Session Password");
-        // }
-
-        let _register_request_response = peer_b_stream.recv().await.unwrap();
+        // Peer Register with Correct PSK when it is expected after having failed
+        peer_connect_psk_attempt(
+            peer_a_sink,
+            peer_a_stream,
+            *peer_a_cid,
+            peer_b_sink,
+            peer_b_stream,
+            *peer_b_cid,
+            Some(PreSharedKey::from("PeerSessionPassword".as_bytes())),
+            Some(PreSharedKey::from("PeerSessionPassword".as_bytes())),
+            true,
+        )
+        .await
+        .unwrap();
 
         Ok(())
     }
