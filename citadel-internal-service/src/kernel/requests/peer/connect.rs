@@ -22,6 +22,7 @@ pub async fn handle<T: IOInterface>(
         peer_cid,
         udp_mode,
         session_security_settings,
+        peer_session_password,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
@@ -58,7 +59,7 @@ pub async fn handle<T: IOInterface>(
     let response = match client_to_server_remote.find_target(cid, peer_cid).await {
         Ok(symmetric_identifier_handle_ref) => {
             match symmetric_identifier_handle_ref
-                .connect_to_peer_custom(session_security_settings, udp_mode)
+                .connect_to_peer_custom(session_security_settings, udp_mode, peer_session_password)
                 .await
             {
                 Ok(peer_connect_success) => {

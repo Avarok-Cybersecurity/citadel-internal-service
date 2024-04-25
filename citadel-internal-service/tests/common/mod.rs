@@ -33,12 +33,18 @@ pub fn setup_log() {
     }));
 }
 
-pub struct RegisterAndConnectItems<T: Into<String>, R: Into<String>, S: Into<SecBuffer>> {
+pub struct RegisterAndConnectItems<
+    T: Into<String>,
+    R: Into<String>,
+    S: Into<SecBuffer>,
+    Q: Into<PreSharedKey>,
+> {
     pub internal_service_addr: SocketAddr,
     pub server_addr: SocketAddr,
     pub full_name: T,
     pub username: R,
     pub password: S,
+    pub pre_shared_key: Option<Q>,
 }
 
 pub type InternalServicesFutures =
@@ -71,8 +77,9 @@ pub async fn register_and_connect_to_server<
     T: Into<String>,
     R: Into<String>,
     S: Into<SecBuffer>,
+    Q: Into<PreSharedKey>,
 >(
-    services_to_create: Vec<RegisterAndConnectItems<T, R, S>>,
+    services_to_create: Vec<RegisterAndConnectItems<T, R, S, Q>>,
 ) -> Result<
     Vec<(
         UnboundedSender<InternalServiceRequest>,
@@ -96,6 +103,7 @@ pub async fn register_and_connect_to_server<
         let username = item.username.into();
         let full_name = item.full_name.into();
         let password = item.password.into();
+        let server_password: Option<PreSharedKey> = item.pre_shared_key.map(|x| x.into());
         let session_security_settings = SessionSecuritySettingsBuilder::default().build().unwrap();
 
         info!(target = "citadel", "Sending Register Request");
@@ -107,6 +115,7 @@ pub async fn register_and_connect_to_server<
             proposed_password: password.clone(),
             session_security_settings,
             connect_after_register: false,
+            server_password: server_password.clone(),
         };
         send(&mut sink, register_command).await.unwrap();
 
@@ -129,6 +138,7 @@ pub async fn register_and_connect_to_server<
                 keep_alive_timeout: None,
                 session_security_settings,
                 request_id: Uuid::new_v4(),
+                server_password: server_password.clone(),
             };
 
             send(&mut sink, command).await.unwrap();
@@ -182,9 +192,15 @@ pub async fn register_and_connect_to_server<
 
 pub async fn register_and_connect_to_server_then_peers(
     int_svc_addrs: Vec<SocketAddr>,
+    server_session_password: Option<PreSharedKey>,
+    peer_session_password: Option<PreSharedKey>,
 ) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-    let (server, server_bind_address) = server_info_skip_cert_verification();
+    let (server, server_bind_address) = if server_session_password.is_some() {
+        server_info_skip_cert_verification_with_password(server_session_password.clone().unwrap())
+    } else {
+        server_info_skip_cert_verification()
+    };
     tokio::task::spawn(server);
     let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
 
@@ -216,7 +232,8 @@ pub async fn register_and_connect_to_server_then_peers(
     tokio::time::sleep(Duration::from_millis(2000)).await;
 
     // Set Info for Vector of Peers
-    let mut to_spawn: Vec<RegisterAndConnectItems<String, String, Vec<u8>>> = Vec::new();
+    let mut to_spawn: Vec<RegisterAndConnectItems<String, String, Vec<u8>, PreSharedKey>> =
+        Vec::new();
     for (peer_number, int_svc_addr_iter) in int_svc_addrs.clone().iter().enumerate() {
         let bind_address_internal_service = *int_svc_addr_iter;
         to_spawn.push(RegisterAndConnectItems {
@@ -225,6 +242,7 @@ pub async fn register_and_connect_to_server_then_peers(
             full_name: format!("Peer {}", peer_number),
             username: format!("peer.{}", peer_number),
             password: format!("secret_{}", peer_number).into_bytes().to_owned(),
+            pre_shared_key: server_session_password.clone(),
         });
     }
 
@@ -256,6 +274,7 @@ pub async fn register_and_connect_to_server_then_peers(
                 from_service_b,
                 *cid_b,
                 session_security_settings,
+                peer_session_password.clone(),
             )
             .await?;
 
@@ -267,6 +286,7 @@ pub async fn register_and_connect_to_server_then_peers(
                 from_service_b,
                 *cid_b,
                 session_security_settings,
+                peer_session_password.clone(),
             )
             .await?;
         }
@@ -274,6 +294,7 @@ pub async fn register_and_connect_to_server_then_peers(
     Ok(returned_service_info)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn register_p2p(
     to_service_a: &mut UnboundedSender<InternalServiceRequest>,
     from_service_a: &mut UnboundedReceiver<InternalServiceResponse>,
@@ -282,6 +303,7 @@ pub async fn register_p2p(
     from_service_b: &mut UnboundedReceiver<InternalServiceResponse>,
     cid_b: u64,
     session_security_settings: SessionSecuritySettings,
+    session_password: Option<PreSharedKey>,
 ) -> Result<(), Box<dyn Error>> {
     // Service A Requests to Register with Service B
     to_service_a
@@ -291,6 +313,7 @@ pub async fn register_p2p(
             peer_cid: cid_b,
             session_security_settings,
             connect_after_register: false,
+            peer_session_password: session_password.clone(),
         })
         .unwrap();
 
@@ -321,6 +344,7 @@ pub async fn register_p2p(
             peer_cid: cid_a,
             session_security_settings,
             connect_after_register: false,
+            peer_session_password: session_password,
         })
         .unwrap();
 
@@ -346,6 +370,7 @@ pub async fn register_p2p(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn connect_p2p(
     to_service_a: &mut UnboundedSender<InternalServiceRequest>,
     from_service_a: &mut UnboundedReceiver<InternalServiceResponse>,
@@ -354,6 +379,7 @@ pub async fn connect_p2p(
     from_service_b: &mut UnboundedReceiver<InternalServiceResponse>,
     cid_b: u64,
     session_security_settings: SessionSecuritySettings,
+    session_password: Option<PreSharedKey>,
 ) -> Result<(), Box<dyn Error>> {
     // Service A Requests To Connect
     to_service_a
@@ -363,6 +389,7 @@ pub async fn connect_p2p(
             peer_cid: cid_b,
             udp_mode: Default::default(),
             session_security_settings,
+            peer_session_password: session_password.clone(),
         })
         .unwrap();
 
@@ -392,6 +419,7 @@ pub async fn connect_p2p(
             peer_cid: cid_a,
             udp_mode: Default::default(),
             session_security_settings,
+            peer_session_password: session_password,
         })
         .unwrap();
 
@@ -458,8 +486,35 @@ pub fn server_test_node_skip_cert_verification<'a, K: NetKernel + 'a>(
     (builder.build(kernel).unwrap(), bind_addr)
 }
 
+pub fn server_test_node_skip_cert_verification_with_password<'a, K: NetKernel + 'a>(
+    kernel: K,
+    server_password: PreSharedKey,
+    opts: impl FnOnce(&mut NodeBuilder),
+) -> (NodeFuture<'a, K>, SocketAddr) {
+    let mut builder = NodeBuilder::default();
+    let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let bind_addr = tcp_listener.local_addr().unwrap();
+    let builder = builder
+        .with_node_type(NodeType::Server(bind_addr))
+        .with_server_password(server_password)
+        .with_insecure_skip_cert_verification()
+        .with_underlying_protocol(
+            ServerUnderlyingProtocol::from_tcp_listener(tcp_listener).unwrap(),
+        );
+
+    (opts)(builder);
+
+    (builder.build(kernel).unwrap(), bind_addr)
+}
+
 pub fn server_info_skip_cert_verification<'a>() -> (NodeFuture<'a, EmptyKernel>, SocketAddr) {
     server_test_node_skip_cert_verification(EmptyKernel, |_| {})
+}
+
+pub fn server_info_skip_cert_verification_with_password<'a>(
+    server_password: PreSharedKey,
+) -> (NodeFuture<'a, EmptyKernel>, SocketAddr) {
+    server_test_node_skip_cert_verification_with_password(EmptyKernel, server_password, |_| {})
 }
 
 pub fn server_info_reactive_skip_cert_verification<'a, F: 'a, Fut: 'a>(

@@ -21,6 +21,7 @@ pub async fn handle<T: IOInterface>(
         udp_mode,
         keep_alive_timeout,
         session_security_settings,
+        server_password,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
@@ -34,6 +35,7 @@ pub async fn handle<T: IOInterface>(
             udp_mode,
             keep_alive_timeout,
             session_security_settings,
+            server_password,
         )
         .await
     {

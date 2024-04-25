@@ -88,6 +88,7 @@ pub async fn handle<T: IOInterface>(
             invitee_response: _,
             session_security_settings,
             udp_mode,
+            session_password: _,
         } => {
             info!(target: "citadel", "User {implicated_cid:?} received Connect Request from {peer_cid:?}");
             let mut server_connection_map = this.server_connection_map.lock().await;

@@ -19,6 +19,7 @@ pub async fn handle<T: IOInterface>(
         proposed_password,
         connect_after_register,
         session_security_settings,
+        server_password,
     } = request
     else {
         unreachable!("Should never happen if programmed properly")
@@ -33,6 +34,7 @@ pub async fn handle<T: IOInterface>(
             username.clone(),
             proposed_password.clone(),
             session_security_settings,
+            server_password.clone(),
         )
         .await
     {
@@ -55,6 +57,7 @@ pub async fn handle<T: IOInterface>(
                     connect_mode: Default::default(),
                     session_security_settings,
                     request_id,
+                    server_password,
                 };
 
                 handle_request(this, uuid, connect_command).await

@@ -1,5 +1,6 @@
 use bytes::BytesMut;
 use citadel_internal_service_macros::{IsError, IsNotification};
+use citadel_sdk::prelude::PreSharedKey;
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -656,6 +657,7 @@ pub enum InternalServiceRequest {
         udp_mode: UdpMode,
         keep_alive_timeout: Option<Duration>,
         session_security_settings: SessionSecuritySettings,
+        server_password: Option<PreSharedKey>,
     },
     Register {
         request_id: Uuid,
@@ -665,6 +667,7 @@ pub enum InternalServiceRequest {
         proposed_password: SecBuffer,
         connect_after_register: bool,
         session_security_settings: SessionSecuritySettings,
+        server_password: Option<PreSharedKey>,
     },
     Message {
         request_id: Uuid,
@@ -722,6 +725,7 @@ pub enum InternalServiceRequest {
         peer_cid: u64,
         udp_mode: UdpMode,
         session_security_settings: SessionSecuritySettings,
+        peer_session_password: Option<PreSharedKey>,
     },
     PeerDisconnect {
         request_id: Uuid,
@@ -734,6 +738,7 @@ pub enum InternalServiceRequest {
         peer_cid: u64,
         session_security_settings: SessionSecuritySettings,
         connect_after_register: bool,
+        peer_session_password: Option<PreSharedKey>,
     },
     LocalDBGetKV {
         request_id: Uuid,
