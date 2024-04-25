@@ -667,7 +667,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
         // Set Info for Vector of Peers
-        let mut to_spawn: Vec<RegisterAndConnectItems<String, Vec<u8>>> = Vec::new();
+        let mut to_spawn: Vec<RegisterAndConnectItems<String, String, Vec<u8>, PreSharedKey>> =
+            Vec::new();
         for (peer_number, int_svc_addr_iter) in int_svc_addrs.clone().iter().enumerate() {
             let bind_address_internal_service = *int_svc_addr_iter;
             to_spawn.push(RegisterAndConnectItems {
@@ -975,7 +976,8 @@ mod tests {
         spawn_services(internal_services);
         tokio::time::sleep(Duration::from_millis(2000)).await;
 
-        let mut to_spawn: Vec<RegisterAndConnectItems<String, Vec<u8>>> = Vec::new();
+        let mut to_spawn: Vec<RegisterAndConnectItems<String, String, Vec<u8>, PreSharedKey>> =
+            Vec::new();
         for (peer_number, internal_service_address) in
             internal_service_addresses.clone().iter().enumerate()
         {

@@ -33,13 +33,18 @@ pub fn setup_log() {
     }));
 }
 
-pub struct RegisterAndConnectItems<T: Into<String>, S: Into<SecBuffer>> {
+pub struct RegisterAndConnectItems<
+    T: Into<String>,
+    R: Into<String>,
+    S: Into<SecBuffer>,
+    Q: Into<PreSharedKey>,
+> {
     pub internal_service_addr: SocketAddr,
     pub server_addr: SocketAddr,
     pub full_name: T,
-    pub username: T,
+    pub username: R,
     pub password: S,
-    pub pre_shared_key: Option<PreSharedKey>,
+    pub pre_shared_key: Option<Q>,
 }
 
 pub type InternalServicesFutures =
@@ -68,8 +73,13 @@ pub fn generic_error<T: ToString>(msg: T) -> Box<dyn Error> {
     ))
 }
 
-pub async fn register_and_connect_to_server<T: Into<String>, S: Into<SecBuffer>>(
-    services_to_create: Vec<RegisterAndConnectItems<T, S>>,
+pub async fn register_and_connect_to_server<
+    T: Into<String>,
+    R: Into<String>,
+    S: Into<SecBuffer>,
+    Q: Into<PreSharedKey>,
+>(
+    services_to_create: Vec<RegisterAndConnectItems<T, R, S, Q>>,
 ) -> Result<
     Vec<(
         UnboundedSender<InternalServiceRequest>,
@@ -93,7 +103,7 @@ pub async fn register_and_connect_to_server<T: Into<String>, S: Into<SecBuffer>>
         let username = item.username.into();
         let full_name = item.full_name.into();
         let password = item.password.into();
-        let server_password = item.pre_shared_key;
+        let server_password: Option<PreSharedKey> = item.pre_shared_key.map(|x| x.into());
         let session_security_settings = SessionSecuritySettingsBuilder::default().build().unwrap();
 
         info!(target = "citadel", "Sending Register Request");
@@ -222,7 +232,8 @@ pub async fn register_and_connect_to_server_then_peers(
     tokio::time::sleep(Duration::from_millis(2000)).await;
 
     // Set Info for Vector of Peers
-    let mut to_spawn: Vec<RegisterAndConnectItems<String, Vec<u8>>> = Vec::new();
+    let mut to_spawn: Vec<RegisterAndConnectItems<String, String, Vec<u8>, PreSharedKey>> =
+        Vec::new();
     for (peer_number, int_svc_addr_iter) in int_svc_addrs.clone().iter().enumerate() {
         let bind_address_internal_service = *int_svc_addr_iter;
         to_spawn.push(RegisterAndConnectItems {
