@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
 
-pub mod service;
+pub mod messaging_layer;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectSuccess {
