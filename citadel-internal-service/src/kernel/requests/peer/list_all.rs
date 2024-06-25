@@ -1,7 +1,10 @@
 use crate::kernel::requests::HandledRequestResult;
 use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
-use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse, ListAllPeersFailure, ListAllPeersResponse, PeerInformation};
+use citadel_internal_service_types::{
+    InternalServiceRequest, InternalServiceResponse, ListAllPeersFailure, ListAllPeersResponse,
+    PeerInformation,
+};
 use citadel_sdk::prelude::ProtocolRemoteExt;
 use uuid::Uuid;
 
@@ -22,12 +25,17 @@ pub async fn handle<T: IOInterface>(
                 peer_information: peers
                     .into_iter()
                     .filter(|peer| peer.cid != cid)
-                    .map(|peer| (peer.cid, PeerInformation {
-                        cid: peer.cid,
-                        online_status: peer.is_online,
-                        name: peer.full_name,
-                        username: peer.username,
-                    }))
+                    .map(|peer| {
+                        (
+                            peer.cid,
+                            PeerInformation {
+                                cid: peer.cid,
+                                online_status: peer.is_online,
+                                name: peer.full_name,
+                                username: peer.username,
+                            },
+                        )
+                    })
                     .collect(),
                 request_id: Some(request_id),
             };
