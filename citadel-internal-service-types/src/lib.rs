@@ -499,9 +499,17 @@ pub struct LocalDBClearAllKVSuccess {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PeerInformation {
+    pub cid: u64,
+    pub online_status: bool,
+    pub name: Option<String>,
+    pub username: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ListAllPeersResponse {
     pub cid: u64,
-    pub online_status: HashMap<u64, bool>,
+    pub peer_information: HashMap<u64, PeerInformation>,
     pub request_id: Option<Uuid>,
 }
 
@@ -522,8 +530,7 @@ pub struct ListRegisteredPeersFailure {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ListRegisteredPeersResponse {
     pub cid: u64,
-    pub peers: HashMap<u64, PeerSessionInformation>,
-    pub online_status: HashMap<u64, bool>,
+    pub peers: HashMap<u64, PeerInformation>,
     pub request_id: Option<Uuid>,
 }
 

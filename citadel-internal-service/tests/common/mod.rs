@@ -517,13 +517,13 @@ pub fn server_info_skip_cert_verification_with_password<'a>(
     server_test_node_skip_cert_verification_with_password(EmptyKernel, server_password, |_| {})
 }
 
-pub fn server_info_reactive_skip_cert_verification<'a, F: 'a, Fut: 'a>(
+pub fn server_info_reactive_skip_cert_verification<'a, F, Fut>(
     f: F,
     opts: impl FnOnce(&mut NodeBuilder),
 ) -> (NodeFuture<'a, Box<dyn NetKernel + 'a>>, SocketAddr)
 where
-    F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync,
-    Fut: Future<Output = Result<(), NetworkError>> + Send + Sync,
+    F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync + 'a,
+    Fut: Future<Output = Result<(), NetworkError>> + Send + Sync + 'a,
 {
     server_test_node_skip_cert_verification(
         Box::new(ClientConnectListenerKernel::new(f)) as Box<dyn NetKernel>,

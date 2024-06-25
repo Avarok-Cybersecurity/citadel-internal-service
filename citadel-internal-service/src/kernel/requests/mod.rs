@@ -31,11 +31,14 @@ mod local_db;
 mod peer;
 
 #[async_recursion]
-pub async fn handle_request<T: IOInterface>(
+pub async fn handle_request<T>(
     this: &CitadelWorkspaceService<T>,
     uuid: Uuid,
     command: InternalServiceRequest,
-) -> Option<HandledRequestResult> {
+) -> Option<HandledRequestResult>
+where
+    T: IOInterface,
+{
     match &command {
         InternalServiceRequest::GetAccountInformation { .. } => {
             return get_account_information::handle(this, uuid, command).await

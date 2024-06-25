@@ -502,8 +502,8 @@ mod tests {
 
         let resp = from_service.recv().await.unwrap();
         if let InternalServiceResponse::ListAllPeersResponse(list) = resp {
-            assert_eq!(list.online_status.len(), 1);
-            assert!(list.online_status.contains_key(&peer_cid))
+            assert_eq!(list.peer_information.len(), 1);
+            assert!(list.peer_information.contains_key(&peer_cid))
         } else {
             panic!("Invalid ListAllPeers response")
         }
@@ -517,8 +517,8 @@ mod tests {
 
         let resp = from_service.recv().await.unwrap();
         if let InternalServiceResponse::ListRegisteredPeersResponse(list) = resp {
-            assert_eq!(list.online_status.len(), 1);
-            assert!(list.online_status.contains_key(&peer_cid))
+            assert_eq!(list.peers.len(), 1);
+            assert!(list.peers.contains_key(&peer_cid))
         } else {
             panic!("Invalid ListAllPeers response")
         }
