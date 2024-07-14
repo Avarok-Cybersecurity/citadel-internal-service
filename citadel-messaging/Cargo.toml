@@ -13,3 +13,4 @@ bincode2 = { workspace = true }
 uuid = { version = "1.8.0", features = ["v4"] }
 tokio = { workspace = true }
 log = "0.4.21"
+futures = { workspace = true }

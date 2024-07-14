@@ -1,6 +1,5 @@
 use bytes::BytesMut;
 use citadel_internal_service_macros::{IsError, IsNotification};
-use citadel_sdk::prelude::PreSharedKey;
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -11,6 +10,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
+// TODO: Move PreSharedKey into citadel-types
+use citadel_sdk::prelude::PreSharedKey;
 
 pub mod messaging_layer;
 
