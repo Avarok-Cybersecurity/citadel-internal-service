@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DataEnum, DeriveInput, Fields, Ident};
+use syn::{parse_macro_input, Data, DataEnum, DeriveInput, Ident};
 
 #[proc_macro_derive(IsError)]
 pub fn is_error_derive(input: TokenStream) -> TokenStream {
@@ -65,46 +65,4 @@ fn generate_match_arms(
             }
         })
         .collect()
-}
-
-
-
-#[proc_macro_derive(RequestId)]
-pub fn derive_request_id(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let name = input.ident;
-
-    let request_id_impl = if let Data::Enum(data_enum) = &input.data {
-        let match_arms = data_enum.variants.iter().map(|variant| {
-            let variant_name = &variant.ident;
-            let request_id_field = if let Fields::Named(fields_named) = &variant.fields {
-                fields_named.named.iter().find(|field| field.ident.as_ref().unwrap() == "request_id")
-            } else {
-                None
-            };
-
-            if let Some(_) = request_id_field {
-                quote! {
-                    #name::#variant_name { ref request_id, .. } => *request_id,
-                }
-            } else {
-                quote! {}
-            }
-        });
-
-        quote! {
-            impl RequestId for #name {
-                fn request_id(&self) -> u32 {
-                    match self {
-                        #(#match_arms)*
-                        _ => panic!("Variant does not contain a request_id field"),
-                    }
-                }
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    TokenStream::from(request_id_impl)
 }
