@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_internal_service_macros::{IsError, IsNotification};
+use citadel_internal_service_macros::{IsError, IsNotification, RequestId};
 use citadel_sdk::prelude::PreSharedKey;
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
@@ -565,7 +565,11 @@ pub struct FileTransferTickNotification {
     pub status: ObjectTransferStatus,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification)]
+pub trait RequestId {
+    fn request_id(&self) -> u32;
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification, RequestId)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectFailure(ConnectFailure),
