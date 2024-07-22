@@ -23,7 +23,7 @@ citadel-internal-service-macros = { path = "./citadel-internal-service-macros", 
 
 # Avarok deps
 citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol/" }
-citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol/" }
+citadel_types = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol", branch = "utils-for-citadel-workspace" }
 citadel_logging = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol/" }
 
 # Standard deps
