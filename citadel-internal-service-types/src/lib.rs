@@ -38,7 +38,9 @@ pub struct RegisterFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceConnectionAccepted;
+pub struct ServiceConnectionAccepted {
+    pub request_id: Option<Uuid>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MessageSendSuccess {
@@ -546,6 +548,7 @@ pub struct FileTransferRequestNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub metadata: VirtualObjectMetadata,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -563,6 +566,11 @@ pub struct FileTransferTickNotification {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub status: ObjectTransferStatus,
+    pub request_id: Option<Uuid>,
+}
+
+pub trait ResponseId {
+    fn response_id() -> String;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification)]
@@ -644,6 +652,101 @@ pub enum InternalServiceResponse {
     ListAllPeersFailure(ListAllPeersFailure),
     ListRegisteredPeersResponse(ListRegisteredPeersResponse),
     ListRegisteredPeersFailure(ListRegisteredPeersFailure),
+}
+
+macro_rules! match_request_id {
+    ($val:expr, $($variant:ident),+) => {
+        match $val {
+            $(
+                InternalServiceResponse::$variant(x) => x.request_id,
+            )+
+        }
+    }
+}
+
+impl InternalServiceResponse {
+    pub fn request_id(&self) -> Option<Uuid> {
+        match_request_id!(
+            self,
+            ConnectSuccess,
+            ConnectFailure,
+            RegisterSuccess,
+            RegisterFailure,
+            ServiceConnectionAccepted,
+            MessageSendSuccess,
+            MessageSendFailure,
+            MessageNotification,
+            DisconnectNotification,
+            DisconnectFailure,
+            SendFileRequestSuccess,
+            SendFileRequestFailure,
+            FileTransferRequestNotification,
+            FileTransferStatusNotification,
+            FileTransferTickNotification,
+            DownloadFileSuccess,
+            DownloadFileFailure,
+            DeleteVirtualFileSuccess,
+            DeleteVirtualFileFailure,
+            PeerConnectSuccess,
+            PeerConnectFailure,
+            PeerConnectNotification,
+            PeerRegisterNotification,
+            PeerDisconnectSuccess,
+            PeerDisconnectFailure,
+            PeerRegisterSuccess,
+            PeerRegisterFailure,
+            GroupChannelCreateSuccess,
+            GroupChannelCreateFailure,
+            GroupBroadcastHandleFailure,
+            GroupCreateSuccess,
+            GroupCreateFailure,
+            GroupLeaveSuccess,
+            GroupLeaveFailure,
+            GroupLeaveNotification,
+            GroupEndSuccess,
+            GroupEndFailure,
+            GroupEndNotification,
+            GroupMessageNotification,
+            GroupMessageResponse,
+            GroupMessageSuccess,
+            GroupMessageFailure,
+            GroupInviteNotification,
+            GroupInviteSuccess,
+            GroupInviteFailure,
+            GroupRespondRequestSuccess,
+            GroupRespondRequestFailure,
+            GroupMembershipResponse,
+            GroupRequestJoinPendingNotification,
+            GroupDisconnectNotification,
+            GroupKickSuccess,
+            GroupKickFailure,
+            GroupListGroupsSuccess,
+            GroupListGroupsFailure,
+            GroupListGroupsResponse,
+            GroupJoinRequestNotification,
+            GroupRequestJoinAcceptResponse,
+            GroupRequestJoinDeclineResponse,
+            GroupRequestJoinSuccess,
+            GroupRequestJoinFailure,
+            GroupMemberStateChangeNotification,
+            LocalDBGetKVSuccess,
+            LocalDBGetKVFailure,
+            LocalDBSetKVSuccess,
+            LocalDBSetKVFailure,
+            LocalDBDeleteKVSuccess,
+            LocalDBDeleteKVFailure,
+            LocalDBGetAllKVSuccess,
+            LocalDBGetAllKVFailure,
+            LocalDBClearAllKVSuccess,
+            LocalDBClearAllKVFailure,
+            GetSessionsResponse,
+            GetAccountInformationResponse,
+            ListAllPeersResponse,
+            ListAllPeersFailure,
+            ListRegisteredPeersResponse,
+            ListRegisteredPeersFailure
+        )
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
