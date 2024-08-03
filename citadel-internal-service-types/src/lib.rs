@@ -661,6 +661,7 @@ pub enum InternalServiceResponse {
     ListRegisteredPeersFailure(ListRegisteredPeersFailure),
 }
 
+/// Shortcut for getting `.request_id` attribute on all members
 macro_rules! match_request_id {
     ($val:expr, $($variant:ident),+) => {
         match $val {
