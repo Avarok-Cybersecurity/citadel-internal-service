@@ -1,12 +1,13 @@
 [workspace]
-
 resolver = "2"
+
 members = [
     "citadel-internal-service",
     "citadel-internal-service-types",
     "citadel-internal-service-connector",
     "citadel-internal-service-macros",
     "service",
+    "citadel-messaging",
 ]
 
 exclude = [
@@ -20,6 +21,7 @@ citadel-internal-service-types = { path = "./citadel-internal-service-types", de
 citadel-internal-service = { path = "./citadel-internal-service", default-features = false, version = "0.1.0" }
 citadel-internal-service-connector = { path = "./citadel-internal-service-connector", default-features = false, version = "0.1.0" }
 citadel-internal-service-macros = { path = "./citadel-internal-service-macros", default-features = false, version = "0.1.0" }
+citadel-messaging = { path = "./citadel-messaging", default-features = false, version = "0.1.0" }
 
 # Avarok deps
 citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol/" }

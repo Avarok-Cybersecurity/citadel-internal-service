@@ -1,6 +1,5 @@
 use bytes::BytesMut;
-use citadel_internal_service_macros::{IsError, IsNotification};
-use citadel_sdk::prelude::PreSharedKey;
+use citadel_internal_service_macros::{IsError, IsNotification, RequestId};
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -11,8 +10,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
+// TODO: Move PreSharedKey into citadel-types
+use citadel_sdk::prelude::PreSharedKey;
 
-pub mod service;
+pub mod messaging_layer;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectSuccess {
@@ -572,7 +573,7 @@ pub struct FileTransferTickNotification {
     pub status: ObjectTransferStatus,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification)]
+#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification, RequestId)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectFailure(ConnectFailure),
@@ -653,7 +654,7 @@ pub enum InternalServiceResponse {
     ListRegisteredPeersFailure(ListRegisteredPeersFailure),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, RequestId)]
 pub enum InternalServiceRequest {
     Connect {
         // A user-provided unique ID that will be returned in the response
