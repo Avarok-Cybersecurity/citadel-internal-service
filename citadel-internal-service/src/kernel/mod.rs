@@ -368,6 +368,7 @@ fn spawn_tick_updater(
                                 cid: implicated_cid,
                                 peer_cid,
                                 status: status_message,
+                                request_id: None,
                             },
                         );
                         match entry.send(message.clone()) {
