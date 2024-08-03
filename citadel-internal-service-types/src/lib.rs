@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_internal_service_macros::{IsError, IsNotification};
+use citadel_internal_service_macros::{IsError, IsNotification, RequestId};
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -566,7 +566,7 @@ pub struct FileTransferTickNotification {
     pub status: ObjectTransferStatus,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification)]
+#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification, RequestId)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectFailure(ConnectFailure),
@@ -647,7 +647,7 @@ pub enum InternalServiceResponse {
     ListRegisteredPeersFailure(ListRegisteredPeersFailure),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, RequestId)]
 pub enum InternalServiceRequest {
     Connect {
         // A user-provided unique ID that will be returned in the response

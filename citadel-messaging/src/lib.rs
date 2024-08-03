@@ -3,9 +3,7 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::messaging_layer::{
     CWMessage, MessengerUpdate, OutgoingCWMessage,
 };
-use citadel_internal_service_types::{
-    InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
-};
+use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
 use futures::sink::SinkExt;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -21,9 +19,9 @@ pub struct Messenger<T: IOInterface> {
     tx_to_subscriber: UnboundedSender<MessengerUpdate>,
     rx_from_messenger: Option<UnboundedReceiver<MessengerUpdate>>,
     internal_service_senders:
-        Arc<Mutex<HashMap<Uuid, tokio::sync::oneshot::Sender<InternalServiceResponse>>>>,
+        Arc<Mutex<HashMap<Uuid, tokio::sync::oneshot::Sender<MessengerUpdate>>>>,
     internal_service_listeners:
-        Arc<Mutex<HashMap<Uuid, tokio::sync::oneshot::Receiver<InternalServiceResponse>>>>,
+        Arc<Mutex<HashMap<Uuid, tokio::sync::oneshot::Receiver<MessengerUpdate>>>>,
     is_running: Arc<AtomicBool>,
 }
 
@@ -68,16 +66,21 @@ impl<T: IOInterface> Messenger<T> {
 
             while let Some(response) = stream.next().await {
                 let mut lock = interal_service_senders_clone.lock().await;
-                if let Some(tx) = lock.remove(response.request_id()) {
-                    if let Err(response) = tx.send(response) {
-                        // Send through subscriber as backup
-                        if let Err(_err) = tx_to_subscriber_clone.send(response) {}
+
+                if let Some(uuid) = response.request_id() {
+                    if let Some(tx) = lock.remove(uuid) {
+                        if let Err(response) = tx.send(response) {
+                            // Send through subscriber as backup
+                            if let Err(_err) = tx_to_subscriber_clone.send(response) {}
+                        }
+
+                        continue;
                     }
-                } else {
-                    // Send through normal channel
-                    let signal = MessengerUpdate::Other { response };
-                    if let Err(_err) = tx_to_subscriber_clone.send(signal) {}
                 }
+
+                // Send through normal channel
+                let signal = MessengerUpdate::Other { response };
+                if let Err(_err) = tx_to_subscriber_clone.send(signal) {}
             }
         };
 
@@ -213,7 +216,7 @@ impl<T: IOInterface> Messenger<T> {
                     largest_peer_cid = message.peer_cid;
                 }
 
-                let response = self.send_and_wait_for_response(request_id, command).await?;
+                let response = self.send_and_wait_for_response(command).await?;
                 if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
                     // Continue
                 } else {
@@ -234,7 +237,7 @@ impl<T: IOInterface> Messenger<T> {
             };
 
             if let InternalServiceResponse::LocalDBSetKVSuccess(_) = self
-                .send_and_wait_for_response(request_id, request_for_largest_received)
+                .send_and_wait_for_response(request_for_largest_received)
                 .await?
             {
                 // Continue
@@ -248,11 +251,18 @@ impl<T: IOInterface> Messenger<T> {
 
     pub async fn send_and_wait_for_response(
         &mut self,
-        request_id: Uuid,
         internal_service_request: InternalServiceRequest,
     ) -> std::io::Result<InternalServiceResponse> {
+        let request_id = internal_service_request
+            .request_id()
+            .copied()
+            .ok_or_else(|| {
+                generic_std_error("Failed to get request id for internal service request")
+            })?;
+
         self.register_listener_internal(request_id).await;
         self.connection.send(internal_service_request).await?;
+
         let rx = self
             .internal_service_listeners
             .lock()
@@ -260,11 +270,21 @@ impl<T: IOInterface> Messenger<T> {
             .remove(&request_id)
             .ok_or_else(|| generic_std_error("Failed to get listener for request"))?;
 
-        rx.await.map_err(|_| {
+        let recv = rx.await.map_err(|_| {
             generic_std_error(format!(
                 "Failed to get response for request: {request_id:?}"
             ))
-        })
+        });
+
+        match recv.map_err(|err| generic_std_error(format!("Failed to get response: {err}")))? {
+            update @ MessengerUpdate::Message { .. } => {
+                self.tx_to_subscriber
+                    .send(update)
+                    .map_err(|err| generic_std_error(format!("Failed to send message: {err}")))?;
+            }
+
+            MessengerUpdate::Other { response } => Ok(response),
+        }
     }
 
     async fn register_listener_internal(&self, uuid: Uuid) {
@@ -289,9 +309,7 @@ impl<T: IOInterface> Messenger<T> {
             key: generate_highest_message_id_key_for_cid_received(cid, peer_cid),
         };
 
-        let response = self
-            .send_and_wait_for_response(request_id, request_for_largest)
-            .await?;
+        let response = self.send_and_wait_for_response(request_for_largest).await?;
         if let InternalServiceResponse::LocalDBGetKVSuccess(value) = response {
             let highest_value = be_vec_to_u64(&value.value)
                 .ok_or_else(|| generic_std_error("Invalid highest CID encoding"))?;
@@ -318,7 +336,7 @@ impl<T: IOInterface> Messenger<T> {
             key: key.clone(),
         };
 
-        let response = self.send_and_wait_for_response(request_id, request).await?;
+        let response = self.send_and_wait_for_response(request).await?;
 
         let mut db = if let InternalServiceResponse::LocalDBGetKVSuccess(value) = response {
             let db = bincode2::deserialize(&value.value).map_err(|err| {
@@ -349,7 +367,7 @@ impl<T: IOInterface> Messenger<T> {
             value: serialized,
         };
 
-        let response = self.send_and_wait_for_response(request_id, request).await?;
+        let response = self.send_and_wait_for_response(request).await?;
 
         if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
             Ok(())
