@@ -17,7 +17,6 @@ use uuid::Uuid;
 pub struct Messenger<T: IOInterface> {
     connection: WrappedSink<T>,
     tx_to_subscriber: UnboundedSender<MessengerUpdate>,
-    rx_from_messenger: Option<UnboundedReceiver<MessengerUpdate>>,
     internal_service_senders:
         Arc<Mutex<HashMap<Uuid, tokio::sync::oneshot::Sender<MessengerUpdate>>>>,
     internal_service_listeners:
@@ -36,15 +35,32 @@ struct ConnectionPairDatabase {
 }
 
 impl<T: IOInterface> Messenger<T> {
-    pub fn new(connection: InternalServiceConnector<T>) -> Self {
+    pub fn new(
+        connection: InternalServiceConnector<T>,
+    ) -> (
+        UnboundedSender<OutgoingCWMessage>,
+        UnboundedReceiver<MessengerUpdate>,
+    ) {
         let (tx_to_subscriber, rx_from_messenger) = tokio::sync::mpsc::unbounded_channel();
+        let (
+            tx_to_internal_outbound_message_receiver,
+            mut rx_from_internal_outbound_message_receiver,
+        ) = tokio::sync::mpsc::unbounded_channel();
         let InternalServiceConnector { sink, mut stream } = connection;
 
         let tx_to_subscriber_clone = tx_to_subscriber.clone();
 
         let internal_service_listeners = Arc::new(Mutex::new(HashMap::new()));
         let internal_service_senders = Arc::new(Mutex::new(HashMap::new()));
-        let interal_service_senders_clone = internal_service_senders.clone();
+        let internal_service_senders_clone = internal_service_senders.clone();
+
+        let mut this = Self {
+            connection: sink,
+            tx_to_subscriber,
+            internal_service_listeners,
+            internal_service_senders,
+            is_running,
+        };
 
         struct DropSafe {
             inner: Arc<AtomicBool>,
@@ -64,45 +80,54 @@ impl<T: IOInterface> Messenger<T> {
                 inner: is_running_clone,
             };
 
-            while let Some(response) = stream.next().await {
-                let mut lock = interal_service_senders_clone.lock().await;
-
-                if let Some(uuid) = response.request_id() {
-                    if let Some(tx) = lock.remove(uuid) {
-                        if let Err(response) = tx.send(response) {
+            let task0 = async move {
+                while let Some(message) = rx_from_internal_outbound_message_receiver.recv().await {
+                    if let MessengerUpdate::Message { message } = message {
+                        // Store the message to the backend
+                        let messages = vec![message];
+                        if let Err(err) = this.register_received_messages(&messages).await {
                             // Send through subscriber as backup
-                            if let Err(_err) = tx_to_subscriber_clone.send(response) {}
+                            if let Err(_err) = tx_to_subscriber_clone.send(MessengerUpdate::Other {
+                                response: InternalServiceResponse::Error(err.to_string()),
+                            }) {}
                         }
-
-                        continue;
                     }
                 }
+            };
 
-                // Send through normal channel
-                let signal = MessengerUpdate::Other { response };
-                if let Err(_err) = tx_to_subscriber_clone.send(signal) {}
-            }
+            let task1 = async move {
+                while let Some(response) = stream.next().await {
+                    let mut lock = internal_service_senders_clone.lock().await;
+
+                    if let Some(uuid) = response.request_id() {
+                        if let Some(tx) = lock.remove(uuid) {
+                            if let Err(response) = tx.send(response) {
+                                // Send through subscriber as backup
+                                if let Err(_err) = tx_to_subscriber_clone.send(response) {}
+                            }
+
+                            continue;
+                        }
+                    }
+
+                    // Send through normal channel
+                    let signal = MessengerUpdate::Other { response };
+                    if let Err(_err) = tx_to_subscriber_clone.send(signal) {}
+                }
+            };
+
+            tokio::try_join!(task0, task1)
+                .map_err(|err| generic_std_error(format!("Failed to receive message: {}", err)))?;
         };
 
         tokio::task::spawn(receive_task);
 
-        Self {
-            connection: sink,
-            tx_to_subscriber,
-            rx_from_messenger: Some(rx_from_messenger),
-            internal_service_listeners,
-            internal_service_senders,
-            is_running,
-        }
-    }
-
-    /// The consumer of this function should remove the receiver from the messenger and handle events as necessary
-    pub fn take_messenger_update_handle(&mut self) -> Option<UnboundedReceiver<MessengerUpdate>> {
-        self.rx_from_messenger.take()
+        (tx_to_internal_outbound_message_receiver, rx_from_messenger)
     }
 
     /// Take self exclusively to ensure no multiple simultaneous access to sending messages outbound
-    pub async fn send_new_message(&mut self, message: OutgoingCWMessage) -> std::io::Result<()> {
+    /// This function is expected to be c
+    async fn send_new_message(&mut self, message: OutgoingCWMessage) -> std::io::Result<()> {
         if !self.ensure_all_local_outbound_messages_received().await? {
             // If not all messages are received, we should enqueue the message for later background processing
             // NOTE: This message, once it is up for sending, will need to call the below code
@@ -179,8 +204,55 @@ impl<T: IOInterface> Messenger<T> {
         todo!()
     }
 
-    async fn register_received_messages(&self, messages: &Vec<CWMessage>) -> std::io::Result<()> {
-        todo!()
+    async fn register_received_messages(
+        &mut self,
+        messages: &Vec<CWMessage>,
+    ) -> std::io::Result<()> {
+        for message in messages {
+            self.visit_database(message.cid, message.peer_cid, |mut db| {
+                db.received_messages.insert(
+                    message.id,
+                    MessengerUpdate::Message {
+                        message: message.clone(),
+                    },
+                );
+
+                if let Some(current_greatest) = db.greatest_acknowledged_id {
+                    if message.id > current_greatest {
+                        db.greatest_acknowledged_id = Some(message.id);
+                    }
+                } else {
+                    db.greatest_acknowledged_id = Some(message.id);
+                }
+
+                db
+            })
+            .await?;
+
+            // Update the highest received message id
+            let request_id = Uuid::new_v4();
+            let request = InternalServiceRequest::LocalDBSetKV {
+                request_id,
+                cid: message.cid,
+                peer_cid: message.peer_cid,
+                key: generate_highest_message_id_key_for_cid_received(
+                    message.cid,
+                    message.peer_cid,
+                ),
+                value: u64_to_be_vec(message.id),
+            };
+
+            let response = self.send_and_wait_for_response(request).await?;
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
+                // Continue
+            } else {
+                return Err(generic_std_error(
+                    "Failed to update highest received message id",
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     async fn store_to_backend(&mut self, messages: &Vec<CWMessage>) -> std::io::Result<()> {
@@ -249,7 +321,7 @@ impl<T: IOInterface> Messenger<T> {
         Ok(())
     }
 
-    pub async fn send_and_wait_for_response(
+    async fn send_and_wait_for_response(
         &mut self,
         internal_service_request: InternalServiceRequest,
     ) -> std::io::Result<InternalServiceResponse> {
@@ -378,12 +450,6 @@ impl<T: IOInterface> Messenger<T> {
 
     fn is_running(&self) -> bool {
         self.is_running.load(Ordering::Relaxed)
-    }
-}
-
-impl<T: IOInterface> From<InternalServiceConnector<T>> for Messenger<T> {
-    fn from(value: InternalServiceConnector<T>) -> Self {
-        Self::new(value)
     }
 }
 
