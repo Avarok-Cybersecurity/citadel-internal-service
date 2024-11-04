@@ -80,12 +80,12 @@ fn generate_field_match_arms(
             if is_tuple_variant {
                 // See if the type is a Uuid or an Option<Uuid>
                 if let syn::Type::Path(type_path) = &field.ty {
-                    if type_path.path.segments.len() == 1 {
-                        if type_path.path.segments[0].ident == "Uuid" {
-                            return quote! {
-                                #name::#variant_ident(inner) => Some(&inner.#field_name),
-                            };
-                        }
+                    if type_path.path.segments.len() == 1
+                        && type_path.path.segments[0].ident == "Uuid"
+                    {
+                        return quote! {
+                            #name::#variant_ident(inner) => Some(&inner.#field_name),
+                        };
                     }
                 }
 

@@ -45,3 +45,6 @@ async-recursion = { version = "1.0.4" }
 parking_lot = { version = "0.12.1" }
 structopt = { version = "0.3.26" }
 lazy_static = "1.4.0"
+async-trait = "0.1.83"
+itertools = "0.13.0"
+dashmap = "6.1.0"

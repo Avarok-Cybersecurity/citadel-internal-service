@@ -1,3 +1,6 @@
+pub mod reliable_ordered;
+
+/*
 use citadel_internal_service_connector::connector::{InternalServiceConnector, WrappedSink};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::messaging_layer::{
@@ -195,6 +198,8 @@ impl<T: IOInterface> Messenger<T> {
             security_level,
         };
 
+        // TODO: Use internal timed-polling message enqueuing to send messages as needed. Some messages can be immediately sent,
+        // while other will need to wait for synchronization before sending.
         self.connection.send(request).await?;
 
         Ok(())
@@ -485,3 +490,4 @@ fn be_vec_to_u64(value: &[u8]) -> Option<u64> {
 fn generic_std_error<T: Into<String>>(message: T) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, message.into())
 }
+*/
