@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/citadel-internal-service-connector/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/citadel-internal-service-macros/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/citadel-internal-service-types/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/citadel-internal-service/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/citadel-internal-service/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/service/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/intersession-layer-messaging/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>
