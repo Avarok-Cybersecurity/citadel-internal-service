@@ -10,8 +10,7 @@ use dashmap::DashMap;
 use futures::future::Either;
 use futures::{SinkExt, StreamExt};
 use intersession_layer_messaging::{
-    Backend, DeliveryError, MessageMetadata, MessageSystem, NetworkError, Payload,
-    UnderlyingSessionTransport,
+    Backend, DeliveryError, MessageMetadata, NetworkError, Payload, UnderlyingSessionTransport, ILM,
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -72,7 +71,7 @@ pub struct StreamKey {
 
 pub struct CitadelWorkspaceBackend {}
 
-type CitadelWorkspaceISM<B> = MessageSystem<WrappedMessage, B, LocalDeliveryTx, ISMHandle<B>>;
+type CitadelWorkspaceISM<B> = ILM<WrappedMessage, B, LocalDeliveryTx, ISMHandle<B>>;
 
 pub struct LocalDeliveryTx {
     final_tx: UnboundedSender<InternalServiceResponse>,
@@ -129,7 +128,7 @@ where
             final_tx: self.final_tx.clone(),
         };
         let backend = self.backend.clone();
-        let ism = MessageSystem::new(backend, local_delivery_wrapper, ism_handle)
+        let ism = ILM::new(backend, local_delivery_wrapper, ism_handle)
             .await
             .map_err(|err| MessengerError::OtherError {
                 reason: format!("{err:?}"),
@@ -482,13 +481,13 @@ where
     /// Sends an arbitrary request to the internal service. Not processed by the ISM layer.
     pub async fn send_request(
         &self,
-        request: InternalServicePayload,
+        request: impl Into<InternalServicePayload>,
     ) -> Result<(), MessengerError> {
         let payload = Payload::Message(WrappedMessage {
             source_id: self.stream_key.cid,
             destination_id: LOOPBACK_ONLY,
             message_id: 0, // Does not matter since this will bypass ISM
-            contents: request,
+            contents: request.into(),
         });
 
         self.bypass_ism_outbound_tx
@@ -508,10 +507,10 @@ where
     async fn send_message_to_ism(
         &self,
         peer_cid: u64,
-        request: InternalServicePayload,
+        request: impl Into<InternalServicePayload>,
     ) -> Result<(), MessengerError> {
         self.ism
-            .send_to(peer_cid, request)
+            .send_to(peer_cid, request.into())
             .await
             .map_err(|err| match err {
                 NetworkError::SendFailed { reason, message } => match message.contents {

@@ -871,6 +871,18 @@ pub enum InternalServicePayload {
     Response(InternalServiceResponse),
 }
 
+impl From<InternalServiceResponse> for InternalServicePayload {
+    fn from(response: InternalServiceResponse) -> Self {
+        InternalServicePayload::Response(response)
+    }
+}
+
+impl From<InternalServiceRequest> for InternalServicePayload {
+    fn from(request: InternalServiceRequest) -> Self {
+        InternalServicePayload::Request(request)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

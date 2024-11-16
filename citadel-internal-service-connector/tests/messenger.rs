@@ -29,7 +29,6 @@ mod tests {
             vec![
                 bind_address_internal_service_a,
                 bind_address_internal_service_b,
-                bind_address_internal_service_c,
             ],
             None,
             None,
@@ -40,16 +39,12 @@ mod tests {
             peer_return_handle_vec.take_next_service_handle();
         let (to_service_b, mut from_service_b, cid_b) =
             peer_return_handle_vec.take_next_service_handle();
-        let (to_service_c, mut from_service_c, cid_c) =
-            peer_return_handle_vec.take_next_service_handle();
 
         let (messenger_a, rx_a) = get_messenger(bind_address_internal_service_a).await?;
         let (messenger_b, rx_b) = get_messenger(bind_address_internal_service_b).await?;
-        let (messenger_c, rx_c) = get_messenger(bind_address_internal_service_c).await?;
 
-        let tx_a = messenger_a.multiplex(cid_a);
-        let tx_b = messenger_b.multiplex(cid_b);
-        let tx_c = messenger_c.multiplex(cid_c);
+        let tx_a = messenger_a.multiplex(cid_a).await?;
+        let tx_b = messenger_b.multiplex(cid_b).await?;
 
         Ok(())
     }

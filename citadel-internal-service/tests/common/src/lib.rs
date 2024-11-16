@@ -247,7 +247,7 @@ pub async fn register_and_connect_to_server_then_peers(
     }
 
     // Registers and Connects all peers to Server
-    let mut returned_service_info = register_and_connect_to_server(to_spawn).await.unwrap();
+    let mut returned_service_info = register_and_connect_to_server(to_spawn).await?;
 
     info!(
         target = "citadel",
