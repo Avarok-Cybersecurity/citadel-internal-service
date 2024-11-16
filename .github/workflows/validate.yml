@@ -24,6 +24,9 @@ jobs:
     steps:
       - uses: Avarok-Cybersecurity/gh-actions-deps@master
       - uses: taiki-e/install-action@nextest
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - run: cargo nextest run --package citadel-internal-service --features=vendored
         if: startsWith(matrix.os, 'windows')
       - run: cargo nextest run --package citadel-internal-service
@@ -34,6 +37,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: Avarok-Cybersecurity/gh-actions-deps@master
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - run: rustup component add clippy-preview
       - run: cargo clippy --tests -- -D warnings
 
@@ -42,4 +48,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: Avarok-Cybersecurity/gh-actions-deps@master
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - run: cargo fmt --check

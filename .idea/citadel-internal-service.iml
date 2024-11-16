@@ -9,6 +9,8 @@
       <sourceFolder url="file://$MODULE_DIR$/citadel-internal-service/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/service/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/intersession-layer-messaging/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/citadel-internal-service/tests/common/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/citadel-internal-service-connector/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

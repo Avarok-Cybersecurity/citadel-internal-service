@@ -6,6 +6,7 @@ members = [
     "citadel-internal-service-types",
     "citadel-internal-service-connector",
     "citadel-internal-service-macros",
+    "citadel-internal-service/tests/common",
     "service",
     "intersession-layer-messaging",
 ]
@@ -17,6 +18,7 @@ exclude = [
 [workspace.dependencies]
 
 # Workspace deps
+citadel-internal-service-test-common = { path = "./citadel-internal-service/tests/common", default-features = false, version = "0.1.0" }
 citadel-internal-service-types = { path = "./citadel-internal-service-types", default-features = false, version = "0.1.0" }
 citadel-internal-service = { path = "./citadel-internal-service", default-features = false, version = "0.1.0" }
 citadel-internal-service-connector = { path = "./citadel-internal-service-connector", default-features = false, version = "0.1.0" }
