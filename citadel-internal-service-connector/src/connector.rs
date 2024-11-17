@@ -14,6 +14,16 @@ pub struct InternalServiceConnector<T: IOInterface> {
     pub stream: WrappedStream<T>,
 }
 
+impl<T: IOInterface> InternalServiceConnector<T> {
+    pub async fn from_io(mut io: T) -> Option<Self> {
+        let (sink, stream) = io.next_connection().await?;
+        Some(Self {
+            sink: WrappedSink { inner: sink },
+            stream: WrappedStream { inner: stream },
+        })
+    }
+}
+
 pub struct WrappedStream<T: IOInterface> {
     pub inner: T::Stream,
 }

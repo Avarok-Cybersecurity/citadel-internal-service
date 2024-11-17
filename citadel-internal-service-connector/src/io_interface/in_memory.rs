@@ -1,13 +1,63 @@
 use crate::io_interface::IOInterface;
 use async_trait::async_trait;
-use citadel_internal_service_types::InternalServicePayload;
+use citadel_internal_service_types::{
+    InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
+};
+use citadel_logging::tracing::log;
 use futures::Sink;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 pub struct InMemoryInterface {
-    pub sink: Option<futures::channel::mpsc::UnboundedSender<InternalServicePayload>>,
-    pub stream: Option<futures::channel::mpsc::UnboundedReceiver<InternalServicePayload>>,
+    pub sink: Option<tokio::sync::mpsc::UnboundedSender<InternalServicePayload>>,
+    pub stream: Option<tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>>,
+}
+
+impl InMemoryInterface {
+    pub fn from_request_response_pair(
+        sink: tokio::sync::mpsc::UnboundedSender<InternalServiceRequest>,
+        mut stream: tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
+    ) -> Self {
+        let (tx_to_sink, mut rx_for_sink) =
+            tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
+        let (tx_for_stream, rx_for_stream) =
+            tokio::sync::mpsc::unbounded_channel::<InternalServicePayload>();
+        let sink_mapped_task = async move {
+            while let Some(InternalServicePayload::Request(outbound)) = rx_for_sink.recv().await {
+                if let Err(err) = sink.send(outbound) {
+                    log::error!(target: "citadel", "Error sending to sink: {:?}", err);
+                    return;
+                }
+            }
+
+            log::error!(target: "citadel", "Sink mapped channel closed");
+        };
+
+        let stream_mapped_task = async move {
+            while let Some(response) = stream.recv().await {
+                if let Err(err) = tx_for_stream.send(InternalServicePayload::Response(response)) {
+                    log::error!(target: "citadel", "Error sending to sink: {:?}", err);
+                    return;
+                }
+            }
+
+            log::error!(target: "citadel", "Stream mapped channel closed");
+        };
+
+        let task = async move {
+            tokio::select! {
+                _ = sink_mapped_task => {},
+                _ = stream_mapped_task => {}
+            }
+        };
+
+        drop(tokio::spawn(task));
+
+        Self {
+            sink: Some(tx_to_sink),
+            stream: Some(rx_for_stream),
+        }
+    }
 }
 
 #[async_trait]
@@ -25,49 +75,36 @@ impl IOInterface for InMemoryInterface {
     }
 }
 
-pub struct InMemorySink(pub futures::channel::mpsc::UnboundedSender<InternalServicePayload>);
+pub struct InMemorySink(pub tokio::sync::mpsc::UnboundedSender<InternalServicePayload>);
 
 impl Sink<InternalServicePayload> for InMemorySink {
     type Error = std::io::Error;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.0)
-            .poll_ready(cx)
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: InternalServicePayload) -> Result<(), Self::Error> {
+        self.0
+            .send(item)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
     }
 
-    fn start_send(
-        mut self: Pin<&mut Self>,
-        item: InternalServicePayload,
-    ) -> Result<(), Self::Error> {
-        Pin::new(&mut self.0)
-            .start_send(item)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.0)
-            .poll_flush(cx)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.0)
-            .poll_close(cx)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 }
 
-pub struct InMemoryStream(pub futures::channel::mpsc::UnboundedReceiver<InternalServicePayload>);
+pub struct InMemoryStream(pub tokio::sync::mpsc::UnboundedReceiver<InternalServicePayload>);
 
 impl futures::Stream for InMemoryStream {
     type Item = std::io::Result<InternalServicePayload>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.0).poll_next(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(item)) => Poll::Ready(Some(Ok(item))),
-        }
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.get_mut().0.poll_recv(cx).map(|r| r.map(Ok))
     }
 }

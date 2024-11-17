@@ -36,6 +36,7 @@ pub async fn handle<T: IOInterface>(
                         Some(peer_cid),
                         &mut server_connection_map,
                         this.tcp_connection_map.clone(),
+                        Some(request_id),
                     );
 
                     accept_result

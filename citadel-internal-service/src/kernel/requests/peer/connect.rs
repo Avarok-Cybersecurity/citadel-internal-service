@@ -63,7 +63,6 @@ pub async fn handle<T: IOInterface>(
                 .await
             {
                 Ok(peer_connect_success) => {
-                    let connection_cid = peer_connect_success.channel.get_peer_cid();
                     let (sink, mut stream) = peer_connect_success.channel.split();
                     this.server_connection_map
                         .lock()
@@ -79,7 +78,7 @@ pub async fn handle<T: IOInterface>(
                             let message =
                                 InternalServiceResponse::MessageNotification(MessageNotification {
                                     message: message.into_buffer(),
-                                    cid: connection_cid,
+                                    cid,
                                     peer_cid,
                                     request_id: Some(request_id),
                                 });

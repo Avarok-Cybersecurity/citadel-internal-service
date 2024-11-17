@@ -45,6 +45,7 @@ pub async fn handle<T: IOInterface>(
                     Some(peer_cid),
                     &mut server_connection_map,
                     this.tcp_connection_map.clone(),
+                    None,
                 );
             } else {
                 // Send an update to the TCP client that way they can choose to accept or reject the transfer
@@ -53,6 +54,7 @@ pub async fn handle<T: IOInterface>(
                         cid: implicated_cid,
                         peer_cid,
                         metadata,
+                        request_id: None,
                     },
                 );
 
@@ -78,6 +80,7 @@ pub async fn handle<T: IOInterface>(
             Some(peer_cid),
             &mut server_connection_map,
             this.tcp_connection_map.clone(),
+            None,
         );
     }
 

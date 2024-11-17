@@ -39,7 +39,9 @@ pub struct RegisterFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceConnectionAccepted;
+pub struct ServiceConnectionAccepted {
+    pub request_id: Option<Uuid>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MessageSendSuccess {
@@ -554,6 +556,7 @@ pub struct FileTransferRequestNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub metadata: VirtualObjectMetadata,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -571,6 +574,7 @@ pub struct FileTransferTickNotification {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub status: ObjectTransferStatus,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification, RequestId)]
@@ -916,5 +920,21 @@ mod tests {
             });
         assert!(!success_response.is_notification());
         assert!(notification_response.is_notification());
+    }
+
+    #[test]
+    fn test_request_id_derive() {
+        let request_id = Uuid::new_v4();
+        let request = InternalServiceRequest::Connect {
+            request_id,
+            username: "test".to_string(),
+            password: SecBuffer::from(vec![]),
+            connect_mode: ConnectMode::default(),
+            udp_mode: UdpMode::Enabled,
+            keep_alive_timeout: None,
+            session_security_settings: SessionSecuritySettings::default(),
+            server_password: None,
+        };
+        assert_eq!(request.request_id(), Some(&request_id));
     }
 }

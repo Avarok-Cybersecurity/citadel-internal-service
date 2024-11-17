@@ -28,7 +28,7 @@ use uuid::Uuid;
 pub fn setup_log() {
     citadel_logging::setup_log();
     std::panic::set_hook(Box::new(|info| {
-        citadel_logging::error!(target: "citadel", "Panic: {:?}", info);
+        citadel_logging::error!(target: "citadel", "Panic: {}", info);
         std::process::exit(1);
     }));
 }
@@ -104,7 +104,7 @@ pub async fn register_and_connect_to_server<
         let full_name = item.full_name.into();
         let password = item.password.into();
         let server_password: Option<PreSharedKey> = item.pre_shared_key.map(|x| x.into());
-        let session_security_settings = SessionSecuritySettingsBuilder::default().build().unwrap();
+        let session_security_settings = SessionSecuritySettingsBuilder::default().build()?;
 
         info!(target = "citadel", "Sending Register Request");
         let register_command = InternalServiceRequest::Register {
@@ -117,7 +117,7 @@ pub async fn register_and_connect_to_server<
             connect_after_register: false,
             server_password: server_password.clone(),
         };
-        send(&mut sink, register_command).await.unwrap();
+        send(&mut sink, register_command).await?;
 
         let response_packet = stream.next().await.unwrap();
 
@@ -141,7 +141,7 @@ pub async fn register_and_connect_to_server<
                 server_password: server_password.clone(),
             };
 
-            send(&mut sink, command).await.unwrap();
+            send(&mut sink, command).await?;
 
             let response_packet = stream.next().await.unwrap();
             if let InternalServiceResponse::ConnectSuccess(
@@ -264,8 +264,7 @@ pub async fn register_and_connect_to_server_then_peers(
         let (ref mut to_service_a, ref mut from_service_a, cid_a) = item;
         for neighbor in neighbor_items {
             let (ref mut to_service_b, ref mut from_service_b, cid_b) = neighbor;
-            let session_security_settings =
-                SessionSecuritySettingsBuilder::default().build().unwrap();
+            let session_security_settings = SessionSecuritySettingsBuilder::default().build()?;
             register_p2p(
                 to_service_a,
                 from_service_a,
@@ -628,6 +627,7 @@ pub async fn exhaust_stream_to_file_completion(
                     cid: _,
                     peer_cid: _,
                     status,
+                    ..
                 },
             ) => match status {
                 ObjectTransferStatus::ReceptionBeginning(file_path, vfm) => {

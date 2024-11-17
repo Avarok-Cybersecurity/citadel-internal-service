@@ -1,6 +1,7 @@
 use crate::connector::InternalServiceConnector;
 use crate::io_interface::IOInterface;
 use async_trait::async_trait;
+use bytes::{Bytes, BytesMut};
 use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse, SecurityLevel,
     SessionInformation,
@@ -12,6 +13,7 @@ use futures::{SinkExt, StreamExt};
 use intersession_layer_messaging::{
     Backend, DeliveryError, MessageMetadata, NetworkError, Payload, UnderlyingSessionTransport, ILM,
 };
+use itertools::Itertools;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -67,6 +69,15 @@ const BYPASS_ISM_STREAM_ID: u8 = 1;
 pub struct StreamKey {
     pub cid: u64,
     pub stream_id: u8,
+}
+
+impl StreamKey {
+    const fn bypass_ism() -> Self {
+        StreamKey {
+            cid: LOOPBACK_ONLY,
+            stream_id: BYPASS_ISM_STREAM_ID,
+        }
+    }
 }
 
 pub struct CitadelWorkspaceBackend {}
@@ -178,6 +189,21 @@ where
             mut stream,
         } = connector;
 
+        #[derive(Serialize, Deserialize)]
+        enum WireWrapper {
+            Message {
+                source: u64,
+                destination: u64,
+                message_id: u64,
+                contents: Vec<u8>,
+            },
+            ISMAux {
+                signal: InternalMessage,
+            },
+        }
+
+        let bypass_key = StreamKey::bypass_ism();
+
         let this = self.clone();
         let tx_to_local_user_clone = self.final_tx.clone();
         let network_inbound_task = async move {
@@ -186,24 +212,52 @@ where
                     return;
                 }
 
+                log::info!(target: "citadel", "Received message from network layer: {network_message:?}");
                 match network_message {
                     // TODO: Add support for group messaging
-                    InternalServiceResponse::MessageNotification(message) => {
+                    InternalServiceResponse::MessageNotification(mut message) => {
                         // deserialize and relay to ISM
-                        match bincode2::deserialize(&message.message) {
+                        match bincode2::deserialize::<WireWrapper>(&message.message) {
                             Ok(ism_message) => {
                                 // Assume this is an ISM message
+
+                                let ism_message = match ism_message {
+                                    WireWrapper::ISMAux { signal } => signal,
+                                    WireWrapper::Message {
+                                        contents,
+                                        source,
+                                        destination,
+                                        message_id,
+                                    } => {
+                                        let _ = std::mem::replace(
+                                            &mut message.message,
+                                            BytesMut::from(Bytes::from(contents)),
+                                        );
+                                        InternalMessage::Message(WrappedMessage {
+                                            source_id: source,
+                                            destination_id: destination,
+                                            message_id,
+                                            contents: InternalServicePayload::Response(
+                                                InternalServiceResponse::MessageNotification(
+                                                    message,
+                                                ),
+                                            ),
+                                        })
+                                    }
+                                };
+
                                 let stream_key = StreamKey {
-                                    cid: message.cid,
+                                    cid: ism_message.destination_id(),
                                     stream_id: ISM_STREAM_ID,
                                 };
+
                                 if let Some(tx) = this.txs_to_inbound.get(&stream_key) {
                                     if let Err(err) = tx.send(ism_message) {
                                         log::error!(target: "citadel", "Error while sending message to ISM: {err:?}");
                                     }
                                 } else {
                                     // TODO: enqueue for later use
-                                    log::warn!(target: "citadel", "Received message for unknown stream key: {stream_key:?}");
+                                    log::warn!(target: "citadel", "Received message for unknown stream key: {stream_key:?} | Available: {:?}", this.txs_to_inbound.iter().map(|r| *r.key()).collect::<Vec<_>>());
                                 }
                             }
                             Err(err) => {
@@ -212,11 +266,33 @@ where
                         }
                     }
                     non_ism_message => {
+                        // Process all other messages here
+                        if matches!(
+                            non_ism_message,
+                            InternalServiceResponse::MessageSendSuccess(..)
+                        ) {
+                            continue;
+                        }
+                        // In the special case of GetSessionsResponse, we update the state
                         if let InternalServiceResponse::GetSessionsResponse(sessions) =
                             &non_ism_message
                         {
                             let mut lock = this.connected_peers.write();
-                            this.connected_peers.write().clear();
+                            let previous_local_cids =
+                                lock.keys().copied().sorted().collect::<Vec<_>>();
+                            let current_local_cid = sessions
+                                .sessions
+                                .iter()
+                                .map(|r| r.cid)
+                                .sorted()
+                                .collect::<Vec<_>>();
+
+                            // Cleanup any stale sessions
+                            for previous_local_cid in previous_local_cids {
+                                if !current_local_cid.contains(&previous_local_cid) {
+                                    lock.remove(&previous_local_cid);
+                                }
+                            }
 
                             for session in &sessions.sessions {
                                 let cid = session.cid;
@@ -225,10 +301,15 @@ where
                             }
                         }
 
+                        log::info!(target: "citadel", "ABO on {non_ism_message:?}");
                         if let Some(request_id) = non_ism_message.request_id() {
+                            log::info!(target: "citadel", "AB1 on {non_ism_message:?}");
                             if this.background_invoked_requests.lock().remove(request_id) {
+                                log::info!(target: "citadel", "[BYPASS] Inbound message will not be forwarded to ISM: {non_ism_message:?}");
                                 // This was a request invoked by the background task. Do not deliver to ISM
                                 continue;
+                            } else {
+                                log::info!(target: "citadel", "AB2 on {non_ism_message:?}");
                             }
                         }
 
@@ -243,9 +324,10 @@ where
         };
 
         let this = self.clone();
-        // Takes messages sent through ISM and funnels them here
+        // Takes messages sent through ISM or a direct request and funnels them here
         let ism_to_background_task_outbound = async move {
             while let Some((stream_key, message_internal)) = rx_to_outbound.recv().await {
+                log::info!(target: "citadel", "Received message from ISM or background: {stream_key:?}: {message_internal:?}");
                 if !this.is_running() {
                     return;
                 }
@@ -254,11 +336,55 @@ where
                 // 1) Handle -> ISM -> Here, in which case, it is for messaging between nodes, or;
                 // 2) Handle -> Here, in which case, it is a request for the internal service
                 match message_internal {
-                    Payload::Message(message) if stream_key.stream_id == BYPASS_ISM_STREAM_ID => {
+                    Payload::Message(message) if stream_key == bypass_key => {
                         // This is a message for the internal service
                         let InternalServicePayload::Request(request) = message.contents else {
                             log::warn!(target: "citadel", "Received a message with no destination that was not a request: {message:?}");
                             continue;
+                        };
+
+                        log::info!(target: "citadel", "[Bypass] Received a message for the internal service: {request:?}");
+
+                        if let Err(err) = sink.send(request).await {
+                            log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}")
+                        }
+                    }
+
+                    Payload::Message(mut ism_message) if stream_key != bypass_key => {
+                        if !matches!(
+                            &ism_message.contents,
+                            InternalServicePayload::Request(InternalServiceRequest::Message { .. })
+                        ) {
+                            log::warn!(target: "citadel", "Received a message for another node that was not a message: {stream_key:?}");
+                            continue;
+                        }
+
+                        let InternalServicePayload::Request(InternalServiceRequest::Message {
+                            request_id,
+                            message,
+                            cid,
+                            peer_cid,
+                            security_level,
+                        }) = &mut ism_message.contents
+                        else {
+                            unreachable!("Should be able to unwrap message");
+                        };
+
+                        // Create a new request where the payload is the serialized WireWrapper
+                        // The contents of the wirewrapper take the original message and the source and destination for preservation
+                        let wire_message = WireWrapper::Message {
+                            contents: std::mem::take(message),
+                            source: ism_message.source_id,
+                            destination: ism_message.destination_id,
+                            message_id: ism_message.message_id,
+                        };
+                        let request = InternalServiceRequest::Message {
+                            request_id: *request_id,
+                            message: bincode2::serialize(&wire_message)
+                                .expect("Should be able to serialize message"),
+                            cid: *cid,
+                            peer_cid: *peer_cid,
+                            security_level: *security_level,
                         };
 
                         if let Err(err) = sink.send(request).await {
@@ -266,17 +392,20 @@ where
                         }
                     }
 
-                    ism_proto if stream_key.stream_id == ISM_STREAM_ID => {
-                        // This is a message for another node. We must construct a message request
-                        // For inbound logic, we assume all message types use the ISM proto, otherwise, fail
-                        let serialized_message = bincode2::serialize(&ism_proto)
+                    ism_proto if stream_key != bypass_key => {
+                        // This is an ACK/POLL message which needs to be manually wrapped into a message
+                        log::info!(target: "citadel", "[NO-BYPASS] Received a message for another node: {stream_key:?}");
+                        let cid = ism_proto.source_id();
+                        let peer_cid = ism_proto.destination_id();
+                        let wire_message = WireWrapper::ISMAux { signal: ism_proto };
+                        let serialized_message = bincode2::serialize(&wire_message)
                             .expect("Should be able to serialize message");
                         // TODO: Add support for group messaging
                         let message_request = InternalServiceRequest::Message {
                             request_id: Uuid::new_v4(),
                             message: serialized_message,
-                            cid: stream_key.cid,
-                            peer_cid: None,
+                            cid,
+                            peer_cid: Some(peer_cid),
                             security_level: Default::default(),
                         };
 
@@ -294,11 +423,6 @@ where
 
         let this = self.clone();
         let periodic_session_status_poller = async move {
-            let bypass_key = StreamKey {
-                cid: LOOPBACK_ONLY,
-                stream_id: BYPASS_ISM_STREAM_ID,
-            };
-
             let mut ticker = tokio::time::interval(POLL_CONNECTED_PEERS_REFRESH_PERIOD);
             loop {
                 if !this.is_running() {
@@ -323,6 +447,7 @@ where
                             InternalServiceRequest::GetSessions { request_id },
                         ),
                     });
+                    log::info!(target: "citadel", "[POLL] Sending session status poller request {bypass_key:?}: {request:?}");
                     if let Err(err) = this.bypass_ism_tx_to_outbound.send((bypass_key, request)) {
                         log::error!(target: "citadel", "Error while sending session status poller request: {err:?}");
                         return;
@@ -426,6 +551,7 @@ impl MessageMetadata for WrappedMessage {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum MessengerError {
     SendError {
         reason: String,
@@ -437,6 +563,7 @@ pub enum MessengerError {
     InitError {
         reason: String,
     },
+    Shutdown,
 }
 
 impl Display for MessengerError {
@@ -451,6 +578,29 @@ impl<B> MessengerTx<B>
 where
     B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
 {
+    pub async fn wait_for_peer_to_connect(&self, peer_cid: u64) -> Result<(), MessengerError> {
+        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        loop {
+            if !self.messenger.is_running() {
+                return Err(MessengerError::Shutdown);
+            }
+            let _ = interval.tick().await;
+
+            if self.get_connected_peers().await.contains(&peer_cid) {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Returns a list of peers that the local client is connected to
+    pub async fn get_connected_peers(&self) -> Vec<u64> {
+        self.ism.get_connected_peers().await
+    }
+
+    pub fn local_cid(&self) -> u64 {
+        self.stream_key.cid
+    }
+
     pub async fn send_message_to(
         &self,
         peer_cid: u64,
@@ -490,8 +640,10 @@ where
             contents: request.into(),
         });
 
+        let bypass_key = StreamKey::bypass_ism();
+
         self.bypass_ism_outbound_tx
-            .send((self.stream_key, payload))
+            .send((bypass_key, payload))
             .map_err(|err| {
                 let reason = err.to_string();
                 match err.0 .1 {
@@ -608,7 +760,7 @@ where
     async fn connected_peers(&self) -> Vec<<Self::Message as MessageMetadata>::PeerId> {
         let cid = self.local_id();
         if let Some(sess) = self.messenger_ptr.connected_peers.read().get(&cid) {
-            sess.peer_connections.keys().copied().collect()
+            sess.peer_connections.values().map(|r| r.peer_cid).collect()
         } else {
             log::warn!(target: "citadel", "No session information found for {cid}");
             vec![]

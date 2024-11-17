@@ -10,8 +10,6 @@ vendored = ["citadel_sdk/vendored"]
 [dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded"] }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
-tokio-util = { workspace = true, features = ["codec"] }
-bincode2 = { workspace = true }
 citadel-internal-service = { workspace = true }
 citadel-internal-service-types = { workspace = true }
 citadel-internal-service-connector = { workspace = true }
@@ -22,8 +20,6 @@ uuid = { workspace = true, features = [
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ]}
 citadel_logging = { workspace = true }
-bytes = { workspace = true }
-async-recursion = { workspace = true }
 
 [dev-dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }

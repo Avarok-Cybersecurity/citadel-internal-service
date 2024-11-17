@@ -81,19 +81,19 @@ impl CitadelWorkspaceService<InMemoryInterface> {
         InternalServiceConnector<InMemoryInterface>,
         CitadelWorkspaceService<InMemoryInterface>,
     ) {
-        let (tx_to_consumer, rx_from_consumer) = futures::channel::mpsc::unbounded();
-        let (tx_to_svc, rx_from_svc) = futures::channel::mpsc::unbounded();
+        let (tx_to_consumer, rx_from_consumer) = tokio::sync::mpsc::unbounded_channel();
+        let (tx_to_svc, rx_from_svc) = tokio::sync::mpsc::unbounded_channel();
         let connector = InternalServiceConnector {
             sink: WrappedSink {
                 inner: InMemorySink(tx_to_svc),
             },
             stream: WrappedStream {
-                inner: InMemoryStream(rx_from_svc),
+                inner: InMemoryStream(rx_from_consumer),
             },
         };
         let kernel = InMemoryInterface {
             sink: Some(tx_to_consumer),
-            stream: Some(rx_from_consumer),
+            stream: Some(rx_from_svc),
         }
         .into();
         (connector, kernel)
@@ -354,10 +354,12 @@ fn spawn_tick_updater(
     peer_cid: Option<u64>,
     server_connection_map: &mut HashMap<u64, Connection>,
     tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
+    request_id: Option<Uuid>,
 ) {
     let mut handle_inner = object_transfer_handler.inner;
     if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
         let uuid = connection.associated_tcp_connection;
+        let request_id = Some(request_id.unwrap_or(uuid));
         let sender_status_updater = async move {
             while let Some(status) = handle_inner.next().await {
                 let status_message = status.clone();
@@ -368,6 +370,7 @@ fn spawn_tick_updater(
                                 cid: implicated_cid,
                                 peer_cid,
                                 status: status_message,
+                                request_id,
                             },
                         );
                         match entry.send(message.clone()) {

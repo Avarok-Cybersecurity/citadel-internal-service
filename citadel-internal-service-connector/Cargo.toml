@@ -18,6 +18,8 @@ citadel_logging = { workspace = true }
 async-trait = "0.1.79"
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
+itertools = { workspace = true }
+bytes = "1.8.0"
 
 [dev-dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }

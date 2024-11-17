@@ -4,26 +4,29 @@ use citadel_internal_service_test_common as common;
 mod tests {
     use crate::common::register_and_connect_to_server_then_peers;
     use citadel_internal_service_connector::connector::InternalServiceConnector;
-    use citadel_internal_service_connector::io_interface::tcp::TcpIOInterface;
+    use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
+    use citadel_internal_service_connector::io_interface::IOInterface;
     use citadel_internal_service_connector::messenger::{
-        CitadelWorkspaceMessenger, WrappedMessage,
+        CitadelWorkspaceMessenger, MessengerTx, WrappedMessage,
     };
     use citadel_internal_service_test_common::PeerServiceHandles;
-    use citadel_internal_service_types::InternalServiceResponse;
+    use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
+    use futures::{SinkExt, StreamExt};
     use intersession_layer_messaging::testing::InMemoryBackend;
+    use intersession_layer_messaging::Backend;
     use std::error::Error;
+    use std::io::ErrorKind;
     use std::net::SocketAddr;
     use tokio::sync::mpsc::UnboundedReceiver;
+    use uuid::Uuid;
 
     #[tokio::test]
-    async fn test_messenger() -> Result<(), Box<dyn Error>> {
+    async fn test_connector_mapping() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
-        // internal service for peer C
-        let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
 
         let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
             vec![
@@ -35,22 +38,245 @@ mod tests {
         )
         .await?;
 
-        let (to_service_a, mut from_service_a, cid_a) =
+        let (to_service_a, from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();
-        let (to_service_b, mut from_service_b, cid_b) =
+        let (to_service_b, from_service_b, cid_b) =
             peer_return_handle_vec.take_next_service_handle();
 
-        let (messenger_a, rx_a) = get_messenger(bind_address_internal_service_a).await?;
-        let (messenger_b, rx_b) = get_messenger(bind_address_internal_service_b).await?;
+        let io = InMemoryInterface::from_request_response_pair(to_service_a, from_service_a);
+        let mut connector_a = InternalServiceConnector::from_io(io).await.ok_or_else(|| {
+            std::io::Error::new(
+                ErrorKind::NotConnected,
+                "Unable to create in memory interface",
+            )
+        })?;
+
+        let io = InMemoryInterface::from_request_response_pair(to_service_b, from_service_b);
+        let mut connector_b = InternalServiceConnector::from_io(io).await.ok_or_else(|| {
+            std::io::Error::new(
+                ErrorKind::NotConnected,
+                "Unable to create in memory interface",
+            )
+        })?;
+
+        test_get_sessions_connector(&mut connector_a, 1, cid_a).await?;
+        test_get_sessions_connector(&mut connector_b, 1, cid_b).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_messenger_requests_and_session_state() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        // internal service for peer A
+        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        // internal service for peer B
+        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            ],
+            None,
+            None,
+        )
+        .await?;
+
+        let (to_service_a, from_service_a, cid_a) =
+            peer_return_handle_vec.take_next_service_handle();
+        let (to_service_b, from_service_b, cid_b) =
+            peer_return_handle_vec.take_next_service_handle();
+
+        let (messenger_a, mut rx_a) = get_messenger(to_service_a, from_service_a).await?;
+        let (messenger_b, mut rx_b) = get_messenger(to_service_b, from_service_b).await?;
 
         let tx_a = messenger_a.multiplex(cid_a).await?;
         let tx_b = messenger_b.multiplex(cid_b).await?;
+
+        assert_eq!(tx_a.local_cid(), cid_a);
+        assert_eq!(tx_b.local_cid(), cid_b);
+
+        test_get_sessions_messenger_get_sessions(&tx_a, &mut rx_a, 1, cid_a).await?;
+        test_get_sessions_messenger_get_sessions(&tx_b, &mut rx_b, 1, cid_b).await?;
+
+        assert_eq!(tx_a.get_connected_peers().await, vec![cid_b]);
+        assert_eq!(tx_b.get_connected_peers().await, vec![cid_a]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_messenger_messaging() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        // internal service for peer A
+        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        // internal service for peer B
+        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                bind_address_internal_service_a,
+                bind_address_internal_service_b,
+            ],
+            None,
+            None,
+        )
+        .await?;
+
+        let (to_service_a, from_service_a, cid_a) =
+            peer_return_handle_vec.take_next_service_handle();
+        let (to_service_b, from_service_b, cid_b) =
+            peer_return_handle_vec.take_next_service_handle();
+
+        let (messenger_a, mut rx_a) = get_messenger(to_service_a, from_service_a).await?;
+        let (messenger_b, mut rx_b) = get_messenger(to_service_b, from_service_b).await?;
+
+        let tx_a = messenger_a.multiplex(cid_a).await?;
+        let tx_b = messenger_b.multiplex(cid_b).await?;
+
+        tx_a.wait_for_peer_to_connect(cid_b).await?;
+        tx_b.wait_for_peer_to_connect(cid_a).await?;
+
+        for _ in 0..100 {
+            test_ping_pong(&tx_a, &mut rx_a, &tx_b, &mut rx_b).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn test_ping_pong<B>(
+        tx_a: &MessengerTx<B>,
+        rx_a: &mut UnboundedReceiver<InternalServiceResponse>,
+        tx_b: &MessengerTx<B>,
+        rx_b: &mut UnboundedReceiver<InternalServiceResponse>,
+    ) -> Result<(), Box<dyn Error>>
+    where
+        B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    {
+        let cid_a = tx_a.local_cid();
+        let cid_b = tx_b.local_cid();
+
+        let ping = b"Ping" as &[u8];
+        let pong = b"Pong" as &[u8];
+
+        let task_a = async move {
+            tx_a.send_message_to(cid_b, ping)
+                .await
+                .expect("Failed to send message");
+            let resp = rx_b
+                .recv()
+                .await
+                .expect("Expected a message from the internal server");
+            if let InternalServiceResponse::MessageNotification(message) = &resp {
+                assert_eq!(message.cid, cid_b);
+                assert_eq!(message.peer_cid, cid_a);
+                assert_eq!(message.message, ping);
+            } else {
+                panic!("Expected a MessageNotification, got: {resp:?}");
+            }
+        };
+
+        let task_b = async move {
+            tx_b.send_message_to(cid_a, pong)
+                .await
+                .expect("Failed to send message");
+            let resp = rx_a
+                .recv()
+                .await
+                .expect("Expected a message from the internal server");
+            if let InternalServiceResponse::MessageNotification(message) = &resp {
+                assert_eq!(message.cid, cid_a);
+                assert_eq!(message.peer_cid, cid_b);
+                assert_eq!(message.message, pong);
+            } else {
+                panic!("Expected a MessageNotification, got: {resp:?}");
+            }
+        };
+
+        // Send messages concurrently
+        tokio::join!(task_a, task_b);
+
+        Ok(())
+    }
+
+    async fn test_get_sessions_messenger_get_sessions<B>(
+        tx: &MessengerTx<B>,
+        rx: &mut UnboundedReceiver<InternalServiceResponse>,
+        sess_count: usize,
+        cid: u64,
+    ) -> Result<(), Box<dyn Error>>
+    where
+        B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    {
+        let request = InternalServiceRequest::GetSessions {
+            request_id: Uuid::new_v4(),
+        };
+
+        let inspector = |response| {
+            if let InternalServiceResponse::GetSessionsResponse(response) = &response {
+                assert_eq!(response.sessions.len(), sess_count);
+                assert!(response.sessions.iter().any(|r| r.cid == cid));
+            } else {
+                panic!("Expected a GetSessionsResponse, got: {response:?}");
+            }
+        };
+
+        test_get_sessions_messenger_request_response(tx, rx, request, inspector).await?;
+
+        Ok(())
+    }
+
+    async fn test_get_sessions_messenger_request_response<B, F>(
+        tx: &MessengerTx<B>,
+        rx: &mut UnboundedReceiver<InternalServiceResponse>,
+        request: InternalServiceRequest,
+        response_inspector: F,
+    ) -> Result<(), Box<dyn Error>>
+    where
+        B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+        F: FnOnce(InternalServiceResponse),
+    {
+        tx.send_request(request).await?;
+
+        let response = rx
+            .recv()
+            .await
+            .expect("Expected a response from the internal server");
+        response_inspector(response);
+
+        Ok(())
+    }
+
+    async fn test_get_sessions_connector<T: IOInterface>(
+        connector: &mut InternalServiceConnector<T>,
+        sess_count: usize,
+        cid: u64,
+    ) -> Result<(), Box<dyn Error>> {
+        connector
+            .sink
+            .send(InternalServiceRequest::GetSessions {
+                request_id: Uuid::new_v4(),
+            })
+            .await?;
+        let response = connector
+            .stream
+            .next()
+            .await
+            .expect("Expected a response from the internal server");
+        if let InternalServiceResponse::GetSessionsResponse(response) = response {
+            assert_eq!(response.sessions.len(), sess_count);
+            assert!(response.sessions.iter().any(|r| r.cid == cid));
+        } else {
+            panic!("Expected a GetSessionsResponse");
+        }
 
         Ok(())
     }
 
     async fn get_messenger(
-        internal_service_addr: SocketAddr,
+        to_service: tokio::sync::mpsc::UnboundedSender<InternalServiceRequest>,
+        from_service: tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
     ) -> Result<
         (
             CitadelWorkspaceMessenger<InMemoryBackend<WrappedMessage>>,
@@ -58,7 +284,13 @@ mod tests {
         ),
         Box<dyn Error>,
     > {
-        let connector = InternalServiceConnector::connect(internal_service_addr).await?;
+        let io = InMemoryInterface::from_request_response_pair(to_service, from_service);
+        let connector = InternalServiceConnector::from_io(io).await.ok_or_else(|| {
+            std::io::Error::new(
+                ErrorKind::NotConnected,
+                "Unable to create in memory interface",
+            )
+        })?;
         let backend = InMemoryBackend::default();
         let (messenger, rx) = CitadelWorkspaceMessenger::new(connector, backend).await?;
         Ok((messenger, rx))

@@ -78,22 +78,12 @@ fn generate_field_match_arms(
                 .next()
                 .map_or(false, |field| field.ident.is_none());
             if is_tuple_variant {
-                // See if the type is a Uuid or an Option<Uuid>
                 if let syn::Type::Path(type_path) = &field.ty {
-                    if type_path.path.segments.len() == 1
-                        && type_path.path.segments[0].ident == "Uuid"
-                    {
+                    if type_path.path.segments.len() == 1 {
                         return quote! {
-                            #name::#variant_ident(inner) => Some(&inner.#field_name),
+                            #name::#variant_ident(inner) => inner.#field_name.as_ref(),
                         };
                     }
-                }
-
-                // See if "inner" has a field called "request_id"
-                if field.ident.is_none() {
-                    return quote! {
-                    #name::#variant_ident(_) => None,
-                    };
                 }
 
                 // Match against each variant, ignoring any inner data

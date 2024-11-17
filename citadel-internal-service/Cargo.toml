@@ -12,7 +12,6 @@ vendored = ["citadel_sdk/vendored"]
 [dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded"] }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
-tokio-util = { workspace = true, features = ["codec"] }
 bincode2 = { workspace = true }
 citadel-internal-service-types = { workspace = true }
 citadel-internal-service-connector = { workspace = true }
