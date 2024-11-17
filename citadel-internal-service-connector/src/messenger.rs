@@ -129,6 +129,7 @@ where
         Ok((this, final_rx))
     }
 
+    /// Multiplexes the messenger, creating a unique handle for the specified local client, `cid`
     pub async fn multiplex(&self, cid: u64) -> Result<MessengerTx<B>, MessengerError> {
         let stream_key = StreamKey {
             cid,
@@ -212,7 +213,7 @@ where
                     return;
                 }
 
-                log::info!(target: "citadel", "Received message from network layer: {network_message:?}");
+                log::trace!(target: "citadel", "Received message from network layer: {network_message:?}");
                 match network_message {
                     // TODO: Add support for group messaging
                     InternalServiceResponse::MessageNotification(mut message) => {
@@ -256,7 +257,7 @@ where
                                         log::error!(target: "citadel", "Error while sending message to ISM: {err:?}");
                                     }
                                 } else {
-                                    // TODO: enqueue for later use
+                                    // TODO: enqueue for later use; though, this should not happen due to pre-send checks in ISM
                                     log::warn!(target: "citadel", "Received message for unknown stream key: {stream_key:?} | Available: {:?}", this.txs_to_inbound.iter().map(|r| *r.key()).collect::<Vec<_>>());
                                 }
                             }
@@ -301,15 +302,11 @@ where
                             }
                         }
 
-                        log::info!(target: "citadel", "ABO on {non_ism_message:?}");
                         if let Some(request_id) = non_ism_message.request_id() {
-                            log::info!(target: "citadel", "AB1 on {non_ism_message:?}");
                             if this.background_invoked_requests.lock().remove(request_id) {
-                                log::info!(target: "citadel", "[BYPASS] Inbound message will not be forwarded to ISM: {non_ism_message:?}");
+                                log::trace!(target: "citadel", "[BYPASS] Inbound message will not be forwarded to ISM: {non_ism_message:?}");
                                 // This was a request invoked by the background task. Do not deliver to ISM
                                 continue;
-                            } else {
-                                log::info!(target: "citadel", "AB2 on {non_ism_message:?}");
                             }
                         }
 
@@ -327,7 +324,7 @@ where
         // Takes messages sent through ISM or a direct request and funnels them here
         let ism_to_background_task_outbound = async move {
             while let Some((stream_key, message_internal)) = rx_to_outbound.recv().await {
-                log::info!(target: "citadel", "Received message from ISM or background: {stream_key:?}: {message_internal:?}");
+                log::trace!(target: "citadel", "Received message from ISM or background: {stream_key:?}: {message_internal:?}");
                 if !this.is_running() {
                     return;
                 }
@@ -343,7 +340,7 @@ where
                             continue;
                         };
 
-                        log::info!(target: "citadel", "[Bypass] Received a message for the internal service: {request:?}");
+                        log::trace!(target: "citadel", "[Bypass] Received a message for the internal service: {request:?}");
 
                         if let Err(err) = sink.send(request).await {
                             log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}")
@@ -351,14 +348,6 @@ where
                     }
 
                     Payload::Message(mut ism_message) if stream_key != bypass_key => {
-                        if !matches!(
-                            &ism_message.contents,
-                            InternalServicePayload::Request(InternalServiceRequest::Message { .. })
-                        ) {
-                            log::warn!(target: "citadel", "Received a message for another node that was not a message: {stream_key:?}");
-                            continue;
-                        }
-
                         let InternalServicePayload::Request(InternalServiceRequest::Message {
                             request_id,
                             message,
@@ -367,7 +356,8 @@ where
                             security_level,
                         }) = &mut ism_message.contents
                         else {
-                            unreachable!("Should be able to unwrap message");
+                            log::warn!(target: "citadel", "Received an outgoing request for another node that was not a message: {stream_key:?}");
+                            continue;
                         };
 
                         // Create a new request where the payload is the serialized WireWrapper
@@ -378,6 +368,7 @@ where
                             destination: ism_message.destination_id,
                             message_id: ism_message.message_id,
                         };
+
                         let request = InternalServiceRequest::Message {
                             request_id: *request_id,
                             message: bincode2::serialize(&wire_message)
@@ -388,7 +379,8 @@ where
                         };
 
                         if let Err(err) = sink.send(request).await {
-                            log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}")
+                            log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}");
+                            return;
                         }
                     }
 
@@ -410,7 +402,8 @@ where
                         };
 
                         if let Err(err) = sink.send(message_request).await {
-                            log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}")
+                            log::error!(target: "citadel", "Error while sending ISM message to outbound network: {err:?}");
+                            return;
                         }
                     }
 
@@ -447,7 +440,7 @@ where
                             InternalServiceRequest::GetSessions { request_id },
                         ),
                     });
-                    log::info!(target: "citadel", "[POLL] Sending session status poller request {bypass_key:?}: {request:?}");
+                    log::trace!(target: "citadel", "[POLL] Sending session status poller request {bypass_key:?}: {request:?}");
                     if let Err(err) = this.bypass_ism_tx_to_outbound.send((bypass_key, request)) {
                         log::error!(target: "citadel", "Error while sending session status poller request: {err:?}");
                         return;
@@ -460,15 +453,15 @@ where
         let task = async move {
             tokio::select! {
                 _ = network_inbound_task => {
-                    log::warn!(target: "citadel", "Network inbound task ended. Messenger is shutting down")
+                    log::error!(target: "citadel", "Network inbound task ended. Messenger is shutting down")
                 },
 
                 _ = ism_to_background_task_outbound => {
-                    log::warn!(target: "citadel", "Local handle to ISM outbound task ended. Messenger is shutting down")
+                    log::error!(target: "citadel", "Local handle to ISM outbound task ended. Messenger is shutting down")
                 }
 
                 _ = periodic_session_status_poller => {
-                    log::warn!(target: "citadel", "Periodic session status poller ended. Messenger is shutting down")
+                    log::error!(target: "citadel", "Periodic session status poller ended. Messenger is shutting down")
                 }
             }
 
@@ -578,6 +571,7 @@ impl<B> MessengerTx<B>
 where
     B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
 {
+    /// Waits for a peer to connect to the local client
     pub async fn wait_for_peer_to_connect(&self, peer_cid: u64) -> Result<(), MessengerError> {
         let mut interval = tokio::time::interval(Duration::from_millis(100));
         loop {

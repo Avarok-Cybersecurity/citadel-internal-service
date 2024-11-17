@@ -17,7 +17,9 @@ mod tests {
     use std::error::Error;
     use std::io::ErrorKind;
     use std::net::SocketAddr;
+    use std::ops::DerefMut;
     use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::Mutex;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -107,17 +109,21 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Have every client connect to every other client and send messages via a ping/pong test to every other client
     async fn test_messenger_messaging() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        // internal service for peer C
+        let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
 
         let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
             vec![
                 bind_address_internal_service_a,
                 bind_address_internal_service_b,
+                bind_address_internal_service_c,
             ],
             None,
             None,
@@ -128,18 +134,43 @@ mod tests {
             peer_return_handle_vec.take_next_service_handle();
         let (to_service_b, from_service_b, cid_b) =
             peer_return_handle_vec.take_next_service_handle();
+        let (to_service_c, from_service_c, cid_c) =
+            peer_return_handle_vec.take_next_service_handle();
 
-        let (messenger_a, mut rx_a) = get_messenger(to_service_a, from_service_a).await?;
-        let (messenger_b, mut rx_b) = get_messenger(to_service_b, from_service_b).await?;
+        let (messenger_a, rx_a) = get_messenger(to_service_a, from_service_a).await?;
+        let (messenger_b, rx_b) = get_messenger(to_service_b, from_service_b).await?;
+        let (messenger_c, rx_c) = get_messenger(to_service_c, from_service_c).await?;
 
         let tx_a = messenger_a.multiplex(cid_a).await?;
         let tx_b = messenger_b.multiplex(cid_b).await?;
+        let tx_c = messenger_c.multiplex(cid_c).await?;
 
-        tx_a.wait_for_peer_to_connect(cid_b).await?;
-        tx_b.wait_for_peer_to_connect(cid_a).await?;
+        // Wrap each element in a mutex to allow concurrent access
+        let txs = [
+            Mutex::new((tx_a, rx_a)),
+            Mutex::new((tx_b, rx_b)),
+            Mutex::new((tx_c, rx_c)),
+        ];
+        let clients = [cid_a, cid_b, cid_c];
 
-        for _ in 0..100 {
-            test_ping_pong(&tx_a, &mut rx_a, &tx_b, &mut rx_b).await?;
+        assert_eq!(txs.len(), clients.len());
+
+        // Run test_ping_ping between every pair of clients
+        // Do NOT wait for connection in messaging layer to
+        // prove enqueueing works
+        for i in 0..txs.len() {
+            for j in 0..txs.len() {
+                if i != j {
+                    for _ in 0..10 {
+                        let mut i_locked = txs[i].lock().await;
+                        let mut j_locked = txs[j].lock().await;
+                        let (tx_0, rx_0) = i_locked.deref_mut();
+                        let (tx_1, rx_1) = j_locked.deref_mut();
+
+                        test_ping_pong(tx_0, rx_0, tx_1, rx_1).await?;
+                    }
+                }
+            }
         }
 
         Ok(())

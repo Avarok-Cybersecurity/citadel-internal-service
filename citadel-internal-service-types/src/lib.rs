@@ -13,8 +13,6 @@ use uuid::Uuid;
 // TODO: Move PreSharedKey into citadel-types
 use citadel_sdk::prelude::PreSharedKey;
 
-pub mod messaging_layer;
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectSuccess {
     pub cid: u64,
