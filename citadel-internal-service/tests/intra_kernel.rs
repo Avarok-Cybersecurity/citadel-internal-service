@@ -1,4 +1,4 @@
-mod common;
+use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {

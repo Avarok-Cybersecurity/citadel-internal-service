@@ -1,6 +1,5 @@
 use bytes::BytesMut;
-use citadel_internal_service_macros::{IsError, IsNotification};
-use citadel_sdk::prelude::PreSharedKey;
+use citadel_internal_service_macros::{IsError, IsNotification, RequestId};
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -11,8 +10,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
-
-pub mod service;
+// TODO: Move PreSharedKey into citadel-types
+use citadel_sdk::prelude::PreSharedKey;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectSuccess {
@@ -38,7 +37,9 @@ pub struct RegisterFailure {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServiceConnectionAccepted;
+pub struct ServiceConnectionAccepted {
+    pub request_id: Option<Uuid>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MessageSendSuccess {
@@ -553,6 +554,7 @@ pub struct FileTransferRequestNotification {
     pub cid: u64,
     pub peer_cid: u64,
     pub metadata: VirtualObjectMetadata,
+    pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -570,9 +572,10 @@ pub struct FileTransferTickNotification {
     pub cid: u64,
     pub peer_cid: Option<u64>,
     pub status: ObjectTransferStatus,
+    pub request_id: Option<Uuid>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification)]
+#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification, RequestId)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectFailure(ConnectFailure),
@@ -653,7 +656,7 @@ pub enum InternalServiceResponse {
     ListRegisteredPeersFailure(ListRegisteredPeersFailure),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, RequestId)]
 pub enum InternalServiceRequest {
     Connect {
         // A user-provided unique ID that will be returned in the response
@@ -870,6 +873,18 @@ pub enum InternalServicePayload {
     Response(InternalServiceResponse),
 }
 
+impl From<InternalServiceResponse> for InternalServicePayload {
+    fn from(response: InternalServiceResponse) -> Self {
+        InternalServicePayload::Response(response)
+    }
+}
+
+impl From<InternalServiceRequest> for InternalServicePayload {
+    fn from(request: InternalServiceRequest) -> Self {
+        InternalServicePayload::Request(request)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -903,5 +918,21 @@ mod tests {
             });
         assert!(!success_response.is_notification());
         assert!(notification_response.is_notification());
+    }
+
+    #[test]
+    fn test_request_id_derive() {
+        let request_id = Uuid::new_v4();
+        let request = InternalServiceRequest::Connect {
+            request_id,
+            username: "test".to_string(),
+            password: SecBuffer::from(vec![]),
+            connect_mode: ConnectMode::default(),
+            udp_mode: UdpMode::Enabled,
+            keep_alive_timeout: None,
+            session_security_settings: SessionSecuritySettings::default(),
+            server_password: None,
+        };
+        assert_eq!(request.request_id(), Some(&request_id));
     }
 }

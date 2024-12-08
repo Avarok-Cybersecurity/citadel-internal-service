@@ -1,4 +1,4 @@
-mod common;
+use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
@@ -26,14 +26,12 @@ mod tests {
     #[tokio::test]
     async fn test_internal_service_register_connect() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        info!(target: "citadel", "above server spawn");
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = server_info_skip_cert_verification();
 
         tokio::task::spawn(server);
-        info!(target: "citadel", "sub server spawn");
 
         let internal_service_kernel =
             CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;

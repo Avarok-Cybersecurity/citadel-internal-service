@@ -1,9 +1,7 @@
 [package]
-name = "citadel-internal-service"
+name = "citadel-internal-service-test-common"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
 default = []
@@ -12,7 +10,7 @@ vendored = ["citadel_sdk/vendored"]
 [dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded"] }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
-bincode2 = { workspace = true }
+citadel-internal-service = { workspace = true }
 citadel-internal-service-types = { workspace = true }
 citadel-internal-service-connector = { workspace = true }
 futures = { workspace = true }
@@ -22,9 +20,6 @@ uuid = { workspace = true, features = [
     "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ]}
 citadel_logging = { workspace = true }
-bytes = { workspace = true }
-async-recursion = { workspace = true }
 
 [dev-dependencies]
 citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }
-citadel-internal-service-test-common = { workspace = true }

@@ -29,7 +29,9 @@ impl InternalServiceConnector<TcpIOInterface> {
             .ok_or("Failed to receive greeting packet")??;
         if matches!(
             greeter_packet,
-            InternalServicePayload::Response(InternalServiceResponse::ServiceConnectionAccepted(_))
+            InternalServicePayload::Response(
+                InternalServiceResponse::ServiceConnectionAccepted { .. }
+            )
         ) {
             let stream = WrappedStream { inner: stream };
             let sink = WrappedSink { inner: sink };

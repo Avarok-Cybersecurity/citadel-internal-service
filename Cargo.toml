@@ -1,12 +1,14 @@
 [workspace]
-
 resolver = "2"
+
 members = [
     "citadel-internal-service",
     "citadel-internal-service-types",
     "citadel-internal-service-connector",
     "citadel-internal-service-macros",
+    "citadel-internal-service/tests/common",
     "service",
+    "intersession-layer-messaging",
 ]
 
 exclude = [
@@ -16,10 +18,12 @@ exclude = [
 [workspace.dependencies]
 
 # Workspace deps
+citadel-internal-service-test-common = { path = "./citadel-internal-service/tests/common", default-features = false, version = "0.1.0" }
 citadel-internal-service-types = { path = "./citadel-internal-service-types", default-features = false, version = "0.1.0" }
 citadel-internal-service = { path = "./citadel-internal-service", default-features = false, version = "0.1.0" }
 citadel-internal-service-connector = { path = "./citadel-internal-service-connector", default-features = false, version = "0.1.0" }
 citadel-internal-service-macros = { path = "./citadel-internal-service-macros", default-features = false, version = "0.1.0" }
+intersession-layer-messaging = { path = "intersession-layer-messaging", default-features = false, version = "0.2.0" }
 
 # Avarok deps
 citadel_sdk = { git = "https://github.com/Avarok-Cybersecurity/Citadel-Protocol/" }
@@ -43,3 +47,6 @@ async-recursion = { version = "1.0.4" }
 parking_lot = { version = "0.12.1" }
 structopt = { version = "0.3.26" }
 lazy_static = "1.4.0"
+async-trait = "0.1.83"
+itertools = "0.13.0"
+dashmap = "6.1.0"
