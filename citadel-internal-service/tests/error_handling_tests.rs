@@ -3,23 +3,27 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::{
-        register_and_connect_to_server, server_info_skip_cert_verification,
-        RegisterAndConnectItems,
+        register_and_connect_to_server, server_info_skip_cert_verification, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
         InternalServiceRequest, InternalServiceResponse, MessageSendFailure,
-        PeerConnectFailure, GroupCreateFailure,
     };
     use citadel_sdk::prelude::*;
     use std::error::Error;
     use std::net::SocketAddr;
     use std::time::Duration;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-    use bytes::BytesMut;
     use uuid::Uuid;
 
-    async fn setup_test_environment() -> Result<(UnboundedSender<InternalServiceRequest>, UnboundedReceiver<InternalServiceResponse>, u64), Box<dyn Error>> {
+    async fn setup_test_environment() -> Result<
+        (
+            UnboundedSender<InternalServiceRequest>,
+            UnboundedReceiver<InternalServiceResponse>,
+            u64,
+        ),
+        Box<dyn Error>,
+    > {
         let (server, server_bind_address) = server_info_skip_cert_verification();
         tokio::task::spawn(server);
 
@@ -40,7 +44,7 @@ mod tests {
             server_addr: server_bind_address,
             full_name: "Test Peer".to_string(),
             username: "test.peer".to_string(),
-            password: "secret".into_bytes().to_owned(),
+            password: "secret".as_bytes().to_vec(),
             pre_shared_key: None::<PreSharedKey>,
         };
 
@@ -52,14 +56,17 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_request_handling() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let (to_service, mut from_service, _) = setup_test_environment().await?;
+        let (to_service, mut from_service, cid) = setup_test_environment().await?;
 
         // Test invalid peer CID
         let invalid_cid = 999999;
         to_service
             .send(InternalServiceRequest::Message {
-                peer_cid: invalid_cid,
-                message: BytesMut::from("test message"),
+                request_id: Uuid::new_v4(),
+                cid,
+                peer_cid: Some(invalid_cid),
+                message: "test message".as_bytes().to_vec(),
+                security_level: SecurityLevel::Standard,
             })
             .unwrap();
 
@@ -111,8 +118,11 @@ mod tests {
         // Test empty message
         to_service
             .send(InternalServiceRequest::Message {
-                peer_cid: cid,
-                message: BytesMut::new(),
+                request_id: Uuid::new_v4(),
+                cid,
+                peer_cid: Some(cid),
+                message: Vec::new(),
+                security_level: SecurityLevel::Standard,
             })
             .unwrap();
 
@@ -120,8 +130,11 @@ mod tests {
         let large_message = vec![b'x'; 10 * 1024 * 1024]; // 10MB
         to_service
             .send(InternalServiceRequest::Message {
-                peer_cid: cid,
-                message: BytesMut::from(&large_message[..]),
+                request_id: Uuid::new_v4(),
+                cid,
+                peer_cid: Some(cid),
+                message: large_message.to_vec(),
+                security_level: SecurityLevel::Standard,
             })
             .unwrap();
 
@@ -176,8 +189,11 @@ mod tests {
         for _ in 0..3 {
             to_service
                 .send(InternalServiceRequest::Message {
-                    peer_cid: 999999, // invalid CID
-                    message: BytesMut::from("test message"),
+                    request_id: Uuid::new_v4(),
+                    cid,
+                    peer_cid: Some(999999), // invalid CID
+                    message: "test message".as_bytes().to_vec(),
+                    security_level: SecurityLevel::Standard,
                 })
                 .unwrap();
         }
@@ -225,8 +241,11 @@ mod tests {
             let invalid_cid = 999999 + i;
             to_service
                 .send(InternalServiceRequest::Message {
-                    peer_cid: invalid_cid,
-                    message: BytesMut::from("test message"),
+                    request_id: Uuid::new_v4(),
+                    cid: 0,
+                    peer_cid: Some(invalid_cid),
+                    message: "test message".as_bytes().to_vec(),
+                    security_level: SecurityLevel::Standard,
                 })
                 .unwrap();
 

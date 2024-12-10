@@ -1,20 +1,18 @@
+use citadel_internal_service::kernel::CitadelWorkspaceService;
 use citadel_internal_service_test_common as common;
+use citadel_internal_service_types::{
+    DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequestNotification,
+    FileTransferStatusNotification, InternalServiceRequest, InternalServiceResponse,
+    MessageNotification, MessageSendFailure, MessageSendSuccess, SendFileRequestSuccess,
+};
+use citadel_sdk::prelude::*;
+use std::path::PathBuf;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use uuid::Uuid;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::{
-        exhaust_stream_to_file_completion, register_and_connect_to_server,
-        server_info_skip_cert_verification, RegisterAndConnectItems,
-    };
-    use citadel_internal_service::kernel::CitadelWorkspaceService;
-    use citadel_internal_service_types::{
-        DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequestNotification,
-        FileTransferStatusNotification, InternalServiceRequest, InternalServiceResponse,
-        MessageNotification, MessageSendFailure, MessageSendSuccess, SendFileRequestSuccess,
-    };
-    use citadel_sdk::prelude::*;
-    use std::path::PathBuf;
-    use uuid::Uuid;
+    use super::*;
 
     #[tokio::test]
     async fn test_intra_kernel_service_and_peers() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,7 +41,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer 0".to_string(),
                 username: "peer.0".to_string(),
-                password: "secret_0".to_string().into_bytes().to_owned(),
+                password: "secret_0".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
@@ -51,7 +49,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer 1".to_string(),
                 username: "peer.1".to_string(),
-                password: "secret_1".to_string().into_bytes().to_owned(),
+                password: "secret_1".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
         ];
@@ -113,7 +111,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer 0".to_string(),
                 username: "peer.0".to_string(),
-                password: "secret_0".to_string().into_bytes().to_owned(),
+                password: "secret_0".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
@@ -121,7 +119,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer 1".to_string(),
                 username: "peer.1".to_string(),
-                password: "secret_1".to_string().into_bytes().to_owned(),
+                password: "secret_1".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
         ];
@@ -155,10 +153,10 @@ mod tests {
         .await?;
         let message_request = InternalServiceRequest::Message {
             request_id: Uuid::new_v4(),
-            message: "Test Message From Peer 0.".to_string().into_bytes(),
-            cid: peer_0_cid,
-            peer_cid: Some(peer_1_cid),
-            security_level: Default::default(),
+            cid,
+            peer_cid: Some(peer_cid),
+            message: message.into(),
+            security_level: SecurityLevel::Standard,
         };
         peer_0_tx.send(message_request)?;
         match peer_0_rx.recv().await.unwrap() {
@@ -219,7 +217,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer 0".to_string(),
                 username: "peer.0".to_string(),
-                password: "secret_0".to_string().into_bytes().to_owned(),
+                password: "secret_0".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
@@ -227,7 +225,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer 1".to_string(),
                 username: "peer.1".to_string(),
-                password: "secret_1".to_string().into_bytes().to_owned(),
+                password: "secret_1".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
         ];
@@ -360,7 +358,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer 0".to_string(),
                 username: "peer.0".to_string(),
-                password: "secret_0".to_string().into_bytes().to_owned(),
+                password: "secret_0".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
@@ -368,7 +366,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer 1".to_string(),
                 username: "peer.1".to_string(),
-                password: "secret_1".to_string().into_bytes().to_owned(),
+                password: "secret_1".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
         ];
@@ -531,7 +529,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: format!("Peer {}", i),
                 username: format!("peer.{}", i),
-                password: format!("secret_{}", i).into_bytes().to_owned(),
+                password: format!("secret_{}", i).to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             });
         }
@@ -568,7 +566,7 @@ mod tests {
             server_addr: server_bind_address,
             full_name: "Test Peer".to_string(),
             username: "test.peer".to_string(),
-            password: "secret".into_bytes().to_owned(),
+            password: "secret".to_string().as_bytes().to_vec(),
             pre_shared_key: None::<PreSharedKey>,
         };
 
@@ -576,7 +574,12 @@ mod tests {
         let (to_service, mut from_service, cid) = service_vec.get_mut(0).unwrap();
 
         // Disconnect
-        to_service.send(InternalServiceRequest::Disconnect).unwrap();
+        to_service
+            .send(InternalServiceRequest::Disconnect {
+                request_id: Uuid::new_v4(),
+                cid: cid,
+            })
+            .unwrap();
 
         // Wait for disconnect to complete
         let mut disconnected = false;
@@ -597,7 +600,10 @@ mod tests {
         to_service2
             .send(InternalServiceRequest::Message {
                 peer_cid: cid2,
+                request_id: Uuid::new_v4(),
+                cid,
                 message: message.clone().into(),
+                security_level: SecurityLevel::Standard,
             })
             .unwrap();
 
@@ -614,7 +620,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_intra_kernel_message_to_disconnected_peer() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_intra_kernel_message_to_disconnected_peer(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         crate::common::setup_log();
 
         let (server, server_bind_address) = server_info_skip_cert_verification();
@@ -639,7 +646,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer A".to_string(),
                 username: "peer.a".to_string(),
-                password: "secret_a".into_bytes().to_owned(),
+                password: "secret_a".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
@@ -647,7 +654,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer B".to_string(),
                 username: "peer.b".to_string(),
-                password: "secret_b".into_bytes().to_owned(),
+                password: "secret_b".to_string().as_bytes().to_vec(),
                 pre_shared_key: None::<PreSharedKey>,
             },
         ];
@@ -657,7 +664,12 @@ mod tests {
         let (to_service_b, mut from_service_b, cid_b) = service_vec.get_mut(1).unwrap();
 
         // Disconnect peer B
-        to_service_b.send(InternalServiceRequest::Disconnect).unwrap();
+        to_service_b
+            .send(InternalServiceRequest::Disconnect {
+                request_id: Uuid::new_v4(),
+                cid: cid_b,
+            })
+            .unwrap();
 
         // Wait for disconnect
         let mut disconnected = false;
@@ -674,7 +686,10 @@ mod tests {
         to_service_a
             .send(InternalServiceRequest::Message {
                 peer_cid: cid_b,
+                request_id: Uuid::new_v4(),
+                cid: cid_a,
                 message: message.clone().into(),
+                security_level: SecurityLevel::Standard,
             })
             .unwrap();
 

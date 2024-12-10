@@ -279,12 +279,9 @@ mod tests {
         fs::write(&file_path, "test content").unwrap();
 
         // Test file transfer
-        let transfer_result = send_file_and_wait_for_completion(
-            to_service,
-            from_service,
-            cid,
-            file_path.clone(),
-        ).await;
+        let transfer_result =
+            send_file_and_wait_for_completion(to_service, from_service, cid, file_path.clone())
+                .await;
 
         fs::remove_file(file_path).unwrap();
         assert!(transfer_result.is_ok());
@@ -311,12 +308,9 @@ mod tests {
         fs::write(&file_path, &content).unwrap();
 
         // Test file transfer
-        let transfer_result = send_file_and_wait_for_completion(
-            to_service,
-            from_service,
-            cid,
-            file_path.clone(),
-        ).await;
+        let transfer_result =
+            send_file_and_wait_for_completion(to_service, from_service, cid, file_path.clone())
+                .await;
 
         fs::remove_file(file_path).unwrap();
         assert!(transfer_result.is_ok());
@@ -337,25 +331,33 @@ mod tests {
 
         // Start file transfer
         let transfer_id = Uuid::new_v4();
-        to_service.send(InternalServiceRequest::FileTransfer {
-            transfer_id,
-            file_path: file_path.clone(),
-            peer_cid: None,
-        }).unwrap();
+        to_service
+            .send(InternalServiceRequest::SendFile {
+                request_id: transfer_id,
+                source: file_path.clone(),
+                cid: *cid,
+                transfer_type: TransferType::FileTransfer,
+                peer_cid: None,
+                chunk_size: None,
+            })
+            .unwrap();
 
         // Wait for transfer to start
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Cancel transfer
-        to_service.send(InternalServiceRequest::CancelFileTransfer {
-            transfer_id,
-        }).unwrap();
+        to_service
+            .send(InternalServiceRequest::CancelTransfer {
+                request_id: transfer_id,
+                cid: *cid,
+            })
+            .unwrap();
 
         // Verify cancellation
         let mut cancelled = false;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::FileTransferStatus(status) = response {
-                if status.status == ObjectTransferStatus::Cancelled {
+            if let InternalServiceResponse::TransferStatus(status) = response {
+                if status.status == TransferStatus::Cancelled {
                     cancelled = true;
                     break;
                 }
@@ -370,15 +372,17 @@ mod tests {
     async fn send_file_and_wait_for_completion(
         to_service: &UnboundedSender<InternalServiceRequest>,
         from_service: &mut UnboundedReceiver<InternalServiceResponse>,
-        cid: u64,
+        cid: &mut u64,
         file_path: PathBuf,
     ) -> Result<(), Box<dyn Error>> {
-        let transfer_id = Uuid::new_v4();
-        to_service.send(InternalServiceRequest::FileTransfer {
-            transfer_id,
-            file_path,
+        to_service.send(InternalServiceRequest::SendFile {
+            request_id: Uuid::new_v4(),
+            source: file_path,
+            cid: *cid,
+            transfer_type: TransferType::FileTransfer,
             peer_cid: None,
-        }).unwrap();
+            chunk_size: None,
+        })?;
 
         let mut completed = false;
         while let Ok(response) = from_service.try_recv() {

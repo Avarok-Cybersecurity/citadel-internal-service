@@ -1,20 +1,27 @@
 use citadel_internal_service_test_common as common;
+use uuid::Uuid;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::{register_and_connect_to_server, server_info_skip_cert_verification, RegisterAndConnectItems};
-    use citadel_internal_service::kernel::CitadelWorkspaceService;
-    use citadel_internal_service_types::{
-        InternalServiceRequest, InternalServiceResponse, LocalDbGetKvSuccess, LocalDbSetKvSuccess,
-        LocalDbDeleteKvSuccess, LocalDbClearAllKvSuccess,
+    use crate::common::{
+        register_and_connect_to_server, server_info_skip_cert_verification, RegisterAndConnectItems,
     };
+    use citadel_internal_service::kernel::CitadelWorkspaceService;
+    use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use citadel_sdk::prelude::*;
     use std::error::Error;
-    use std::net::SocketAddr;
     use std::time::Duration;
-    use bytes::BytesMut;
+    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+    use uuid::Uuid;
 
-    async fn setup_test_environment() -> Result<(UnboundedSender<InternalServiceRequest>, UnboundedReceiver<InternalServiceResponse>, u64), Box<dyn Error>> {
+    async fn setup_test_environment() -> Result<
+        (
+            UnboundedSender<InternalServiceRequest>,
+            UnboundedReceiver<InternalServiceResponse>,
+            u64,
+        ),
+        Box<dyn Error>,
+    > {
         let (server, server_bind_address) = server_info_skip_cert_verification();
         tokio::task::spawn(server);
 
@@ -47,21 +54,24 @@ mod tests {
     #[tokio::test]
     async fn test_kv_store_large_values() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let (to_service, mut from_service, _) = setup_test_environment().await?;
+        let (to_service, mut from_service, cid) = setup_test_environment().await?;
 
         // Test with a large value (1MB)
         let large_value = vec![b'x'; 1024 * 1024];
         to_service
-            .send(InternalServiceRequest::LocalDbSetKv {
-                key: "large_key".into(),
-                value: large_value.clone().into(),
+            .send(InternalServiceRequest::LocalDBSetKV {
+                cid: Some(cid),
+                request_id: Uuid::new_v4(),
+                peer_cid: None,
+                key: "large_key".to_string(),
+                value: large_value,
             })
             .unwrap();
 
         // Verify set operation succeeded
         let mut set_success = false;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbSetKvSuccess(_) = response {
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
                 set_success = true;
                 break;
             }
@@ -70,15 +80,18 @@ mod tests {
 
         // Retrieve and verify large value
         to_service
-            .send(InternalServiceRequest::LocalDbGetKv {
-                key: "large_key".into(),
+            .send(InternalServiceRequest::LocalDBGetKV {
+                cid: Some(cid),
+                request_id: Uuid::new_v4(),
+                peer_cid: None,
+                key: "large_key".to_string(),
             })
             .unwrap();
 
         let mut get_success = false;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbGetKvSuccess(success) = response {
-                assert_eq!(success.value.to_vec(), large_value);
+            if let InternalServiceResponse::LocalDBGetKVSuccess(success) = response {
+                assert_eq!(success.value, large_value);
                 get_success = true;
                 break;
             }
@@ -91,16 +104,19 @@ mod tests {
     #[tokio::test]
     async fn test_kv_store_concurrent_operations() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let (to_service, mut from_service, _) = setup_test_environment().await?;
+        let (to_service, mut from_service, cid) = setup_test_environment().await?;
 
         // Perform multiple set operations concurrently
         for i in 0..10 {
             let key = format!("key_{}", i);
             let value = format!("value_{}", i).into_bytes();
             to_service
-                .send(InternalServiceRequest::LocalDbSetKv {
-                    key: key.into(),
-                    value: value.into(),
+                .send(InternalServiceRequest::LocalDBSetKV {
+                    cid: Some(cid),
+                    request_id: Uuid::new_v4(),
+                    peer_cid: None,
+                    key: key,
+                    value: value.to_vec(),
                 })
                 .unwrap();
         }
@@ -108,7 +124,7 @@ mod tests {
         // Count successful set operations
         let mut set_success_count = 0;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbSetKvSuccess(_) = response {
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
                 set_success_count += 1;
                 if set_success_count == 10 {
                     break;
@@ -121,17 +137,20 @@ mod tests {
         for i in 0..10 {
             let key = format!("key_{}", i);
             to_service
-                .send(InternalServiceRequest::LocalDbGetKv {
-                    key: key.into(),
+                .send(InternalServiceRequest::LocalDBGetKV {
+                    cid: Some(cid),
+                    request_id: Uuid::new_v4(),
+                    peer_cid: None,
+                    key: key,
                 })
                 .unwrap();
         }
 
         let mut get_success_count = 0;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbGetKvSuccess(success) = response {
+            if let InternalServiceResponse::LocalDBGetKVSuccess(success) = response {
                 let expected_value = format!("value_{}", get_success_count).into_bytes();
-                assert_eq!(success.value.to_vec(), expected_value);
+                assert_eq!(success.value, expected_value);
                 get_success_count += 1;
                 if get_success_count == 10 {
                     break;
@@ -146,22 +165,25 @@ mod tests {
     #[tokio::test]
     async fn test_kv_store_special_keys() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let (to_service, mut from_service, _) = setup_test_environment().await?;
+        let (to_service, mut from_service, cid) = setup_test_environment().await?;
 
         // Test special characters in keys
         let special_keys = vec![
             "key with spaces",
             "key_with_@#$%^&*",
-            "很長的鑰匙",  // Unicode characters
+            "很長的鑰匙", // Unicode characters
             "",           // Empty key
         ];
 
         // Set values for special keys
         for key in special_keys.iter() {
             to_service
-                .send(InternalServiceRequest::LocalDbSetKv {
-                    key: key.to_string().into(),
-                    value: BytesMut::from(&b"test_value"[..]),
+                .send(InternalServiceRequest::LocalDBSetKV {
+                    cid: Some(cid),
+                    request_id: Uuid::new_v4(),
+                    peer_cid: None,
+                    key: key.to_string(),
+                    value: b"test_value".to_vec(),
                 })
                 .unwrap();
         }
@@ -169,7 +191,7 @@ mod tests {
         // Verify all sets succeeded
         let mut set_success_count = 0;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbSetKvSuccess(_) = response {
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
                 set_success_count += 1;
                 if set_success_count == special_keys.len() {
                     break;
@@ -181,8 +203,11 @@ mod tests {
         // Try to retrieve values for special keys
         for key in special_keys.iter() {
             to_service
-                .send(InternalServiceRequest::LocalDbGetKv {
-                    key: key.to_string().into(),
+                .send(InternalServiceRequest::LocalDBGetKV {
+                    cid: Some(cid),
+                    request_id: Uuid::new_v4(),
+                    peer_cid: None,
+                    key: key.to_string(),
                 })
                 .unwrap();
         }
@@ -190,8 +215,8 @@ mod tests {
         // Verify all gets succeeded
         let mut get_success_count = 0;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbGetKvSuccess(success) = response {
-                assert_eq!(success.value.to_vec(), b"test_value");
+            if let InternalServiceResponse::LocalDBGetKVSuccess(success) = response {
+                assert_eq!(success.value, b"test_value");
                 get_success_count += 1;
                 if get_success_count == special_keys.len() {
                     break;
@@ -206,16 +231,19 @@ mod tests {
     #[tokio::test]
     async fn test_kv_store_delete_and_clear() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let (to_service, mut from_service, _) = setup_test_environment().await?;
+        let (to_service, mut from_service, cid) = setup_test_environment().await?;
 
         // Set up some initial key-value pairs
         for i in 0..5 {
             let key = format!("key_{}", i);
             let value = format!("value_{}", i).into_bytes();
             to_service
-                .send(InternalServiceRequest::LocalDbSetKv {
-                    key: key.into(),
-                    value: value.into(),
+                .send(InternalServiceRequest::LocalDBSetKV {
+                    cid: Some(cid),
+                    request_id: Uuid::new_v4(),
+                    peer_cid: None,
+                    key: key,
+                    value: value.to_vec(),
                 })
                 .unwrap();
         }
@@ -223,7 +251,7 @@ mod tests {
         // Wait for all sets to complete
         let mut set_success_count = 0;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbSetKvSuccess(_) = response {
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
                 set_success_count += 1;
                 if set_success_count == 5 {
                     break;
@@ -233,21 +261,27 @@ mod tests {
 
         // Delete specific keys
         to_service
-            .send(InternalServiceRequest::LocalDbDeleteKv {
-                key: "key_0".into(),
+            .send(InternalServiceRequest::LocalDBDeleteKV {
+                cid: Some(cid),
+                request_id: Uuid::new_v4(),
+                peer_cid: None,
+                key: "key_0".to_string(),
             })
             .unwrap();
 
         to_service
-            .send(InternalServiceRequest::LocalDbDeleteKv {
-                key: "key_1".into(),
+            .send(InternalServiceRequest::LocalDBDeleteKV {
+                cid: Some(cid),
+                request_id: Uuid::new_v4(),
+                peer_cid: None,
+                key: "key_1".to_string(),
             })
             .unwrap();
 
         // Verify deletes succeeded
         let mut delete_success_count = 0;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbDeleteKvSuccess(_) = response {
+            if let InternalServiceResponse::LocalDBDeleteKVSuccess(_) = response {
                 delete_success_count += 1;
                 if delete_success_count == 2 {
                     break;
@@ -258,21 +292,27 @@ mod tests {
 
         // Try to get deleted keys
         to_service
-            .send(InternalServiceRequest::LocalDbGetKv {
-                key: "key_0".into(),
+            .send(InternalServiceRequest::LocalDBGetKV {
+                cid: Some(cid),
+                request_id: Uuid::new_v4(),
+                peer_cid: None,
+                key: "key_0".to_string(),
             })
             .unwrap();
 
         to_service
-            .send(InternalServiceRequest::LocalDbGetKv {
-                key: "key_1".into(),
+            .send(InternalServiceRequest::LocalDBGetKV {
+                cid: Some(cid),
+                request_id: Uuid::new_v4(),
+                peer_cid: None,
+                key: "key_1".to_string(),
             })
             .unwrap();
 
         // Verify gets return empty results
         let mut get_empty_count = 0;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbGetKvSuccess(success) = response {
+            if let InternalServiceResponse::LocalDBGetKVSuccess(success) = response {
                 assert!(success.value.is_empty());
                 get_empty_count += 1;
                 if get_empty_count == 2 {
@@ -284,13 +324,17 @@ mod tests {
 
         // Clear all remaining key-value pairs
         to_service
-            .send(InternalServiceRequest::LocalDbClearAllKv)
+            .send(InternalServiceRequest::LocalDBClearAllKV {
+                cid: Some(cid),
+                request_id: Uuid::new_v4(),
+                peer_cid: None,
+            })
             .unwrap();
 
         // Verify clear succeeded
         let mut clear_success = false;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbClearAllKvSuccess(_) = response {
+            if let InternalServiceResponse::LocalDBClearAllKVSuccess(_) = response {
                 clear_success = true;
                 break;
             }
@@ -301,8 +345,11 @@ mod tests {
         for i in 2..5 {
             let key = format!("key_{}", i);
             to_service
-                .send(InternalServiceRequest::LocalDbGetKv {
-                    key: key.into(),
+                .send(InternalServiceRequest::LocalDBGetKV {
+                    cid: Some(cid),
+                    request_id: Uuid::new_v4(),
+                    peer_cid: None,
+                    key: key,
                 })
                 .unwrap();
         }
@@ -310,7 +357,7 @@ mod tests {
         // Verify all gets return empty results
         let mut get_empty_count = 0;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::LocalDbGetKvSuccess(success) = response {
+            if let InternalServiceResponse::LocalDBGetKVSuccess(success) = response {
                 assert!(success.value.is_empty());
                 get_empty_count += 1;
                 if get_empty_count == 3 {

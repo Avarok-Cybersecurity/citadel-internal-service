@@ -1359,10 +1359,7 @@ mod tests {
             to_service_a
                 .send(InternalServiceRequest::GroupCreate {
                     group_id: *group_id,
-                    initial_users: vec![
-                        UserIdentifier::from(cid_b),
-                        UserIdentifier::from(cid_c),
-                    ],
+                    initial_users: vec![UserIdentifier::from(cid_b), UserIdentifier::from(cid_c)],
                 })
                 .unwrap();
         }

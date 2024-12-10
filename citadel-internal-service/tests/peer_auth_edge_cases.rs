@@ -1,23 +1,30 @@
 use citadel_internal_service_test_common as common;
+use uuid::Uuid;
 
 #[cfg(test)]
 mod tests {
     use crate::common::{
-        register_and_connect_to_server, server_info_skip_cert_verification,
-        RegisterAndConnectItems,
+        register_and_connect_to_server, server_info_skip_cert_verification, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
-        InternalServiceRequest, InternalServiceResponse, PeerConnectFailure,
-        PeerConnectSuccess, PeerDisconnectNotification, PeerEvent,
+        InternalServiceRequest, InternalServiceResponse, PeerConnectFailure, PeerConnectSuccess,
+        PeerDisconnectNotification as DisconnectNotification,
     };
     use citadel_sdk::prelude::*;
     use std::error::Error;
-    use std::net::SocketAddr;
     use std::time::Duration;
     use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+    use uuid::Uuid;
 
-    async fn setup_test_environment() -> Result<Vec<(UnboundedSender<InternalServiceRequest>, UnboundedReceiver<InternalServiceResponse>, u64)>, Box<dyn Error>> {
+    async fn setup_test_environment() -> Result<
+        Vec<(
+            UnboundedSender<InternalServiceRequest>,
+            UnboundedReceiver<InternalServiceResponse>,
+            u64,
+        )>,
+        Box<dyn Error>,
+    > {
         let (server, server_bind_address) = server_info_skip_cert_verification();
         tokio::task::spawn(server);
 
@@ -27,7 +34,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer A".to_string(),
                 username: "peer.a".to_string(),
-                password: "secret_a".into_bytes().to_owned(),
+                password: "secret_a".bytes().collect::<Vec<u8>>(),
                 pre_shared_key: None::<PreSharedKey>,
             },
             RegisterAndConnectItems {
@@ -35,7 +42,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: "Peer B".to_string(),
                 username: "peer.b".to_string(),
-                password: "secret_b".into_bytes().to_owned(),
+                password: "secret_b".bytes().collect::<Vec<u8>>(),
                 pre_shared_key: None::<PreSharedKey>,
             },
         ];
@@ -51,12 +58,16 @@ mod tests {
         let (to_service_a, mut from_service_a, cid_a) = service_vec.remove(0);
         let (_, _, cid_b) = service_vec.remove(0);
 
-        // Try to connect with invalid PSK
-        let invalid_psk = PreSharedKey::generate();
+        // Try to connect with invalid session password
+        let invalid_password = "invalid_password".bytes().collect::<Vec<u8>>();
         to_service_a
             .send(InternalServiceRequest::PeerConnect {
+                cid: cid_a,
                 peer_cid: cid_b,
-                pre_shared_key: Some(invalid_psk),
+                request_id: Uuid::new_v4(),
+                udp_mode: false,
+                session_security_settings: None,
+                peer_session_password: Some(invalid_password.into()),
             })
             .unwrap();
 
@@ -84,8 +95,12 @@ mod tests {
         for _ in 0..3 {
             to_service_a
                 .send(InternalServiceRequest::PeerConnect {
+                    cid: cid_a,
                     peer_cid: cid_b,
-                    pre_shared_key: None,
+                    request_id: Uuid::new_v4(),
+                    udp_mode: false,
+                    session_security_settings: None,
+                    peer_session_password: None,
                 })
                 .unwrap();
         }
@@ -118,8 +133,12 @@ mod tests {
         let nonexistent_cid = 999999;
         to_service_a
             .send(InternalServiceRequest::PeerConnect {
+                cid: nonexistent_cid,
                 peer_cid: nonexistent_cid,
-                pre_shared_key: None,
+                request_id: Uuid::new_v4(),
+                udp_mode: false,
+                session_security_settings: None,
+                peer_session_password: None,
             })
             .unwrap();
 
@@ -137,53 +156,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_peer_auth_reconnect_after_failure() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
-        let mut service_vec = setup_test_environment().await?;
-        let (to_service_a, mut from_service_a, cid_a) = service_vec.remove(0);
-        let (_, _, cid_b) = service_vec.remove(0);
-
-        // First try with invalid PSK
-        let invalid_psk = PreSharedKey::generate();
-        to_service_a
-            .send(InternalServiceRequest::PeerConnect {
-                peer_cid: cid_b,
-                pre_shared_key: Some(invalid_psk),
-            })
-            .unwrap();
-
-        // Wait for failure
-        let mut first_connect_failed = false;
-        while let Ok(response) = from_service_a.try_recv() {
-            if let InternalServiceResponse::PeerConnectFailure(_) = response {
-                first_connect_failed = true;
-                break;
-            }
-        }
-        assert!(first_connect_failed);
-
-        // Try again with no PSK
-        to_service_a
-            .send(InternalServiceRequest::PeerConnect {
-                peer_cid: cid_b,
-                pre_shared_key: None,
-            })
-            .unwrap();
-
-        // Verify second attempt succeeds
-        let mut second_connect_succeeded = false;
-        while let Ok(response) = from_service_a.try_recv() {
-            if let InternalServiceResponse::PeerConnectSuccess(_) = response {
-                second_connect_succeeded = true;
-                break;
-            }
-        }
-        assert!(second_connect_succeeded);
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_peer_auth_rapid_connect_disconnect() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         let mut service_vec = setup_test_environment().await?;
@@ -195,8 +167,12 @@ mod tests {
             // Connect
             to_service_a
                 .send(InternalServiceRequest::PeerConnect {
+                    cid: cid_a,
                     peer_cid: cid_b,
-                    pre_shared_key: None,
+                    request_id: Uuid::new_v4(),
+                    udp_mode: false,
+                    session_security_settings: None,
+                    peer_session_password: None,
                 })
                 .unwrap();
 
@@ -213,7 +189,9 @@ mod tests {
             // Immediately disconnect
             to_service_a
                 .send(InternalServiceRequest::PeerDisconnect {
-                    peer_cid: cid_b,
+                    cid: cid_a,
+                    peer_cid: Some(cid_b),
+                    request_id: Uuid::new_v4(),
                 })
                 .unwrap();
 
@@ -232,6 +210,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_peer_auth_reconnect_after_failure() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let mut service_vec = setup_test_environment().await?;
+        let (to_service_a, mut from_service_a, cid_a) = service_vec.remove(0);
+        let (_, _, cid_b) = service_vec.remove(0);
+
+        // First try with invalid PSK
+        let invalid_psk = PreSharedKey::generate();
+        to_service_a
+            .send(InternalServiceRequest::PeerConnect {
+                cid: cid_a,
+                peer_cid: cid_b,
+                request_id: Uuid::new_v4(),
+                udp_mode: false,
+                session_security_settings: None,
+                peer_session_password: Some(invalid_psk.into()),
+            })
+            .unwrap();
+
+        // Wait for failure
+        let mut first_connect_failed = false;
+        while let Ok(response) = from_service_a.try_recv() {
+            if let InternalServiceResponse::PeerConnectFailure(_) = response {
+                first_connect_failed = true;
+                break;
+            }
+        }
+        assert!(first_connect_failed);
+
+        // Try again with no PSK
+        to_service_a
+            .send(InternalServiceRequest::PeerConnect {
+                cid: cid_a,
+                peer_cid: cid_b,
+                request_id: Uuid::new_v4(),
+                udp_mode: false,
+                session_security_settings: None,
+                peer_session_password: None,
+            })
+            .unwrap();
+
+        // Verify second attempt succeeds
+        let mut second_connect_succeeded = false;
+        while let Ok(response) = from_service_a.try_recv() {
+            if let InternalServiceResponse::PeerConnectSuccess(_) = response {
+                second_connect_succeeded = true;
+                break;
+            }
+        }
+        assert!(second_connect_succeeded);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_peer_auth_concurrent_connections() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         let (server, server_bind_address) = server_info_skip_cert_verification();
@@ -245,7 +278,7 @@ mod tests {
                 server_addr: server_bind_address,
                 full_name: format!("Peer {}", i),
                 username: format!("peer.{}", i),
-                password: format!("secret_{}", i).into_bytes().to_owned(),
+                password: format!("secret_{}", i).bytes().collect::<Vec<u8>>(),
                 pre_shared_key: None::<PreSharedKey>,
             });
         }
@@ -258,8 +291,12 @@ mod tests {
         for &peer_cid in &peer_cids {
             to_service_main
                 .send(InternalServiceRequest::PeerConnect {
-                    peer_cid,
-                    pre_shared_key: None,
+                    cid: cid_main,
+                    peer_cid: peer_cid,
+                    request_id: Uuid::new_v4(),
+                    udp_mode: false,
+                    session_security_settings: None,
+                    peer_session_password: None,
                 })
                 .unwrap();
         }
