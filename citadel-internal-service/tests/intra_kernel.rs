@@ -503,4 +503,191 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_intra_kernel_concurrent_connections() -> Result<(), Box<dyn std::error::Error>> {
+        crate::common::setup_log();
+
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+
+        let service_addr = "127.0.0.1:55779".parse().unwrap();
+        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
+
+        let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::InMemory)
+            .with_node_type(NodeType::Peer)
+            .with_insecure_skip_cert_verification()
+            .build(service)?;
+
+        tokio::task::spawn(internal_service);
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+        // Create multiple peers that will connect concurrently
+        let mut peers = Vec::new();
+        for i in 0..5 {
+            peers.push(RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: format!("Peer {}", i),
+                username: format!("peer.{}", i),
+                password: format!("secret_{}", i).into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
+            });
+        }
+
+        // Connect all peers concurrently
+        let service_vec = register_and_connect_to_server(peers).await?;
+        assert_eq!(service_vec.len(), 5);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_intra_kernel_reconnection() -> Result<(), Box<dyn std::error::Error>> {
+        crate::common::setup_log();
+
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+
+        let service_addr = "127.0.0.1:55780".parse().unwrap();
+        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
+
+        let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::InMemory)
+            .with_node_type(NodeType::Peer)
+            .with_insecure_skip_cert_verification()
+            .build(service)?;
+
+        tokio::task::spawn(internal_service);
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+        // Connect first peer
+        let peer = RegisterAndConnectItems {
+            internal_service_addr: service_addr,
+            server_addr: server_bind_address,
+            full_name: "Test Peer".to_string(),
+            username: "test.peer".to_string(),
+            password: "secret".into_bytes().to_owned(),
+            pre_shared_key: None::<PreSharedKey>,
+        };
+
+        let mut service_vec = register_and_connect_to_server(vec![peer.clone()]).await?;
+        let (to_service, mut from_service, cid) = service_vec.get_mut(0).unwrap();
+
+        // Disconnect
+        to_service.send(InternalServiceRequest::Disconnect).unwrap();
+
+        // Wait for disconnect to complete
+        let mut disconnected = false;
+        while let Ok(response) = from_service.try_recv() {
+            if let InternalServiceResponse::DisconnectSuccess = response {
+                disconnected = true;
+                break;
+            }
+        }
+        assert!(disconnected);
+
+        // Reconnect with same credentials
+        let mut reconnect_vec = register_and_connect_to_server(vec![peer]).await?;
+        let (to_service2, mut from_service2, cid2) = reconnect_vec.get_mut(0).unwrap();
+
+        // Verify we can still perform operations
+        let message = "test message after reconnect".as_bytes().to_vec();
+        to_service2
+            .send(InternalServiceRequest::Message {
+                peer_cid: cid2,
+                message: message.clone().into(),
+            })
+            .unwrap();
+
+        let mut message_sent = false;
+        while let Ok(response) = from_service2.try_recv() {
+            if let InternalServiceResponse::MessageSendSuccess(_) = response {
+                message_sent = true;
+                break;
+            }
+        }
+        assert!(message_sent);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_intra_kernel_message_to_disconnected_peer() -> Result<(), Box<dyn std::error::Error>> {
+        crate::common::setup_log();
+
+        let (server, server_bind_address) = server_info_skip_cert_verification();
+        tokio::task::spawn(server);
+
+        let service_addr = "127.0.0.1:55781".parse().unwrap();
+        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
+
+        let internal_service = NodeBuilder::default()
+            .with_backend(BackendType::InMemory)
+            .with_node_type(NodeType::Peer)
+            .with_insecure_skip_cert_verification()
+            .build(service)?;
+
+        tokio::task::spawn(internal_service);
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+        // Connect two peers
+        let peers = vec![
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer A".to_string(),
+                username: "peer.a".to_string(),
+                password: "secret_a".into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
+            },
+            RegisterAndConnectItems {
+                internal_service_addr: service_addr,
+                server_addr: server_bind_address,
+                full_name: "Peer B".to_string(),
+                username: "peer.b".to_string(),
+                password: "secret_b".into_bytes().to_owned(),
+                pre_shared_key: None::<PreSharedKey>,
+            },
+        ];
+
+        let mut service_vec = register_and_connect_to_server(peers).await?;
+        let (to_service_a, mut from_service_a, cid_a) = service_vec.get_mut(0).unwrap();
+        let (to_service_b, mut from_service_b, cid_b) = service_vec.get_mut(1).unwrap();
+
+        // Disconnect peer B
+        to_service_b.send(InternalServiceRequest::Disconnect).unwrap();
+
+        // Wait for disconnect
+        let mut disconnected = false;
+        while let Ok(response) = from_service_b.try_recv() {
+            if let InternalServiceResponse::DisconnectSuccess = response {
+                disconnected = true;
+                break;
+            }
+        }
+        assert!(disconnected);
+
+        // Try to send message from A to B
+        let message = "message to disconnected peer".as_bytes().to_vec();
+        to_service_a
+            .send(InternalServiceRequest::Message {
+                peer_cid: cid_b,
+                message: message.clone().into(),
+            })
+            .unwrap();
+
+        // Verify message send fails
+        let mut message_failed = false;
+        while let Ok(response) = from_service_a.try_recv() {
+            if let InternalServiceResponse::MessageSendFailure(_) = response {
+                message_failed = true;
+                break;
+            }
+        }
+        assert!(message_failed);
+
+        Ok(())
+    }
 }

@@ -1262,4 +1262,196 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_group_message_edge_cases() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                "127.0.0.1:55539".parse().unwrap(),
+                "127.0.0.1:55540".parse().unwrap(),
+            ],
+            None,
+            None,
+        )
+        .await?;
+
+        let (to_service_a, mut from_service_a, cid_a) =
+            peer_return_handle_vec.take_next_service_handle();
+        let (to_service_b, mut from_service_b, cid_b) =
+            peer_return_handle_vec.take_next_service_handle();
+
+        // Create group
+        let group_id = Uuid::new_v4();
+        to_service_a
+            .send(InternalServiceRequest::GroupCreate {
+                group_id,
+                initial_users: vec![UserIdentifier::from(cid_b)],
+            })
+            .unwrap();
+
+        // Wait for group creation and invites to complete
+        let mut group_created = false;
+        while let Ok(response) = from_service_a.try_recv() {
+            if let InternalServiceResponse::GroupCreateSuccess(_) = response {
+                group_created = true;
+                break;
+            }
+        }
+        assert!(group_created);
+
+        // Test empty message
+        to_service_a
+            .send(InternalServiceRequest::GroupMessage {
+                group_id,
+                message: BytesMut::new(),
+            })
+            .unwrap();
+
+        // Test large message (1MB)
+        let large_message = vec![b'x'; 1024 * 1024];
+        to_service_a
+            .send(InternalServiceRequest::GroupMessage {
+                group_id,
+                message: BytesMut::from(&large_message[..]),
+            })
+            .unwrap();
+
+        // Verify messages were received
+        let mut messages_received = 0;
+        while let Ok(response) = from_service_b.try_recv() {
+            if let InternalServiceResponse::GroupMessageNotification(_) = response {
+                messages_received += 1;
+                if messages_received == 2 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(messages_received, 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_group_concurrent_operations() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                "127.0.0.1:55541".parse().unwrap(),
+                "127.0.0.1:55542".parse().unwrap(),
+                "127.0.0.1:55543".parse().unwrap(),
+            ],
+            None,
+            None,
+        )
+        .await?;
+
+        let (to_service_a, mut from_service_a, cid_a) =
+            peer_return_handle_vec.take_next_service_handle();
+        let (to_service_b, mut from_service_b, cid_b) =
+            peer_return_handle_vec.take_next_service_handle();
+        let (to_service_c, mut from_service_c, cid_c) =
+            peer_return_handle_vec.take_next_service_handle();
+
+        // Create multiple groups concurrently
+        let group_ids: Vec<Uuid> = (0..5).map(|_| Uuid::new_v4()).collect();
+        for group_id in group_ids.iter() {
+            to_service_a
+                .send(InternalServiceRequest::GroupCreate {
+                    group_id: *group_id,
+                    initial_users: vec![
+                        UserIdentifier::from(cid_b),
+                        UserIdentifier::from(cid_c),
+                    ],
+                })
+                .unwrap();
+        }
+
+        // Send messages to all groups concurrently
+        for group_id in group_ids.iter() {
+            to_service_a
+                .send(InternalServiceRequest::GroupMessage {
+                    group_id: *group_id,
+                    message: BytesMut::from("test message"),
+                })
+                .unwrap();
+        }
+
+        // Verify all groups were created and messages were received
+        let mut groups_created = 0;
+        let mut messages_received = 0;
+        while let Ok(response) = from_service_a.try_recv() {
+            match response {
+                InternalServiceResponse::GroupCreateSuccess(_) => groups_created += 1,
+                InternalServiceResponse::GroupMessageSuccess(_) => messages_received += 1,
+                _ => {}
+            }
+            if groups_created == 5 && messages_received == 5 {
+                break;
+            }
+        }
+
+        assert_eq!(groups_created, 5);
+        assert_eq!(messages_received, 5);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_group_invite_nonexistent_user() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
+            vec![
+                "127.0.0.1:55544".parse().unwrap(),
+                "127.0.0.1:55545".parse().unwrap(),
+            ],
+            None,
+            None,
+        )
+        .await?;
+
+        let (to_service_a, mut from_service_a, cid_a) =
+            peer_return_handle_vec.take_next_service_handle();
+        let (_, _, cid_b) = peer_return_handle_vec.take_next_service_handle();
+
+        // Create group
+        let group_id = Uuid::new_v4();
+        to_service_a
+            .send(InternalServiceRequest::GroupCreate {
+                group_id,
+                initial_users: vec![UserIdentifier::from(cid_b)],
+            })
+            .unwrap();
+
+        // Wait for group creation
+        let mut group_created = false;
+        while let Ok(response) = from_service_a.try_recv() {
+            if let InternalServiceResponse::GroupCreateSuccess(_) = response {
+                group_created = true;
+                break;
+            }
+        }
+        assert!(group_created);
+
+        // Try to invite non-existent user
+        let nonexistent_cid = 999999;
+        to_service_a
+            .send(InternalServiceRequest::GroupInvite {
+                group_id,
+                user: UserIdentifier::from(nonexistent_cid),
+            })
+            .unwrap();
+
+        // Verify invite fails
+        let mut invite_failed = false;
+        while let Ok(response) = from_service_a.try_recv() {
+            if let InternalServiceResponse::GroupInviteFailure(_) = response {
+                invite_failed = true;
+                break;
+            }
+        }
+        assert!(invite_failed);
+
+        Ok(())
+    }
 }
