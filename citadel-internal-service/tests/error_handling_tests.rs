@@ -1,20 +1,24 @@
-use citadel_internal_service_test_common as common;
+use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service_types::{
+    DisconnectNotification, InternalServiceRequest, InternalServiceResponse, MessageGroupKey, UserIdentifier,
+};
+use citadel_sdk::prelude::*;
+use std::net::SocketAddr;
+use std::time::Duration;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task;
+use uuid::Uuid;
+use bytes::BytesMut;
+
+mod common;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::{
+    use crate::common::setup_log;
+    use citadel_internal_service_test_common::{
         register_and_connect_to_server, server_info_skip_cert_verification, RegisterAndConnectItems,
     };
-    use citadel_internal_service::kernel::CitadelWorkspaceService;
-    use citadel_internal_service_types::{
-        InternalServiceRequest, InternalServiceResponse, MessageSendFailure,
-    };
-    use citadel_sdk::prelude::*;
-    use std::error::Error;
-    use std::net::SocketAddr;
-    use std::time::Duration;
-    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-    use uuid::Uuid;
+    use super::*;
 
     async fn setup_test_environment() -> Result<
         (
@@ -22,12 +26,10 @@ mod tests {
             UnboundedReceiver<InternalServiceResponse>,
             u64,
         ),
-        Box<dyn Error>,
+        Box<dyn std::error::Error>,
     > {
-        let (server, server_bind_address) = server_info_skip_cert_verification();
-        tokio::task::spawn(server);
-
-        let service_addr: SocketAddr = "127.0.0.1:55790".parse().unwrap();
+        let (bind_address, server_address) = server_info_skip_cert_verification();
+        let service_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
@@ -36,26 +38,27 @@ mod tests {
             .with_insecure_skip_cert_verification()
             .build(service)?;
 
-        tokio::task::spawn(internal_service);
+        task::spawn(internal_service);
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
         let peer = RegisterAndConnectItems {
             internal_service_addr: service_addr,
-            server_addr: server_bind_address,
+            server_addr: server_address,
             full_name: "Test Peer".to_string(),
             username: "test.peer".to_string(),
             password: "secret".as_bytes().to_vec(),
-            pre_shared_key: None::<PreSharedKey>,
+            pre_shared_key: None,
         };
 
         let mut service_vec = register_and_connect_to_server(vec![peer]).await?;
         let (to_service, from_service, cid) = service_vec.remove(0);
+
         Ok((to_service, from_service, cid))
     }
 
     #[tokio::test]
-    async fn test_invalid_request_handling() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+    async fn test_invalid_request_handling() -> Result<(), Box<dyn std::error::Error>> {
+        setup_log();
         let (to_service, mut from_service, cid) = setup_test_environment().await?;
 
         // Test invalid peer CID
@@ -84,15 +87,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_group_operations() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
-        let (to_service, mut from_service, _) = setup_test_environment().await?;
+    async fn test_invalid_group_operations() -> Result<(), Box<dyn std::error::Error>> {
+        setup_log();
+        let (to_service, mut from_service, cid) = setup_test_environment().await?;
 
         // Try to send message to non-existent group
         let invalid_group_id = Uuid::new_v4();
         to_service
             .send(InternalServiceRequest::GroupMessage {
-                group_id: invalid_group_id,
+                cid,
+                request_id: Uuid::new_v4(),
+                group_key: MessageGroupKey::new(cid, invalid_group_id.as_u128()),
                 message: BytesMut::from("test message"),
             })
             .unwrap();
@@ -111,8 +116,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_malformed_requests() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+    async fn test_malformed_requests() -> Result<(), Box<dyn std::error::Error>> {
+        setup_log();
         let (to_service, mut from_service, cid) = setup_test_environment().await?;
 
         // Test empty message
@@ -154,8 +159,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_request_timeout_handling() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+    async fn test_request_timeout_handling() -> Result<(), Box<dyn std::error::Error>> {
+        setup_log();
         let (to_service, mut from_service, _) = setup_test_environment().await?;
 
         // Try to connect to non-responsive peer
@@ -181,8 +186,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_recovery_after_errors() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+    async fn test_recovery_after_errors() -> Result<(), Box<dyn std::error::Error>> {
+        setup_log();
         let (to_service, mut from_service, cid) = setup_test_environment().await?;
 
         // First, trigger some errors
@@ -213,8 +218,9 @@ mod tests {
         let group_id = Uuid::new_v4();
         to_service
             .send(InternalServiceRequest::GroupCreate {
-                group_id,
-                initial_users: vec![],
+                cid,
+                request_id: Uuid::new_v4(),
+                initial_users_to_invite: Some(vec![]),
             })
             .unwrap();
 
@@ -232,8 +238,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_concurrent_error_handling() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+    async fn test_concurrent_error_handling() -> Result<(), Box<dyn std::error::Error>> {
+        setup_log();
         let (to_service, mut from_service, _) = setup_test_environment().await?;
 
         // Send multiple invalid requests concurrently
@@ -252,7 +258,9 @@ mod tests {
             let invalid_group_id = Uuid::new_v4();
             to_service
                 .send(InternalServiceRequest::GroupMessage {
-                    group_id: invalid_group_id,
+                    cid,
+                    request_id: Uuid::new_v4(),
+                    group_key: MessageGroupKey::new(cid, invalid_group_id.as_u128()),
                     message: BytesMut::from("test message"),
                 })
                 .unwrap();

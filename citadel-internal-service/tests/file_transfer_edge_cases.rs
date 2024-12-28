@@ -1,21 +1,28 @@
-use citadel_internal_service_test_common as common;
+use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service_test_common::*;
+use citadel_internal_service_types::{
+    InternalServiceRequest, InternalServiceResponse, FileTransferStatus,
+};
+use citadel_sdk::prelude::*;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use uuid::Uuid;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::*;
+    use super::*;
+    use citadel_internal_service_test_common::{
+        register_and_connect_to_server, server_info_skip_cert_verification, RegisterAndConnectItems,
+        setup_log,
+    };
     use citadel_internal_service_types::{
-        FileTransferTickNotification, InternalServiceRequest, InternalServiceResponse,
-        ObjectTransferStatus,
+        FileTransferTickNotification, ObjectTransferStatus,
     };
     use citadel_logging::info;
-    use citadel_sdk::prelude::*;
     use std::error::Error;
     use std::fs;
     use std::net::SocketAddr;
     use std::path::PathBuf;
-    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
     use tokio::time::Duration;
-    use uuid::Uuid;
 
     async fn setup_test_environment() -> Result<
         Vec<(
@@ -51,7 +58,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_transfer_nonexistent_file() -> Result<(), Box<dyn Error>> {
         println!("test_file_transfer_nonexistent_file");
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service, ref mut from_service, cid) = service_vec.get_mut(0).unwrap();
 
@@ -82,7 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_transfer_empty_file() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service, ref mut from_service, cid) = service_vec.get_mut(0).unwrap();
 
@@ -112,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_transfer_large_file() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service, ref mut from_service, cid) = service_vec.get_mut(0).unwrap();
 
@@ -159,7 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_transfer_concurrent() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service, ref mut from_service, cid) = service_vec.get_mut(0).unwrap();
 
@@ -213,7 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_transfer_interrupted() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service, ref mut from_service, cid) = service_vec.get_mut(0).unwrap();
 
@@ -270,7 +277,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_transfer_special_characters() -> Result<(), Box<dyn Error>> {
         println!("test_file_transfer_special_characters");
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service, ref mut from_service, cid) = service_vec.get_mut(0).unwrap();
 
@@ -291,7 +298,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_transfer_zero_bytes_chunks() -> Result<(), Box<dyn Error>> {
         println!("test_file_transfer_zero_bytes_chunks");
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service, ref mut from_service, cid) = service_vec.get_mut(0).unwrap();
 
@@ -320,7 +327,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_transfer_cancel_mid_transfer() -> Result<(), Box<dyn Error>> {
         println!("test_file_transfer_cancel_mid_transfer");
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service, ref mut from_service, cid) = service_vec.get_mut(0).unwrap();
 
@@ -347,17 +354,19 @@ mod tests {
 
         // Cancel transfer
         to_service
-            .send(InternalServiceRequest::CancelTransfer {
-                request_id: transfer_id,
+            .send(InternalServiceRequest::CancelFileTransfer {
                 cid: *cid,
+                peer_cid: None,
+                object_id: file_path.clone(),
+                request_id: transfer_id,
             })
             .unwrap();
 
         // Verify cancellation
         let mut cancelled = false;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::TransferStatus(status) = response {
-                if status.status == TransferStatus::Cancelled {
+            if let InternalServiceResponse::FileTransferStatusNotification(status) = response {
+                if !status.success {
                     cancelled = true;
                     break;
                 }
@@ -386,8 +395,8 @@ mod tests {
 
         let mut completed = false;
         while let Ok(response) = from_service.try_recv() {
-            if let InternalServiceResponse::FileTransferStatus(status) = response {
-                if status.status == ObjectTransferStatus::Complete {
+            if let InternalServiceResponse::FileTransferStatusNotification(status) = response {
+                if !status.success {
                     completed = true;
                     break;
                 }

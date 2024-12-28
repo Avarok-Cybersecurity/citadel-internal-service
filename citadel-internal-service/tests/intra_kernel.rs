@@ -1,24 +1,26 @@
 use citadel_internal_service::kernel::CitadelWorkspaceService;
-use citadel_internal_service_test_common as common;
+use citadel_internal_service_test_common::*;
 use citadel_internal_service_types::{
-    DeleteVirtualFileSuccess, DownloadFileSuccess, FileTransferRequestNotification,
-    FileTransferStatusNotification, InternalServiceRequest, InternalServiceResponse,
-    MessageNotification, MessageSendFailure, MessageSendSuccess, SendFileRequestSuccess,
+    InternalServiceRequest, InternalServiceResponse, MessageGroupKey,
+    UdpMode, SessionSecuritySettings,
 };
 use citadel_sdk::prelude::*;
-use std::path::PathBuf;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use citadel_internal_service_test_common::{
+        register_and_connect_to_server, server_info_skip_cert_verification, RegisterAndConnectItems,
+        setup_log, register_p2p, connect_p2p,
+    };
 
     #[tokio::test]
     async fn test_intra_kernel_service_and_peers() -> Result<(), Box<dyn std::error::Error>> {
         crate::common::setup_log();
 
-        let (server, server_bind_address) = server_info_skip_cert_verification();
+        let (server, server_bind_address) = common::server_info_skip_cert_verification();
         tokio::task::spawn(server);
 
         let service_addr = "127.0.0.1:55778".parse().unwrap();
@@ -81,6 +83,44 @@ mod tests {
             None::<PreSharedKey>,
         )
         .await?;
+        let message_request = InternalServiceRequest::Message {
+            request_id: Uuid::new_v4(),
+            cid: *peer_0_cid,
+            peer_cid: Some(*peer_1_cid),
+            message: "Hello, Peer 1!".to_string().into_bytes(),
+            security_level: SecurityLevel::Standard,
+            udp_mode: UdpMode::Disabled,
+            session_security_settings: SessionSecuritySettings::default(),
+        };
+        peer_0_tx.send(message_request)?;
+        match peer_0_rx.recv().await.unwrap() {
+            InternalServiceResponse::MessageSendSuccess(MessageSendSuccess { .. }) => {
+                citadel_logging::info!(target: "citadel", "Message Successfully Sent from Peer 0 to Peer 1.");
+            }
+            InternalServiceResponse::MessageSendFailure(MessageSendFailure {
+                cid: _,
+                message,
+                request_id: _,
+            }) => {
+                panic!("Message Sending Failed With Error: {message:?}")
+            }
+            _ => {
+                panic!("Received Unexpected Response When Expecting MessageSend Response.")
+            }
+        }
+        match peer_1_rx.recv().await.unwrap() {
+            InternalServiceResponse::MessageNotification(MessageNotification {
+                message,
+                cid: _,
+                peer_cid: _,
+                request_id: _,
+            }) => {
+                citadel_logging::info!(target: "citadel", "Message from Peer 0 Successfully Received at Peer 1: {message:?}");
+            }
+            _ => {
+                panic!("Received Unexpected Response When Expecting MessageSend Response.")
+            }
+        }
         Ok(())
     }
 
@@ -153,10 +193,12 @@ mod tests {
         .await?;
         let message_request = InternalServiceRequest::Message {
             request_id: Uuid::new_v4(),
-            cid,
-            peer_cid: Some(peer_cid),
-            message: message.into(),
+            cid: *peer_0_cid,
+            peer_cid: Some(*peer_1_cid),
+            message: "Hello, Peer 1!".to_string().into_bytes(),
             security_level: SecurityLevel::Standard,
+            udp_mode: UdpMode::Disabled,
+            session_security_settings: SessionSecuritySettings::default(),
         };
         peer_0_tx.send(message_request)?;
         match peer_0_rx.recv().await.unwrap() {
@@ -263,9 +305,9 @@ mod tests {
         let send_file_to_service_1_payload = InternalServiceRequest::SendFile {
             request_id: Uuid::new_v4(),
             source: file_to_send,
-            cid: peer_0_cid,
+            cid: *peer_0_cid,
             transfer_type: TransferType::FileTransfer,
-            peer_cid: Some(peer_1_cid),
+            peer_cid: Some(*peer_1_cid),
             chunk_size: None,
         };
         peer_0_tx.send(send_file_to_service_1_payload).unwrap();
@@ -280,8 +322,8 @@ mod tests {
             citadel_logging::info!(target:"citadel", "File Transfer Request {peer_1_cid:?}");
 
             let file_transfer_accept = InternalServiceRequest::RespondFileTransfer {
-                cid: peer_1_cid,
-                peer_cid: peer_0_cid,
+                cid: *peer_1_cid,
+                peer_cid: *peer_0_cid,
                 object_id: metadata.object_id as _,
                 accept: true,
                 download_location: None,
@@ -405,12 +447,12 @@ mod tests {
         let send_file_peer_1_tx_payload = InternalServiceRequest::SendFile {
             request_id: Uuid::new_v4(),
             source: file_to_send.clone(),
-            cid: peer_0_cid,
+            cid: *peer_0_cid,
             transfer_type: TransferType::RemoteEncryptedVirtualFilesystem {
                 virtual_path: virtual_path.clone(),
                 security_level: Default::default(),
             },
-            peer_cid: Some(peer_1_cid),
+            peer_cid: Some(*peer_1_cid),
             chunk_size: None,
         };
         peer_0_tx.send(send_file_peer_1_tx_payload).unwrap();
@@ -427,8 +469,8 @@ mod tests {
             ) = deserialized_service_a_payload_response
             {
                 let file_transfer_accept_payload = InternalServiceRequest::RespondFileTransfer {
-                    cid: peer_1_cid,
-                    peer_cid: peer_0_cid,
+                    cid: *peer_1_cid,
+                    peer_cid: *peer_0_cid,
                     object_id: metadata.object_id,
                     accept: true,
                     download_location: None,
@@ -453,8 +495,8 @@ mod tests {
             virtual_directory: virtual_path.clone(),
             security_level: Default::default(),
             delete_on_pull: false,
-            cid: peer_0_cid,
-            peer_cid: Some(peer_1_cid),
+            cid: *peer_0_cid,
+            peer_cid: Some(*peer_1_cid),
             request_id: Uuid::new_v4(),
         };
         peer_0_tx.send(download_file_command).unwrap();
@@ -465,7 +507,7 @@ mod tests {
                 cid: response_cid,
                 request_id: _,
             }) => {
-                assert_eq!(peer_0_cid, response_cid);
+                assert_eq!(*peer_0_cid, response_cid);
             }
             _ => {
                 panic!("Didn't get the REVFS DownloadFileSuccess - instead got {download_file_response:?}");
@@ -480,8 +522,8 @@ mod tests {
         // Delete file on Peer REVFS
         let delete_file_command = InternalServiceRequest::DeleteVirtualFile {
             virtual_directory: virtual_path,
-            cid: peer_0_cid,
-            peer_cid: Some(peer_1_cid),
+            cid: *peer_0_cid,
+            peer_cid: Some(*peer_1_cid),
             request_id: Uuid::new_v4(),
         };
         peer_0_tx.send(delete_file_command).unwrap();
@@ -491,7 +533,7 @@ mod tests {
                 cid: response_cid,
                 request_id: _,
             }) => {
-                assert_eq!(peer_0_cid, response_cid);
+                assert_eq!(*peer_0_cid, response_cid);
             }
             _ => {
                 panic!("Didn't get the REVFS DeleteVirtualFileSuccess - instead got {delete_file_response:?}");
@@ -577,7 +619,7 @@ mod tests {
         to_service
             .send(InternalServiceRequest::Disconnect {
                 request_id: Uuid::new_v4(),
-                cid: cid,
+                cid: *cid,
             })
             .unwrap();
 
@@ -599,9 +641,9 @@ mod tests {
         let message = "test message after reconnect".as_bytes().to_vec();
         to_service2
             .send(InternalServiceRequest::Message {
-                peer_cid: cid2,
+                peer_cid: *cid2,
                 request_id: Uuid::new_v4(),
-                cid,
+                cid: *cid,
                 message: message.clone().into(),
                 security_level: SecurityLevel::Standard,
             })
@@ -667,7 +709,7 @@ mod tests {
         to_service_b
             .send(InternalServiceRequest::Disconnect {
                 request_id: Uuid::new_v4(),
-                cid: cid_b,
+                cid: *cid_b,
             })
             .unwrap();
 
@@ -685,9 +727,9 @@ mod tests {
         let message = "message to disconnected peer".as_bytes().to_vec();
         to_service_a
             .send(InternalServiceRequest::Message {
-                peer_cid: cid_b,
+                peer_cid: *cid_b,
                 request_id: Uuid::new_v4(),
-                cid: cid_a,
+                cid: *cid_a,
                 message: message.clone().into(),
                 security_level: SecurityLevel::Standard,
             })

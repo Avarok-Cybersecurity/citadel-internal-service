@@ -1,10 +1,20 @@
-use citadel_internal_service_test_common as common;
+use citadel_internal_service::kernel::CitadelWorkspaceService;
+use citadel_internal_service_test_common::*;
+use citadel_internal_service_types::{
+    InternalServiceRequest, InternalServiceResponse, MessageGroupKey,
+    DisconnectNotification,
+};
+use citadel_sdk::prelude::*;
+use std::net::SocketAddr;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::{
+    use super::*;
+    use citadel_internal_service_test_common::{
         register_and_connect_to_server, server_info_skip_cert_verification, RegisterAndConnectItems,
+        setup_log,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
     use citadel_internal_service_types::{
@@ -53,7 +63,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_auth_invalid_credentials() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service_a, mut from_service_a, cid_a) = service_vec.remove(0);
         let (_, _, cid_b) = service_vec.remove(0);
@@ -65,8 +75,8 @@ mod tests {
                 cid: cid_a,
                 peer_cid: cid_b,
                 request_id: Uuid::new_v4(),
-                udp_mode: false,
-                session_security_settings: None,
+                udp_mode: UdpMode::Disabled,
+                session_security_settings: SessionSecuritySettings::default(),
                 peer_session_password: Some(invalid_password.into()),
             })
             .unwrap();
@@ -86,7 +96,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_auth_multiple_connections() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service_a, mut from_service_a, cid_a) = service_vec.remove(0);
         let (_, _, cid_b) = service_vec.remove(0);
@@ -98,8 +108,8 @@ mod tests {
                     cid: cid_a,
                     peer_cid: cid_b,
                     request_id: Uuid::new_v4(),
-                    udp_mode: false,
-                    session_security_settings: None,
+                    udp_mode: UdpMode::Disabled,
+                    session_security_settings: SessionSecuritySettings::default(),
                     peer_session_password: None,
                 })
                 .unwrap();
@@ -125,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_auth_connection_timeout() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service_a, mut from_service_a, _) = service_vec.remove(0);
 
@@ -136,8 +146,8 @@ mod tests {
                 cid: nonexistent_cid,
                 peer_cid: nonexistent_cid,
                 request_id: Uuid::new_v4(),
-                udp_mode: false,
-                session_security_settings: None,
+                udp_mode: UdpMode::Disabled,
+                session_security_settings: SessionSecuritySettings::default(),
                 peer_session_password: None,
             })
             .unwrap();
@@ -157,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_auth_rapid_connect_disconnect() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service_a, mut from_service_a, cid_a) = service_vec.remove(0);
         let (_, _, cid_b) = service_vec.remove(0);
@@ -170,8 +180,8 @@ mod tests {
                     cid: cid_a,
                     peer_cid: cid_b,
                     request_id: Uuid::new_v4(),
-                    udp_mode: false,
-                    session_security_settings: None,
+                    udp_mode: UdpMode::Disabled,
+                    session_security_settings: SessionSecuritySettings::default(),
                     peer_session_password: None,
                 })
                 .unwrap();
@@ -190,7 +200,7 @@ mod tests {
             to_service_a
                 .send(InternalServiceRequest::PeerDisconnect {
                     cid: cid_a,
-                    peer_cid: Some(cid_b),
+                    peer_cid: Some(*cid_b),
                     request_id: Uuid::new_v4(),
                 })
                 .unwrap();
@@ -211,20 +221,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_auth_reconnect_after_failure() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let mut service_vec = setup_test_environment().await?;
         let (to_service_a, mut from_service_a, cid_a) = service_vec.remove(0);
         let (_, _, cid_b) = service_vec.remove(0);
 
         // First try with invalid PSK
-        let invalid_psk = PreSharedKey::generate();
+        let invalid_psk = PreSharedKey::new(b"invalid".to_vec());
         to_service_a
             .send(InternalServiceRequest::PeerConnect {
                 cid: cid_a,
                 peer_cid: cid_b,
                 request_id: Uuid::new_v4(),
-                udp_mode: false,
-                session_security_settings: None,
+                udp_mode: UdpMode::Disabled,
+                session_security_settings: SessionSecuritySettings::default(),
                 peer_session_password: Some(invalid_psk.into()),
             })
             .unwrap();
@@ -245,8 +255,8 @@ mod tests {
                 cid: cid_a,
                 peer_cid: cid_b,
                 request_id: Uuid::new_v4(),
-                udp_mode: false,
-                session_security_settings: None,
+                udp_mode: UdpMode::Disabled,
+                session_security_settings: SessionSecuritySettings::default(),
                 peer_session_password: None,
             })
             .unwrap();
@@ -266,7 +276,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_auth_concurrent_connections() -> Result<(), Box<dyn Error>> {
-        crate::common::setup_log();
+        setup_log();
         let (server, server_bind_address) = server_info_skip_cert_verification();
         tokio::task::spawn(server);
 
@@ -294,8 +304,8 @@ mod tests {
                     cid: cid_main,
                     peer_cid: peer_cid,
                     request_id: Uuid::new_v4(),
-                    udp_mode: false,
-                    session_security_settings: None,
+                    udp_mode: UdpMode::Disabled,
+                    session_security_settings: SessionSecuritySettings::default(),
                     peer_session_password: None,
                 })
                 .unwrap();
