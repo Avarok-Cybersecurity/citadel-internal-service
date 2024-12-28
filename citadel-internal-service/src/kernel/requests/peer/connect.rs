@@ -54,6 +54,8 @@ pub async fn handle<T: IOInterface>(
         },
         remote.clone(),
         session_security_settings,
+        None,
+        None,
     );
 
     let response = match client_to_server_remote.find_target(cid, peer_cid).await {

@@ -28,6 +28,7 @@ pub trait IOInterfaceExt: IOInterface {
             let write_task = async move {
                 let response =
                     InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
+                        cid: 0,
                         request_id: Some(conn_id),
                     });
 

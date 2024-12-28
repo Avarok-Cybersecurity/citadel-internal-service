@@ -182,7 +182,7 @@ mod tests {
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _ },
+            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
         ) = response_packet
         {
             panic!("Received Unexpected RegisterSuccess");
@@ -203,7 +203,7 @@ mod tests {
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _ },
+            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
         ) = response_packet
         {
             panic!("Received Unexpected RegisterSuccess");
@@ -224,7 +224,7 @@ mod tests {
         sink.send(register_command).await.unwrap();
         let response_packet = stream.next().await.unwrap();
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _ },
+            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
         ) = response_packet
         {
             info!(target: "citadel", "Successfully Registered to Server using Pre-Shared Key");

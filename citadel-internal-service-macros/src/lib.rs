@@ -16,16 +16,30 @@ pub fn is_notification_derive(input: TokenStream) -> TokenStream {
 // Create a proc macro that generates a function that goes through each enum variant, looks at the first and only item in the variant, and creates a function called request_id(&self) -> Option<&Uuid>, that looks at the field "request_id" in the variant and returns a reference to it if it exists.
 #[proc_macro_derive(RequestId)]
 pub fn request_id_derive(input: TokenStream) -> TokenStream {
-    generate_field_function(input, "request_id", "request_id")
+    generate_field_function(
+        input,
+        "request_id",
+        "request_id",
+        quote! { Option<&Uuid> },
+        Some(quote! { .as_ref() }),
+    )
+}
+
+#[proc_macro_derive(Cid)]
+pub fn cid_derive(input: TokenStream) -> TokenStream {
+    generate_field_function(input, "cid", "cid", quote! { u64 }, None)
 }
 
 fn generate_field_function(
     input: TokenStream,
     field_name: &str,
     function_name: &str,
+    return_type: proc_macro2::TokenStream,
+    extra_field_mapping: Option<proc_macro2::TokenStream>,
 ) -> TokenStream {
     // Parse the input tokens into a syntax tree
     let input = parse_macro_input!(input as DeriveInput);
+    let extra_field_mapping = extra_field_mapping.unwrap_or_default();
 
     // Extract the identifier and data from the input
     let name = &input.ident;
@@ -40,12 +54,12 @@ fn generate_field_function(
     let function_name = Ident::new(function_name, name.span());
 
     // Generate match arms for each enum variant
-    let match_arms = generate_field_match_arms(name, &data, field_name);
+    let match_arms = generate_field_match_arms(name, &data, field_name, extra_field_mapping);
 
     // Generate the implementation of the `is_error` method
     let expanded = quote! {
         impl #name {
-            pub fn #function_name(&self) -> Option<&Uuid> {
+            pub fn #function_name(&self) -> #return_type {
                 match self {
                     #(#match_arms)*
                 }
@@ -61,6 +75,7 @@ fn generate_field_match_arms(
     name: &Ident,
     data_enum: &DataEnum,
     field_name: &str,
+    extra_field_mapping: proc_macro2::TokenStream,
 ) -> Vec<proc_macro2::TokenStream> {
     data_enum
         .variants
@@ -81,19 +96,19 @@ fn generate_field_match_arms(
                 if let syn::Type::Path(type_path) = &field.ty {
                     if type_path.path.segments.len() == 1 {
                         return quote! {
-                            #name::#variant_ident(inner) => inner.#field_name.as_ref(),
+                            #name::#variant_ident(inner) => inner.#field_name #extra_field_mapping,
                         };
                     }
                 }
 
                 // Match against each variant, ignoring any inner data
                 quote! {
-                    #name::#variant_ident(inner, ..) => inner.#field_name.as_ref(),
+                    #name::#variant_ident(inner, ..) => inner.#field_name #extra_field_mapping,
                 }
             } else {
                 // Match against each variant, ignoring any inner data
                 quote! {
-                    #name::#variant_ident { #field_name, .. } => Some(#field_name.as_ref()),
+                    #name::#variant_ident { #field_name, .. } => Some(#field_name #extra_field_mapping),
                 }
             }
         })

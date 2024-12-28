@@ -106,7 +106,7 @@ pub struct Connection {
     pub client_server_remote: ClientServerRemote,
     pub peers: HashMap<u64, PeerConnection>,
     pub(crate) associated_tcp_connection: Uuid,
-    pub c2s_file_transfer_handlers: HashMap<u64, Option<ObjectTransferHandler>>,
+    pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     pub groups: HashMap<MessageGroupKey, GroupConnection>,
 }
 
@@ -114,7 +114,7 @@ pub struct Connection {
 pub struct PeerConnection {
     sink: PeerChannelSendHalf,
     remote: PeerRemote,
-    handler_map: HashMap<u64, Option<ObjectTransferHandler>>,
+    handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     associated_tcp_connection: Uuid,
 }
 
@@ -165,7 +165,7 @@ impl Connection {
     fn add_object_transfer_handler(
         &mut self,
         peer_cid: u64,
-        object_id: u64,
+        object_id: ObjectId,
         handler: Option<ObjectTransferHandler>,
     ) {
         if self.implicated_cid() == peer_cid {
@@ -190,7 +190,7 @@ impl Connection {
     fn take_file_transfer_handle(
         &mut self,
         peer_cid: u64,
-        object_id: u64,
+        object_id: ObjectId,
     ) -> Option<Option<ObjectTransferHandler>> {
         if self.implicated_cid() == peer_cid {
             // C2S
@@ -324,12 +324,13 @@ async fn send_response_to_tcp_client(
         })
 }
 
+// TODO: return scoped wrapper type
 fn create_client_server_remote(
     conn_type: VirtualTargetType,
     remote: NodeRemote,
     security_settings: SessionSecuritySettings,
 ) -> ClientServerRemote {
-    ClientServerRemote::new(conn_type, remote, security_settings)
+    ClientServerRemote::new(conn_type, remote, security_settings, None, None)
 }
 
 pub(crate) async fn sink_send_payload<T: IOInterface>(

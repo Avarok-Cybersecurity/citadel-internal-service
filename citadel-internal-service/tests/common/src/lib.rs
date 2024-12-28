@@ -122,7 +122,7 @@ pub async fn register_and_connect_to_server<
         let response_packet = stream.next().await.unwrap();
 
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _ },
+            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
         ) = response_packet
         {
             info!(
@@ -477,7 +477,7 @@ pub fn server_test_node_skip_cert_verification<'a, K: NetKernel + 'a>(
         .with_node_type(NodeType::Server(bind_addr))
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(
-            ServerUnderlyingProtocol::from_tcp_listener(tcp_listener).unwrap(),
+            ServerUnderlyingProtocol::from_std_tcp_listener(tcp_listener).unwrap(),
         );
 
     (opts)(builder);
@@ -498,7 +498,7 @@ pub fn server_test_node_skip_cert_verification_with_password<'a, K: NetKernel + 
         .with_server_password(server_password)
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(
-            ServerUnderlyingProtocol::from_tcp_listener(tcp_listener).unwrap(),
+            ServerUnderlyingProtocol::from_std_tcp_listener(tcp_listener).unwrap(),
         );
 
     (opts)(builder);

@@ -93,6 +93,7 @@ pub async fn handle<T: IOInterface>(
 
         Err(err) => {
             let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                cid: 0,
                 message: err.into_string(),
                 request_id: Some(request_id),
             });

@@ -42,6 +42,7 @@ pub async fn handle<T: IOInterface>(
             false => {
                 let response = InternalServiceResponse::RegisterSuccess(
                     citadel_internal_service_types::RegisterSuccess {
+                        cid: 0,
                         request_id: Some(request_id),
                     },
                 );
@@ -66,6 +67,7 @@ pub async fn handle<T: IOInterface>(
         Err(err) => {
             let response = InternalServiceResponse::RegisterFailure(
                 citadel_internal_service_types::RegisterFailure {
+                    cid: 0,
                     message: err.into_string(),
                     request_id: Some(request_id),
                 },

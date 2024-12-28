@@ -6,6 +6,7 @@ mod tests {
     use citadel_internal_service_connector::connector::InternalServiceConnector;
     use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
     use citadel_internal_service_connector::io_interface::IOInterface;
+    use citadel_internal_service_connector::messenger::backend::CitadelBackendExt;
     use citadel_internal_service_connector::messenger::{
         CitadelWorkspaceMessenger, MessengerTx, WrappedMessage,
     };
@@ -13,7 +14,6 @@ mod tests {
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use futures::{SinkExt, StreamExt};
     use intersession_layer_messaging::testing::InMemoryBackend;
-    use intersession_layer_messaging::Backend;
     use std::error::Error;
     use std::io::ErrorKind;
     use std::net::SocketAddr;
@@ -183,7 +183,7 @@ mod tests {
         rx_b: &mut UnboundedReceiver<InternalServiceResponse>,
     ) -> Result<(), Box<dyn Error>>
     where
-        B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+        B: CitadelBackendExt,
     {
         let cid_a = tx_a.local_cid();
         let cid_b = tx_b.local_cid();
@@ -238,7 +238,7 @@ mod tests {
         cid: u64,
     ) -> Result<(), Box<dyn Error>>
     where
-        B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+        B: CitadelBackendExt,
     {
         let request = InternalServiceRequest::GetSessions {
             request_id: Uuid::new_v4(),
@@ -265,7 +265,7 @@ mod tests {
         response_inspector: F,
     ) -> Result<(), Box<dyn Error>>
     where
-        B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+        B: CitadelBackendExt,
         F: FnOnce(InternalServiceResponse),
     {
         tx.send_request(request).await?;
@@ -322,8 +322,7 @@ mod tests {
                 "Unable to create in memory interface",
             )
         })?;
-        let backend = InMemoryBackend::default();
-        let (messenger, rx) = CitadelWorkspaceMessenger::new(connector, backend).await?;
+        let (messenger, rx) = CitadelWorkspaceMessenger::new(connector);
         Ok((messenger, rx))
     }
 }

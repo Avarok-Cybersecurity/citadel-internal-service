@@ -45,6 +45,7 @@ pub async fn handle<T: IOInterface>(
     }
 
     let response = InternalServiceResponse::GetAccountInformationResponse(Accounts {
+        cid: 0,
         accounts: accounts_ret,
         request_id: Some(request_id),
     });

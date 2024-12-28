@@ -23,12 +23,15 @@ pub async fn handle<T: IOInterface>(
     };
     let remote = this.remote();
 
+    // TODO: Add a simple targetted remote wrapper meant for transient/scoped requests
     let client_to_server_remote = ClientServerRemote::new(
         VirtualTargetType::LocalGroupServer {
             implicated_cid: cid,
         },
         remote.clone(),
         Default::default(),
+        None,
+        None,
     );
     let response = match client_to_server_remote
         .create_group(initial_users_to_invite)
