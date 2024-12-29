@@ -14,7 +14,7 @@ mod tests {
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use citadel_sdk::prelude::StackedRatchet;
     use futures::{SinkExt, StreamExt};
-    use intersession_layer_messaging::testing::InMemoryBackend;
+    use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBackend;
     use std::error::Error;
     use std::io::ErrorKind;
     use std::net::SocketAddr;
@@ -314,7 +314,7 @@ mod tests {
         from_service: tokio::sync::mpsc::UnboundedReceiver<InternalServiceResponse>,
     ) -> Result<
         (
-            CitadelWorkspaceMessenger<InMemoryBackend<WrappedMessage>>,
+            CitadelWorkspaceMessenger<CitadelWorkspaceBackend>,
             UnboundedReceiver<InternalServiceResponse>,
         ),
         Box<dyn Error>,

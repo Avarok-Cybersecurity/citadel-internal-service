@@ -4,7 +4,6 @@ use citadel_internal_service_types::{
     InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
 };
 use dashmap::DashMap;
-use intersession_layer_messaging::testing::InMemoryBackend;
 use intersession_layer_messaging::{Backend, BackendError};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -442,16 +441,6 @@ pub trait CitadelBackendExt: Backend<WrappedMessage> + Clone + Send + Sync + 'st
         response: InternalServiceResponse,
     ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
         Ok(Some(response))
-    }
-}
-
-#[async_trait]
-impl CitadelBackendExt for InMemoryBackend<WrappedMessage> {
-    async fn new(
-        _cid: u64,
-        _handle: &MessengerTx<Self>,
-    ) -> Result<Self, BackendError<WrappedMessage>> {
-        Ok(Self::default())
     }
 }
 
