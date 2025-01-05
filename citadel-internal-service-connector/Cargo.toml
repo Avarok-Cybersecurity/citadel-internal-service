@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-vendored = ["citadel_sdk"]
+vendored = ["citadel-internal-service-types/vendored"]
 
 [dependencies]
 citadel-internal-service-types = { workspace = true }
@@ -23,9 +23,7 @@ dashmap = { workspace = true }
 parking_lot = { workspace = true }
 itertools = { workspace = true }
 bytes = "1.8.0"
-citadel_sdk = { workspace = true, optional = true, features = ["vendored"] }
 
 [dev-dependencies]
-citadel_sdk = { workspace = true, features=["multi-threaded", "localhost-testing"] }
 citadel-internal-service-test-common = { workspace = true }
 intersession-layer-messaging = { workspace = true, features = ["testing"] }
