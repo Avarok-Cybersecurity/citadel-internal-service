@@ -10,7 +10,7 @@ vendored = ["citadel-internal-service-types/vendored"]
 
 [dependencies]
 citadel-internal-service-types = { workspace = true }
-intersession-layer-messaging = { workspace = true }
+intersession-layer-messaging = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["net", "rt", "macros"] }
 tokio-util = { workspace = true, features = ["codec"] }
 bincode2 = { workspace = true }
@@ -26,4 +26,3 @@ bytes = "1.8.0"
 
 [dev-dependencies]
 citadel-internal-service-test-common = { workspace = true }
-intersession-layer-messaging = { workspace = true, features = ["testing"] }
