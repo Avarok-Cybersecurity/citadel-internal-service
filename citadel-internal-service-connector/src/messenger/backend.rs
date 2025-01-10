@@ -1,9 +1,12 @@
 use crate::messenger::{InternalMessage, MessengerTx, StreamKey, WrappedMessage};
 use async_trait::async_trait;
-use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
+use citadel_internal_service_types::{
+    InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
+};
 use dashmap::DashMap;
 use intersession_layer_messaging::testing::InMemoryBackend;
 use intersession_layer_messaging::{Backend, BackendError};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
@@ -15,33 +18,88 @@ pub struct CitadelWorkspaceBackend {
     bypass_ism_outbound_tx: UnboundedSender<(StreamKey, InternalMessage)>,
 }
 
+// HashMap<peer_cid, HashMap<message_id, wrapped_message>>
+type State = HashMap<u64, HashMap<u64, WrappedMessage>>;
 impl CitadelWorkspaceBackend {
-    fn send_request(
+    async fn get_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+        // Step 1: Build the request to get the inbound map
+    }
+
+    async fn get_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+        // Step 1: Build the request to get the inbound map
+    }
+
+    async fn sync_inbound_state(
         &self,
-        request: InternalServiceRequest,
-    ) -> Result<(), Box<BackendError<WrappedMessage>>> {
-        let stream_key = StreamKey::bypass_ism();
-        let message = InternalMessage::Message(WrappedMessage {
+        request_id: Uuid,
+        state: State,
+    ) -> Result<(), BackendError<WrappedMessage>> {
+        let value = bincode2::serialize(&state).unwrap();
+        let key = create_key_for(self.cid, INBOUND_MESSAGE_PREFIX);
+
+        let outbound_request =
+            InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
+                request_id,
+                cid: self.cid,
+                peer_cid: None,
+                key,
+                value,
+            });
+
+        let message_wrapped = WrappedMessage {
             source_id: self.cid,
-            destination_id: 0, // Does not matter
-            message_id: 0,     // Does not matter either, bypassing ISM
-            contents: request.into(),
-        });
+            destination_id: 0,
+            message_id: 0,
+            contents: outbound_request,
+        };
+
+        let stream_key = StreamKey::bypass_ism();
+        let internal_message = InternalMessage::Message(message_wrapped);
 
         self.bypass_ism_outbound_tx
-            .send((stream_key, message))
-            .map_err(|err| {
-                let reason = err.to_string();
-                let InternalMessage::Message(message) = err.0 .1 else {
-                    unreachable!("Bypass ISM should only send messages");
-                };
+            .send((stream_key, internal_message))
+            .map_err(|err| BackendError::StorageError(err.to_string()))
+    }
 
-                BackendError::SendFailed { reason, message }
-            })?;
+    async fn sync_outbound_state(
+        &self,
+        request_id: Uuid,
+        state: State,
+    ) -> Result<(), BackendError<WrappedMessage>> {
+        let value = bincode2::serialize(&state).unwrap();
+        let key = create_key_for(self.cid, OUTBOUND_MESSAGE_PREFIX);
 
-        Ok(())
+        let outbound_request =
+            InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
+                request_id,
+                cid: self.cid,
+                peer_cid: None,
+                key,
+                value,
+            });
+
+        let message_wrapped = WrappedMessage {
+            source_id: self.cid,
+            destination_id: 0,
+            message_id: 0,
+            contents: outbound_request,
+        };
+
+        let stream_key = StreamKey::bypass_ism();
+        let internal_message = InternalMessage::Message(message_wrapped);
+
+        self.bypass_ism_outbound_tx
+            .send((stream_key, internal_message))
+            .map_err(|err| BackendError::StorageError(err.to_string()))
     }
 }
+
+fn create_key_for(session_cid: u64, prefix: &str) -> String {
+    format!("__{}-{}", prefix, session_cid)
+}
+
+const OUTBOUND_MESSAGE_PREFIX: &str = "outbound-citadel-messenger";
+const INBOUND_MESSAGE_PREFIX: &str = "inbound-citadel-messenger";
 
 #[async_trait]
 impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
@@ -49,14 +107,46 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         &self,
         message: WrappedMessage,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        Ok(())
+        let message_id = message.message_id;
+        let peer_cid = message.destination_id;
+        let request_id = if let InternalServicePayload::Request(request) = &message.contents {
+            request.request_id().copied().unwrap_or_default()
+        } else {
+            return Err(BackendError::StorageError(
+                "Invalid message contents".to_string(),
+            ));
+        };
+
+        let mut outbound = self.get_outbound_map().await?;
+        outbound
+            .entry(peer_cid)
+            .or_default()
+            .insert(message_id, message);
+
+        self.sync_outbound_state(request_id, outbound).await
     }
 
     async fn store_inbound(
         &self,
         message: WrappedMessage,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        Ok(())
+        let message_id = message.message_id;
+        let peer_cid = message.destination_id;
+        let request_id = if let InternalServicePayload::Request(request) = &message.contents {
+            request.request_id().copied().unwrap_or_default()
+        } else {
+            return Err(BackendError::StorageError(
+                "Invalid message contents".to_string(),
+            ));
+        };
+
+        let mut inbound = self.get_inbound_map().await?;
+        inbound
+            .entry(peer_cid)
+            .or_default()
+            .insert(message_id, message);
+
+        self.sync_inbound_state(request_id, inbound).await
     }
 
     async fn clear_message_inbound(
@@ -64,6 +154,8 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         peer_id: u64,
         message_id: u64,
     ) -> Result<(), BackendError<WrappedMessage>> {
+        // HashMap<local_cid, HashMap<peer_cid, HashMap<message_id, message_contents>>>
+        // get map, delete item, then sync map
         Ok(())
     }
 
@@ -72,30 +164,38 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         peer_id: u64,
         message_id: u64,
     ) -> Result<(), BackendError<WrappedMessage>> {
+        // get map, delete item, sync map
         Ok(())
     }
 
     async fn get_pending_outbound(
         &self,
     ) -> Result<Vec<WrappedMessage>, BackendError<WrappedMessage>> {
+        // get map, run iterator over all and collect into vec
         Ok(vec![])
     }
 
     async fn get_pending_inbound(
         &self,
     ) -> Result<Vec<WrappedMessage>, BackendError<WrappedMessage>> {
+        // get map, run iterator over all and collect into vec
         Ok(vec![])
     }
+
     // Simple K/V interface for tracker state
     async fn store_value(
         &self,
         key: &str,
         value: &[u8],
     ) -> Result<(), BackendError<WrappedMessage>> {
+        // make the 'key' unique using the same method as we have (use cid, and some __prefix)
+        // then store to the backend using LocalDBSetKV
         Ok(())
     }
 
     async fn load_value(&self, key: &str) -> Result<Option<Vec<u8>>, BackendError<WrappedMessage>> {
+        // make the 'key' unique using the same method as we have (use cid, and some __prefix)
+        // then pull from the backend using LocalDBGetKV
         Ok(None)
     }
 }
