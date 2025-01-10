@@ -14,19 +14,27 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct CitadelWorkspaceBackend {
     cid: u64,
-    expected_requests: Arc<DashMap<Uuid, ()>>,
+    expected_requests: Arc<DashMap<Uuid, tokio::sync::oneshot::Sender<InternalServiceResponse>>>,
     bypass_ism_outbound_tx: UnboundedSender<(StreamKey, InternalMessage)>,
 }
 
 // HashMap<peer_cid, HashMap<message_id, wrapped_message>>
 type State = HashMap<u64, HashMap<u64, WrappedMessage>>;
 impl CitadelWorkspaceBackend {
+    async fn wait_for_response(&self, request_id: Uuid) -> Option<InternalServiceResponse> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.expected_requests.insert(request_id, tx);
+        rx.await.ok()
+    }
+
     async fn get_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
         // Step 1: Build the request to get the inbound map
+        // Step 2: call self.wait_for_response()
     }
 
     async fn get_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
         // Step 1: Build the request to get the inbound map
+        // Step 2: call self.wait_for_response()
     }
 
     async fn sync_inbound_state(
@@ -237,5 +245,24 @@ impl CitadelBackendExt for CitadelWorkspaceBackend {
             expected_requests: Arc::new(DashMap::new()),
             bypass_ism_outbound_tx: handle.bypass_ism_outbound_tx.clone(),
         })
+    }
+
+    async fn inspect_received_payload(
+        &self,
+        response: InternalServiceResponse,
+    ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
+        if let Some(id) = response.request_id() {
+            if let Some((_, tx)) = self.expected_requests.remove(id) {
+                if let Err(err) = tx.send(response) {
+                    Ok(Some(err))
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(Some(response))
+            }
+        } else {
+            Ok(Some(response))
+        }
     }
 }
