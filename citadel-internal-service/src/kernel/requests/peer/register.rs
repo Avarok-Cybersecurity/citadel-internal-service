@@ -5,11 +5,13 @@ use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, PeerRegisterFailure, PeerRegisterSuccess,
 };
 use citadel_sdk::prefabs::ClientServerRemote;
-use citadel_sdk::prelude::{ProtocolRemoteExt, ProtocolRemoteTargetExt, VirtualTargetType};
+use citadel_sdk::prelude::{
+    ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, VirtualTargetType,
+};
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -27,9 +29,7 @@ pub async fn handle<T: IOInterface>(
     let remote = this.remote();
 
     let client_to_server_remote = ClientServerRemote::new(
-        VirtualTargetType::LocalGroupServer {
-            implicated_cid: cid,
-        },
+        VirtualTargetType::LocalGroupServer { session_cid: cid },
         remote.clone(),
         session_security_settings,
         None,

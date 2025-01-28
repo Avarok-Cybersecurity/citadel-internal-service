@@ -30,11 +30,13 @@ impl CitadelWorkspaceBackend {
     async fn get_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
         // Step 1: Build the request to get the inbound map
         // Step 2: call self.wait_for_response()
+        todo!()
     }
 
     async fn get_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
         // Step 1: Build the request to get the inbound map
         // Step 2: call self.wait_for_response()
+        todo!()
     }
 
     async fn sync_inbound_state(

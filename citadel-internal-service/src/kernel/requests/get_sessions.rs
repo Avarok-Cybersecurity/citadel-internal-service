@@ -5,12 +5,12 @@ use citadel_internal_service_types::{
     GetSessionsResponse, InternalServiceRequest, InternalServiceResponse, PeerSessionInformation,
     SessionInformation,
 };
-use citadel_sdk::prelude::TargetLockedRemote;
+use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {

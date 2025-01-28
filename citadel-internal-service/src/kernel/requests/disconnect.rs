@@ -5,11 +5,11 @@ use citadel_internal_service_types::{
     DisconnectFailure, DisconnectNotification, InternalServiceRequest, InternalServiceResponse,
 };
 use citadel_logging::info;
-use citadel_sdk::prelude::{DisconnectFromHypernode, NodeRequest};
+use citadel_sdk::prelude::{DisconnectFromHypernode, NodeRequest, Ratchet};
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -18,9 +18,8 @@ pub async fn handle<T: IOInterface>(
     };
     let remote = this.remote();
 
-    let request = NodeRequest::DisconnectFromHypernode(DisconnectFromHypernode {
-        implicated_cid: cid,
-    });
+    let request =
+        NodeRequest::DisconnectFromHypernode(DisconnectFromHypernode { session_cid: cid });
 
     this.server_connection_map.lock().await.remove(&cid);
 

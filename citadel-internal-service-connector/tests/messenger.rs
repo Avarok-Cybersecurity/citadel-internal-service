@@ -12,6 +12,7 @@ mod tests {
     };
     use citadel_internal_service_test_common::PeerServiceHandles;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
+    use citadel_sdk::prelude::StackedRatchet;
     use futures::{SinkExt, StreamExt};
     use intersession_layer_messaging::testing::InMemoryBackend;
     use std::error::Error;
@@ -30,15 +31,16 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (to_service_a, from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();
@@ -75,15 +77,16 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (to_service_a, from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();
@@ -119,16 +122,17 @@ mod tests {
         // internal service for peer C
         let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-                bind_address_internal_service_c,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                    bind_address_internal_service_c,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (to_service_a, from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();

@@ -6,13 +6,14 @@ use citadel_internal_service_types::{
     InternalServiceResponse,
 };
 use citadel_sdk::prelude::{
-    GroupBroadcast, GroupBroadcastCommand, GroupEvent, NodeRequest, NodeResult, TargetLockedRemote,
+    GroupBroadcast, GroupBroadcastCommand, GroupEvent, NodeRequest, NodeResult, Ratchet,
+    TargetLockedRemote,
 };
 use futures::StreamExt;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -36,7 +37,7 @@ pub async fn handle<T: IOInterface>(
                 key: group_key,
             };
             let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
-                implicated_cid: cid,
+                session_cid: cid,
                 command: group_request,
             });
             match peer_remote
@@ -48,7 +49,7 @@ pub async fn handle<T: IOInterface>(
                     let mut result = Err("Group Request Join Failed".to_string());
                     while let Some(evt) = subscription.next().await {
                         if let NodeResult::GroupEvent(GroupEvent {
-                            implicated_cid: _,
+                            session_cid: _,
                             ticket: _,
                             event:
                                 GroupBroadcast::RequestJoinPending {

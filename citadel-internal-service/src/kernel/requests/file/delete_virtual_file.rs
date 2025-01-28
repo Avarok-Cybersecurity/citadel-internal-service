@@ -6,11 +6,11 @@ use citadel_internal_service_types::{
     InternalServiceResponse,
 };
 use citadel_logging::error;
-use citadel_sdk::prelude::{DeleteObject, NetworkError, NodeRequest, VirtualTargetType};
+use citadel_sdk::prelude::{DeleteObject, NetworkError, NodeRequest, Ratchet, VirtualTargetType};
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -32,7 +32,7 @@ pub async fn handle<T: IOInterface>(
                 if let Some(_peer_remote) = conn.peers.get_mut(&peer_cid) {
                     let request = NodeRequest::DeleteObject(DeleteObject {
                         v_conn: VirtualTargetType::LocalGroupPeer {
-                            implicated_cid: cid,
+                            session_cid: cid,
                             peer_cid,
                         },
                         virtual_dir: virtual_directory,
@@ -46,9 +46,7 @@ pub async fn handle<T: IOInterface>(
                 }
             } else {
                 let request = NodeRequest::DeleteObject(DeleteObject {
-                    v_conn: VirtualTargetType::LocalGroupServer {
-                        implicated_cid: cid,
-                    },
+                    v_conn: VirtualTargetType::LocalGroupServer { session_cid: cid },
                     virtual_dir: virtual_directory,
                     security_level: Default::default(),
                 });

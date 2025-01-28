@@ -29,12 +29,13 @@ mod tests {
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = server_info_skip_cert_verification();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
 
         tokio::task::spawn(server);
 
         let internal_service_kernel =
-            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
+                .await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -85,14 +86,16 @@ mod tests {
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) =
-            server_info_skip_cert_verification_with_password("SecretPassword".as_bytes().into());
+        let (server, server_bind_address) = server_info_skip_cert_verification_with_password::<
+            StackedRatchet,
+        >("SecretPassword".as_bytes().into());
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
 
         let internal_service_kernel =
-            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
+                .await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -143,14 +146,16 @@ mod tests {
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) =
-            server_info_skip_cert_verification_with_password("SecretPassword".as_bytes().into());
+        let (server, server_bind_address) = server_info_skip_cert_verification_with_password::<
+            StackedRatchet,
+        >("SecretPassword".as_bytes().into());
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
 
         let internal_service_kernel =
-            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
+                .await?;
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -317,23 +322,25 @@ mod tests {
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = server_info_reactive_skip_cert_verification(
-            |conn, _remote| async move {
-                let (sink, mut stream) = conn.channel.split();
+        let (server, server_bind_address) =
+            server_info_reactive_skip_cert_verification::<_, _, StackedRatchet>(
+                |conn| async move {
+                    let (mut sink, mut stream) = conn.split();
 
-                while let Some(_message) = stream.next().await {
-                    let send_message = "pong".into();
-                    sink.send_message(send_message).await.unwrap();
-                }
-                Ok(())
-            },
-            |_| (),
-        );
+                    while let Some(_message) = stream.next().await {
+                        sink.send("pong").await.unwrap();
+                    }
+                    Ok(())
+                },
+                |_| (),
+            );
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
         let internal_service_kernel =
-            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
+                .await?;
+
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -356,6 +363,7 @@ mod tests {
             password: "secret",
             pre_shared_key: None::<PreSharedKey>,
         }];
+
         let returned_service_info = register_and_connect_to_server(to_spawn).await;
         let mut service_vec = returned_service_info.unwrap();
         if let Some((to_service, from_service, cid)) = service_vec.get_mut(0_usize) {
@@ -418,24 +426,26 @@ mod tests {
         let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = server_info_reactive_skip_cert_verification(
-            |conn, _remote| async move {
-                let (sink, mut stream) = conn.channel.split();
+        let (server, server_bind_address) =
+            server_info_reactive_skip_cert_verification::<_, _, StackedRatchet>(
+                |conn| async move {
+                    let (mut sink, mut stream) = conn.split();
 
-                while let Some(_message) = stream.next().await {
-                    let send_message = "pong".into();
-                    sink.send_message(send_message).await.unwrap();
-                    info!("MessageSent");
-                }
-                Ok(())
-            },
-            |_| (),
-        );
+                    while let Some(_message) = stream.next().await {
+                        sink.send("pong").await.unwrap();
+                        info!("MessageSent");
+                    }
+                    Ok(())
+                },
+                |_| (),
+            );
 
         tokio::task::spawn(server);
         info!(target: "citadel", "sub server spawn");
         let internal_service_kernel =
-            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
+                .await?;
+
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -525,7 +535,7 @@ mod tests {
     #[tokio::test]
     async fn test_internal_service_peer_test() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let _ = register_and_connect_to_server_then_peers(
+        let _ = register_and_connect_to_server_then_peers::<StackedRatchet>(
             vec![
                 "127.0.0.1:55526".parse().unwrap(),
                 "127.0.0.1:55527".parse().unwrap(),
@@ -540,7 +550,7 @@ mod tests {
     #[tokio::test]
     async fn test_internal_service_peer_with_psk() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let _ = register_and_connect_to_server_then_peers(
+        let _ = register_and_connect_to_server_then_peers::<StackedRatchet>(
             vec![
                 "127.0.0.1:55526".parse().unwrap(),
                 "127.0.0.1:55527".parse().unwrap(),
@@ -628,7 +638,7 @@ mod tests {
     async fn test_internal_service_peer_with_psk_negative_case() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
 
-        let (server, server_bind_address) = server_info_skip_cert_verification();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
         let int_svc_addrs = vec![
@@ -642,14 +652,16 @@ mod tests {
             let bind_address_internal_service = int_svc_addr_iter;
 
             info!(target: "citadel", "Internal Service Spawning");
-            let internal_service_kernel =
-                CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+                bind_address_internal_service,
+            )
+            .await?;
+
             let internal_service = NodeBuilder::default()
                 .with_backend(BackendType::Filesystem("filesystem".into()))
                 .with_node_type(NodeType::Peer)
                 .with_insecure_skip_cert_verification()
-                .build(internal_service_kernel)
-                .unwrap();
+                .build(internal_service_kernel)?;
 
             // Add NodeFuture for Internal Service to Vector to be spawned
             internal_services.push(Box::pin(async move {
@@ -788,15 +800,16 @@ mod tests {
     async fn test_internal_service_peer_test_list_peers() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                "127.0.0.1:55526".parse().unwrap(),
-                "127.0.0.1:55527".parse().unwrap(),
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    "127.0.0.1:55526".parse().unwrap(),
+                    "127.0.0.1:55527".parse().unwrap(),
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
         let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
@@ -818,15 +831,16 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
         let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
@@ -872,15 +886,19 @@ mod tests {
     #[tokio::test]
     async fn test_c2s_kv() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let (server, server_bind_address) = server_info_skip_cert_verification();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
 
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55537".parse().unwrap();
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
             .with_insecure_skip_cert_verification()
-            .build(CitadelWorkspaceService::new_tcp(bind_address_internal_service_a).await?)
-            .unwrap();
+            .build(
+                CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+                    bind_address_internal_service_a,
+                )
+                .await?,
+            )?;
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
         internal_services.push(Box::pin(async move {
@@ -923,15 +941,16 @@ mod tests {
         // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
         let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
@@ -946,7 +965,7 @@ mod tests {
     async fn test_internal_service_forward_peer_requests() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
-        let (server, server_bind_address) = server_info_skip_cert_verification();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
@@ -954,15 +973,17 @@ mod tests {
             "127.0.0.1:55536".parse().unwrap(),
             "127.0.0.1:55537".parse().unwrap(),
         ];
+
         for internal_service_address in internal_service_addresses.clone() {
             let bind_address_internal_service = internal_service_address;
-            let internal_service_kernel =
-                CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            let internal_service_kernel = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(
+                bind_address_internal_service,
+            )
+            .await?;
             let internal_service = NodeBuilder::default()
                 .with_node_type(NodeType::Peer)
                 .with_insecure_skip_cert_verification()
-                .build(internal_service_kernel)
-                .unwrap();
+                .build(internal_service_kernel)?;
 
             internal_services.push(Box::pin(async move {
                 match internal_service.await {

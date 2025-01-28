@@ -4,11 +4,11 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     GroupListGroupsFailure, GroupListGroupsSuccess, InternalServiceRequest, InternalServiceResponse,
 };
-use citadel_sdk::prelude::ProtocolRemoteTargetExt;
+use citadel_sdk::prelude::{ProtocolRemoteTargetExt, Ratchet};
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {

@@ -5,11 +5,11 @@ use citadel_internal_service_types::{
     GroupCreateFailure, GroupCreateSuccess, InternalServiceRequest, InternalServiceResponse,
 };
 use citadel_sdk::prefabs::ClientServerRemote;
-use citadel_sdk::prelude::{ProtocolRemoteTargetExt, VirtualTargetType};
+use citadel_sdk::prelude::{ProtocolRemoteTargetExt, Ratchet, VirtualTargetType};
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -25,9 +25,7 @@ pub async fn handle<T: IOInterface>(
 
     // TODO: Add a simple targetted remote wrapper meant for transient/scoped requests
     let client_to_server_remote = ClientServerRemote::new(
-        VirtualTargetType::LocalGroupServer {
-            implicated_cid: cid,
-        },
+        VirtualTargetType::LocalGroupServer { session_cid: cid },
         remote.clone(),
         Default::default(),
         None,

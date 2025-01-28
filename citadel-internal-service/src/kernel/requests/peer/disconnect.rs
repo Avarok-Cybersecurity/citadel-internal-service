@@ -4,11 +4,11 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, PeerDisconnectFailure, PeerDisconnectSuccess,
 };
-use citadel_sdk::prelude::{NodeRequest, PeerCommand, PeerConnectionType, PeerSignal};
+use citadel_sdk::prelude::{NodeRequest, PeerCommand, PeerConnectionType, PeerSignal, Ratchet};
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -23,10 +23,10 @@ pub async fn handle<T: IOInterface>(
     let remote = this.remote();
 
     let request = NodeRequest::PeerCommand(PeerCommand {
-        implicated_cid: cid,
+        session_cid: cid,
         command: PeerSignal::Disconnect {
             peer_conn_type: PeerConnectionType::LocalGroupPeer {
-                implicated_cid: cid,
+                session_cid: cid,
                 peer_cid,
             },
             disconnect_response: None,

@@ -5,25 +5,27 @@ use citadel_internal_service_types::{
     PeerRegisterNotification,
 };
 use citadel_logging::info;
-use citadel_sdk::prelude::{GroupEvent, NetworkError, PeerConnectionType, PeerEvent, PeerSignal};
+use citadel_sdk::prelude::{
+    GroupEvent, NetworkError, PeerConnectionType, PeerEvent, PeerSignal, Ratchet,
+};
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     event: PeerEvent,
 ) -> Result<(), NetworkError> {
     match event.event {
         PeerSignal::Disconnect {
             peer_conn_type:
                 PeerConnectionType::LocalGroupPeer {
-                    implicated_cid,
+                    session_cid,
                     peer_cid,
                 },
             disconnect_response: _,
         } => {
-            if let Some(conn) = this.clear_peer_connection(implicated_cid, peer_cid).await {
+            if let Some(conn) = this.clear_peer_connection(session_cid, peer_cid).await {
                 let response =
                     InternalServiceResponse::DisconnectNotification(DisconnectNotification {
-                        cid: implicated_cid,
+                        cid: session_cid,
                         peer_cid: Some(peer_cid),
                         request_id: None,
                     });
@@ -36,11 +38,11 @@ pub async fn handle<T: IOInterface>(
             }
         }
         PeerSignal::BroadcastConnected {
-            implicated_cid,
+            session_cid,
             group_broadcast,
         } => {
             let evt = GroupEvent {
-                implicated_cid,
+                session_cid,
                 ticket: event.ticket,
                 event: group_broadcast,
             };
@@ -49,20 +51,20 @@ pub async fn handle<T: IOInterface>(
         PeerSignal::PostRegister {
             peer_conn_type:
                 PeerConnectionType::LocalGroupPeer {
-                    implicated_cid: peer_cid,
-                    peer_cid: implicated_cid,
+                    session_cid: peer_cid,
+                    peer_cid: session_cid,
                 },
             inviter_username,
             invitee_username: _,
             ticket_opt: _,
             invitee_response: _,
         } => {
-            info!(target: "citadel", "User {implicated_cid:?} received Register Request from {peer_cid:?}");
+            info!(target: "citadel", "User {session_cid:?} received Register Request from {peer_cid:?}");
             let mut server_connection_map = this.server_connection_map.lock().await;
-            if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
+            if let Some(connection) = server_connection_map.get_mut(&session_cid) {
                 let response =
                     InternalServiceResponse::PeerRegisterNotification(PeerRegisterNotification {
-                        cid: implicated_cid,
+                        cid: session_cid,
                         peer_cid,
                         peer_username: inviter_username,
                         request_id: None,
@@ -81,8 +83,8 @@ pub async fn handle<T: IOInterface>(
         PeerSignal::PostConnect {
             peer_conn_type:
                 PeerConnectionType::LocalGroupPeer {
-                    implicated_cid: peer_cid,
-                    peer_cid: implicated_cid,
+                    session_cid: peer_cid,
+                    peer_cid: session_cid,
                 },
             ticket_opt: _,
             invitee_response: _,
@@ -90,12 +92,12 @@ pub async fn handle<T: IOInterface>(
             udp_mode,
             session_password: _,
         } => {
-            info!(target: "citadel", "User {implicated_cid:?} received Connect Request from {peer_cid:?}");
+            info!(target: "citadel", "User {session_cid:?} received Connect Request from {peer_cid:?}");
             let mut server_connection_map = this.server_connection_map.lock().await;
-            if let Some(connection) = server_connection_map.get_mut(&implicated_cid) {
+            if let Some(connection) = server_connection_map.get_mut(&session_cid) {
                 let response =
                     InternalServiceResponse::PeerConnectNotification(PeerConnectNotification {
-                        cid: implicated_cid,
+                        cid: session_cid,
                         peer_cid,
                         session_security_settings,
                         udp_mode,

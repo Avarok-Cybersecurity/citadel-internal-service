@@ -6,12 +6,12 @@ use citadel_internal_service_types::{
 };
 use citadel_logging::{error, info};
 use citadel_sdk::prelude::{
-    NetworkError, NodeRequest, SendObject, TargetLockedRemote, VirtualTargetType,
+    NetworkError, NodeRequest, Ratchet, SendObject, TargetLockedRemote, VirtualTargetType,
 };
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -36,7 +36,7 @@ pub async fn handle<T: IOInterface>(
                     let request = NodeRequest::SendObject(SendObject {
                         source: Box::new(source),
                         chunk_size,
-                        implicated_cid: cid,
+                        session_cid: cid,
                         v_conn_type: *peer_remote.remote.user(),
                         transfer_type,
                     });
@@ -50,10 +50,8 @@ pub async fn handle<T: IOInterface>(
                 let request = NodeRequest::SendObject(SendObject {
                     source: Box::new(source),
                     chunk_size,
-                    implicated_cid: cid,
-                    v_conn_type: VirtualTargetType::LocalGroupServer {
-                        implicated_cid: cid,
-                    },
+                    session_cid: cid,
+                    v_conn_type: VirtualTargetType::LocalGroupServer { session_cid: cid },
                     transfer_type,
                 });
 

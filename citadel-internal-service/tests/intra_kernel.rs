@@ -20,11 +20,11 @@ mod tests {
     async fn test_intra_kernel_service_and_peers() -> Result<(), Box<dyn std::error::Error>> {
         crate::common::setup_log();
 
-        let (server, server_bind_address) = server_info_skip_cert_verification();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
         let service_addr = "127.0.0.1:55778".parse().unwrap();
-        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
+        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::InMemory)
@@ -90,11 +90,11 @@ mod tests {
     async fn test_intra_kernel_peer_message() -> Result<(), Box<dyn std::error::Error>> {
         crate::common::setup_log();
 
-        let (server, server_bind_address) = server_info_skip_cert_verification();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
         let service_addr = "127.0.0.1:55778".parse().unwrap();
-        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
+        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::InMemory)
@@ -196,11 +196,11 @@ mod tests {
     async fn test_intra_kernel_send_file() -> Result<(), Box<dyn std::error::Error>> {
         crate::common::setup_log();
 
-        let (server, server_bind_address) = server_info_skip_cert_verification();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
         let service_addr = "127.0.0.1:55778".parse().unwrap();
-        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
+        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
@@ -337,11 +337,11 @@ mod tests {
     async fn test_intra_kernel_revfs() -> Result<(), Box<dyn std::error::Error>> {
         crate::common::setup_log();
 
-        let (server, server_bind_address) = server_info_skip_cert_verification();
+        let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
         let service_addr = "127.0.0.1:55778".parse().unwrap();
-        let service = CitadelWorkspaceService::new_tcp(service_addr).await?;
+        let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))

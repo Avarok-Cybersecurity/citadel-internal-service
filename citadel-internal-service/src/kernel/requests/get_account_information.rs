@@ -5,12 +5,12 @@ use citadel_internal_service_types::{
     AccountInformation, Accounts, InternalServiceRequest, InternalServiceResponse,
     PeerSessionInformation,
 };
-use citadel_sdk::prelude::{CNACMetadata, NodeRemote};
+use citadel_sdk::prelude::{CNACMetadata, NodeRemote, Ratchet};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -53,10 +53,10 @@ pub async fn handle<T: IOInterface>(
     Some(HandledRequestResult { response, uuid })
 }
 
-async fn add_account_to_map(
+async fn add_account_to_map<R: Ratchet>(
     accounts_ret: &mut HashMap<u64, AccountInformation>,
     account: CNACMetadata,
-    remote: &NodeRemote,
+    remote: &NodeRemote<R>,
 ) {
     let username = account.username.clone();
     let full_name = account.full_name.clone();
