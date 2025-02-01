@@ -992,6 +992,7 @@ mod tests {
                 }
             }));
         }
+
         spawn_services(internal_services);
         tokio::time::sleep(Duration::from_millis(2000)).await;
 

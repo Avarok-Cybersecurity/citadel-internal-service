@@ -1,5 +1,5 @@
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
-use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType};
+use citadel_sdk::prelude::{BackendType, NodeBuilder, NodeType, StackedRatchet};
 use std::error::Error;
 use std::net::SocketAddr;
 use structopt::StructOpt;
@@ -8,7 +8,7 @@ use structopt::StructOpt;
 async fn main() -> Result<(), Box<dyn Error>> {
     citadel_logging::setup_log();
     let opts: Options = Options::from_args();
-    let service = EmptyKernel;
+    let service = EmptyKernel::<StackedRatchet>::default();
     let mut builder = NodeBuilder::default();
     let mut builder = builder
         .with_backend(BackendType::InMemory)
