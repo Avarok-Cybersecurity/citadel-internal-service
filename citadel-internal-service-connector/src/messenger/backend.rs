@@ -27,16 +27,152 @@ impl CitadelWorkspaceBackend {
         rx.await.ok()
     }
 
+    async fn get_registered_peers(&self) -> Result<Vec<u64>, BackendError<WrappedMessage>> {
+        let request_id = Uuid::new_v4();
+        let request =
+            InternalServicePayload::Request(InternalServiceRequest::ListRegisteredPeers {
+                request_id,
+                cid: self.cid,
+            });
+        let message = WrappedMessage {
+            source_id: self.cid,
+            destination_id: 0,
+            message_id: 0,
+            contents: request,
+        };
+        let stream_key = StreamKey::bypass_ism();
+        let internal_message = InternalMessage::Message(message);
+        self.bypass_ism_outbound_tx
+            .send((stream_key, internal_message))
+            .map_err(|err| BackendError::StorageError(err.to_string()))?;
+
+        if let Some(response) = self.wait_for_response(request_id).await {
+            if let InternalServiceResponse::ListRegisteredPeersResponse(success_response) = response
+            {
+                Ok(success_response.peers.iter().map(|p| *p.0).collect())
+            } else {
+                Err(BackendError::StorageError(
+                    "Failed to get registered peers".to_string(),
+                ))
+            }
+        } else {
+            Err(BackendError::StorageError(
+                "No response received when fetching registered peers".to_string(),
+            ))
+        }
+    }
+
     async fn get_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
-        // Step 1: Build the request to get the inbound map
-        // Step 2: call self.wait_for_response()
-        todo!()
+        let peers = self.get_registered_peers().await?;
+
+        let mut state: State = HashMap::new();
+
+        for peer_cid in peers {
+            let request_id = Uuid::new_v4();
+            let key = create_key_for(self.cid, &format!("{}{}", INBOUND_MESSAGE_PREFIX, peer_cid));
+
+            let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
+                request_id,
+                cid: self.cid,
+                peer_cid: Some(peer_cid),
+                key,
+            });
+
+            let message = WrappedMessage {
+                source_id: self.cid,
+                destination_id: 0,
+                message_id: 0,
+                contents: request,
+            };
+
+            let stream_key = StreamKey::bypass_ism();
+            let internal_message = InternalMessage::Message(message);
+
+            self.bypass_ism_outbound_tx
+                .send((stream_key, internal_message))
+                .map_err(|err| BackendError::StorageError(err.to_string()))?;
+
+            if let Some(response) = self.wait_for_response(request_id).await {
+                if let InternalServiceResponse::LocalDBGetKVSuccess(success_response) = response {
+                    let peer_messages: HashMap<u64, WrappedMessage> =
+                        bincode2::deserialize(&success_response.value).map_err(|err| {
+                            BackendError::StorageError(format!(
+                                "Failed to deserialize peer messages: {}",
+                                err
+                            ))
+                        })?;
+                    state.insert(peer_cid, peer_messages);
+                } else {
+                    return Err(BackendError::StorageError(
+                        "Failed to get inbound messages".to_string(),
+                    ));
+                }
+            } else {
+                return Err(BackendError::StorageError(
+                    "No response received when fetching inbound messages".to_string(),
+                ));
+            }
+        }
+
+        Ok(state)
     }
 
     async fn get_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
-        // Step 1: Build the request to get the inbound map
-        // Step 2: call self.wait_for_response()
-        todo!()
+        let peers = self.get_registered_peers().await?;
+
+        let mut state: State = HashMap::new();
+
+        for peer_cid in peers {
+            let request_id = Uuid::new_v4();
+            let key = create_key_for(
+                self.cid,
+                &format!("{}{}", OUTBOUND_MESSAGE_PREFIX, peer_cid),
+            );
+
+            let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
+                request_id,
+                cid: self.cid,
+                peer_cid: Some(peer_cid),
+                key,
+            });
+
+            let message = WrappedMessage {
+                source_id: self.cid,
+                destination_id: 0,
+                message_id: 0,
+                contents: request,
+            };
+
+            let stream_key = StreamKey::bypass_ism();
+            let internal_message = InternalMessage::Message(message);
+
+            self.bypass_ism_outbound_tx
+                .send((stream_key, internal_message))
+                .map_err(|err| BackendError::StorageError(err.to_string()))?;
+
+            if let Some(response) = self.wait_for_response(request_id).await {
+                if let InternalServiceResponse::LocalDBGetKVSuccess(success_response) = response {
+                    let peer_messages: HashMap<u64, WrappedMessage> =
+                        bincode2::deserialize(&success_response.value).map_err(|err| {
+                            BackendError::StorageError(format!(
+                                "Failed to deserialize peer messages: {}",
+                                err
+                            ))
+                        })?;
+                    state.insert(peer_cid, peer_messages);
+                } else {
+                    return Err(BackendError::StorageError(
+                        "Failed to get outbound messages".to_string(),
+                    ));
+                }
+            } else {
+                return Err(BackendError::StorageError(
+                    "No response received when fetching outbound messages".to_string(),
+                ));
+            }
+        }
+
+        Ok(state)
     }
 
     async fn sync_inbound_state(
@@ -164,9 +300,12 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         peer_id: u64,
         message_id: u64,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        // HashMap<local_cid, HashMap<peer_cid, HashMap<message_id, message_contents>>>
-        // get map, delete item, then sync map
-        Ok(())
+        let mut inbound = self.get_inbound_map().await?;
+        if let Some(peer_messages) = inbound.get_mut(&peer_id) {
+            peer_messages.remove(&message_id);
+        }
+        let request_id = Uuid::new_v4();
+        self.sync_inbound_state(request_id, inbound).await
     }
 
     async fn clear_message_outbound(
@@ -174,22 +313,32 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         peer_id: u64,
         message_id: u64,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        // get map, delete item, sync map
-        Ok(())
+        let mut outbound = self.get_outbound_map().await?;
+        if let Some(peer_messages) = outbound.get_mut(&peer_id) {
+            peer_messages.remove(&message_id);
+        }
+        let request_id = Uuid::new_v4();
+        self.sync_outbound_state(request_id, outbound).await
     }
 
     async fn get_pending_outbound(
         &self,
     ) -> Result<Vec<WrappedMessage>, BackendError<WrappedMessage>> {
-        // get map, run iterator over all and collect into vec
-        Ok(vec![])
+        let outbound = self.get_outbound_map().await?;
+        Ok(outbound
+            .values()
+            .flat_map(|peer_messages| peer_messages.values().cloned())
+            .collect())
     }
 
     async fn get_pending_inbound(
         &self,
     ) -> Result<Vec<WrappedMessage>, BackendError<WrappedMessage>> {
-        // get map, run iterator over all and collect into vec
-        Ok(vec![])
+        let inbound = self.get_inbound_map().await?;
+        Ok(inbound
+            .values()
+            .flat_map(|peer_messages| peer_messages.values().cloned())
+            .collect())
     }
 
     // Simple K/V interface for tracker state
@@ -198,15 +347,85 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         key: &str,
         value: &[u8],
     ) -> Result<(), BackendError<WrappedMessage>> {
-        // make the 'key' unique using the same method as we have (use cid, and some __prefix)
-        // then store to the backend using LocalDBSetKV
-        Ok(())
+        let request_id = Uuid::new_v4();
+        let unique_key = create_key_for(self.cid, key);
+
+        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
+            request_id,
+            cid: self.cid,
+            peer_cid: None,
+            key: unique_key,
+            value: value.to_vec(),
+        });
+
+        let message = WrappedMessage {
+            source_id: self.cid,
+            destination_id: 0,
+            message_id: 0,
+            contents: request,
+        };
+
+        let stream_key = StreamKey::bypass_ism();
+        let internal_message = InternalMessage::Message(message);
+
+        self.bypass_ism_outbound_tx
+            .send((stream_key, internal_message))
+            .map_err(|err| BackendError::StorageError(err.to_string()))?;
+
+        if let Some(response) = self.wait_for_response(request_id).await {
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
+                Ok(())
+            } else {
+                Err(BackendError::StorageError(format!(
+                    "Failed to store value for key: {}",
+                    key
+                )))
+            }
+        } else {
+            Err(BackendError::StorageError(format!(
+                "No response when storing value for key: {}",
+                key
+            )))
+        }
     }
 
     async fn load_value(&self, key: &str) -> Result<Option<Vec<u8>>, BackendError<WrappedMessage>> {
-        // make the 'key' unique using the same method as we have (use cid, and some __prefix)
-        // then pull from the backend using LocalDBGetKV
-        Ok(None)
+        let request_id = Uuid::new_v4();
+        let unique_key = create_key_for(self.cid, key);
+
+        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
+            request_id,
+            cid: self.cid,
+            peer_cid: None,
+            key: unique_key,
+        });
+
+        let message = WrappedMessage {
+            source_id: self.cid,
+            destination_id: 0,
+            message_id: 0,
+            contents: request,
+        };
+
+        let stream_key = StreamKey::bypass_ism();
+        let internal_message = InternalMessage::Message(message);
+
+        self.bypass_ism_outbound_tx
+            .send((stream_key, internal_message))
+            .map_err(|err| BackendError::StorageError(err.to_string()))?;
+
+        if let Some(response) = self.wait_for_response(request_id).await {
+            if let InternalServiceResponse::LocalDBGetKVSuccess(success_response) = response {
+                Ok(Some(success_response.value))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Err(BackendError::StorageError(format!(
+                "Failed to load value for key: {}",
+                key
+            )))
+        }
     }
 }
 
