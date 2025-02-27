@@ -8,7 +8,7 @@ mod tests {
     use citadel_internal_service_connector::io_interface::IOInterface;
     use citadel_internal_service_connector::messenger::backend::CitadelBackendExt;
     use citadel_internal_service_connector::messenger::{
-        CitadelWorkspaceMessenger, MessengerTx, WrappedMessage,
+        CitadelWorkspaceMessenger, MessengerTx,
     };
     use citadel_internal_service_test_common::PeerServiceHandles;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
@@ -175,6 +175,54 @@ mod tests {
                     }
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_citadel_workspace_backend_ping_pong() -> Result<(), Box<dyn Error>> {
+        crate::common::setup_log();
+        // internal service for peer A
+        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        // internal service for peer B
+        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                ],
+                None,
+                None,
+            )
+            .await?;
+
+        let (to_service_a, from_service_a, cid_a) =
+            peer_return_handle_vec.take_next_service_handle();
+        let (to_service_b, from_service_b, cid_b) =
+            peer_return_handle_vec.take_next_service_handle();
+
+        let (messenger_a, mut rx_a) = get_messenger(to_service_a, from_service_a).await?;
+        let (messenger_b, mut rx_b) = get_messenger(to_service_b, from_service_b).await?;
+
+        let tx_a = messenger_a.multiplex(cid_a).await?;
+        let tx_b = messenger_b.multiplex(cid_b).await?;
+
+        // Verify basic connection state
+        assert_eq!(tx_a.local_cid(), cid_a);
+        assert_eq!(tx_b.local_cid(), cid_b);
+        assert_eq!(tx_a.get_connected_peers().await, vec![cid_b]);
+        assert_eq!(tx_b.get_connected_peers().await, vec![cid_a]);
+
+        // Verify session state
+        test_get_sessions_messenger_get_sessions(&tx_a, &mut rx_a, 1, cid_a).await?;
+        test_get_sessions_messenger_get_sessions(&tx_b, &mut rx_b, 1, cid_b).await?;
+
+        // Test ping pong between the two messengers
+        for _ in 0..10 {
+            test_ping_pong(&tx_a, &mut rx_a, &tx_b, &mut rx_b).await?;
         }
 
         Ok(())
