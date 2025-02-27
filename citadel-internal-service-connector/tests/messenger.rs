@@ -7,14 +7,12 @@ mod tests {
     use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
     use citadel_internal_service_connector::io_interface::IOInterface;
     use citadel_internal_service_connector::messenger::backend::CitadelBackendExt;
-    use citadel_internal_service_connector::messenger::{
-        CitadelWorkspaceMessenger, MessengerTx,
-    };
+    use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBackend;
+    use citadel_internal_service_connector::messenger::{CitadelWorkspaceMessenger, MessengerTx};
     use citadel_internal_service_test_common::PeerServiceHandles;
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use citadel_sdk::prelude::StackedRatchet;
     use futures::{SinkExt, StreamExt};
-    use citadel_internal_service_connector::messenger::backend::CitadelWorkspaceBackend;
     use std::error::Error;
     use std::io::ErrorKind;
     use std::net::SocketAddr;
@@ -183,9 +181,7 @@ mod tests {
     #[tokio::test]
     async fn test_citadel_workspace_backend_ping_pong() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        // internal service for peer A
         let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
-        // internal service for peer B
         let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
 
         let mut peer_return_handle_vec =
@@ -204,23 +200,46 @@ mod tests {
         let (to_service_b, from_service_b, cid_b) =
             peer_return_handle_vec.take_next_service_handle();
 
-        let (messenger_a, mut rx_a) = get_messenger(to_service_a, from_service_a).await?;
-        let (messenger_b, mut rx_b) = get_messenger(to_service_b, from_service_b).await?;
+        let io_a = InMemoryInterface::from_request_response_pair(to_service_a, from_service_a);
+        let io_b = InMemoryInterface::from_request_response_pair(to_service_b, from_service_b);
+
+        let connector_a = InternalServiceConnector::from_io(io_a)
+            .await
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    ErrorKind::NotConnected,
+                    "Unable to create in memory interface",
+                )
+            })?;
+        let connector_b = InternalServiceConnector::from_io(io_b)
+            .await
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    ErrorKind::NotConnected,
+                    "Unable to create in memory interface",
+                )
+            })?;
+
+        let (messenger_a, mut rx_a) =
+            CitadelWorkspaceMessenger::<CitadelWorkspaceBackend>::new(connector_a);
+        let (messenger_b, mut rx_b) =
+            CitadelWorkspaceMessenger::<CitadelWorkspaceBackend>::new(connector_b);
 
         let tx_a = messenger_a.multiplex(cid_a).await?;
         let tx_b = messenger_b.multiplex(cid_b).await?;
 
-        // Verify basic connection state
+        let _backend_a = CitadelWorkspaceBackend::new(cid_a, &tx_a).await.unwrap();
+        let _backend_b = CitadelWorkspaceBackend::new(cid_b, &tx_b).await.unwrap();
+
         assert_eq!(tx_a.local_cid(), cid_a);
         assert_eq!(tx_b.local_cid(), cid_b);
-        assert_eq!(tx_a.get_connected_peers().await, vec![cid_b]);
-        assert_eq!(tx_b.get_connected_peers().await, vec![cid_a]);
 
-        // Verify session state
         test_get_sessions_messenger_get_sessions(&tx_a, &mut rx_a, 1, cid_a).await?;
         test_get_sessions_messenger_get_sessions(&tx_b, &mut rx_b, 1, cid_b).await?;
 
-        // Test ping pong between the two messengers
+        assert_eq!(tx_a.get_connected_peers().await, vec![cid_b]);
+        assert_eq!(tx_b.get_connected_peers().await, vec![cid_a]);
+
         for _ in 0..10 {
             test_ping_pong(&tx_a, &mut rx_a, &tx_b, &mut rx_b).await?;
         }
