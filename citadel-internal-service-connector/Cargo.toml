@@ -26,4 +26,4 @@ bytes = "1.8.0"
 
 [dev-dependencies]
 citadel-internal-service-test-common = { workspace = true }
-citadel_sdk = { workspace = true }
+citadel_sdk = { workspace = true, features = ["localhost-testing"]}

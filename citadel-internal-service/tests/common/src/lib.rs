@@ -27,7 +27,7 @@ use uuid::Uuid;
 pub fn setup_log() {
     citadel_logging::setup_log();
     std::panic::set_hook(Box::new(|info| {
-        citadel_logging::error!(target: "citadel", "Panic: {}", info);
+        citadel_logging::error!(target: "citadel", "Panic: {:?}", info);
         std::process::exit(1);
     }));
 }
@@ -208,12 +208,10 @@ pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
     // Spawn Internal Services with given addresses
     for int_svc_addr_iter in int_svc_addrs.clone() {
         let bind_address_internal_service = int_svc_addr_iter;
-
         info!(target: "citadel", "Internal Service Spawning");
         let internal_service_kernel =
             CitadelWorkspaceService::<_, R>::new_tcp(bind_address_internal_service).await?;
         let internal_service = NodeBuilder::default()
-            .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
             .build(internal_service_kernel)?;

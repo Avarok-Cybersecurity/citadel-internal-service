@@ -211,6 +211,7 @@ mod tests {
                     "Unable to create in memory interface",
                 )
             })?;
+
         let connector_b = InternalServiceConnector::from_io(io_b)
             .await
             .ok_or_else(|| {
