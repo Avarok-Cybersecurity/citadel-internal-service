@@ -61,117 +61,186 @@ impl CitadelWorkspaceBackend {
         }
     }
 
+    async fn initialize_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+        let key = create_key_for(self.cid, INBOUND_MESSAGE_PREFIX);
+
+        let new_state = State::new();
+
+        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
+            request_id: Uuid::new_v4(),
+            cid: self.cid,
+            peer_cid: None,
+            key,
+            value: bincode2::serialize(&new_state.clone()).map_err(|err| {
+                BackendError::StorageError(format!("Failed to serialize peer messages: {}", err))
+            })?,
+        });
+
+        let message = WrappedMessage {
+            source_id: self.cid,
+            destination_id: 0,
+            message_id: 0,
+            contents: request,
+        };
+
+        let stream_key = StreamKey::bypass_ism();
+        let internal_message = InternalMessage::Message(message);
+
+        self.bypass_ism_outbound_tx
+            .send((stream_key, internal_message))
+            .map_err(|err| BackendError::StorageError(err.to_string()))?;
+
+        Ok(new_state)
+    }
+
     async fn get_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
-        let peers = self.get_registered_peers().await?;
+        let request_id = Uuid::new_v4();
+        let key = create_key_for(self.cid, INBOUND_MESSAGE_PREFIX);
 
-        let mut state: State = HashMap::new();
+        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
+            request_id,
+            cid: self.cid,
+            peer_cid: None,
+            key,
+        });
 
-        for peer_cid in peers {
-            let request_id = Uuid::new_v4();
-            let key = create_key_for(self.cid, &format!("{}{}", INBOUND_MESSAGE_PREFIX, peer_cid));
+        let message = WrappedMessage {
+            source_id: self.cid,
+            destination_id: 0,
+            message_id: 0,
+            contents: request,
+        };
 
-            let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
-                request_id,
-                cid: self.cid,
-                peer_cid: Some(peer_cid),
-                key,
-            });
+        let stream_key = StreamKey::bypass_ism();
+        let internal_message = InternalMessage::Message(message);
 
-            let message = WrappedMessage {
-                source_id: self.cid,
-                destination_id: 0,
-                message_id: 0,
-                contents: request,
-            };
+        self.bypass_ism_outbound_tx
+            .send((stream_key, internal_message))
+            .map_err(|err| BackendError::StorageError(err.to_string()))?;
 
-            let stream_key = StreamKey::bypass_ism();
-            let internal_message = InternalMessage::Message(message);
-
-            self.bypass_ism_outbound_tx
-                .send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-
-            if let Some(response) = self.wait_for_response(request_id).await {
-                if let InternalServiceResponse::LocalDBGetKVSuccess(success_response) = response {
-                    let peer_messages: HashMap<u64, WrappedMessage> =
+        if let Some(response) = self.wait_for_response(request_id).await {
+            match response {
+                InternalServiceResponse::LocalDBGetKVSuccess(success_response) => {
+                    let state: State =
                         bincode2::deserialize(&success_response.value).map_err(|err| {
                             BackendError::StorageError(format!(
                                 "Failed to deserialize peer messages: {}",
                                 err
                             ))
                         })?;
-                    state.insert(peer_cid, peer_messages);
-                } else {
-                    return Err(BackendError::StorageError(
-                        "Failed to get inbound messages".to_string(),
-                    ));
+                    Ok(state)
                 }
-            } else {
-                return Err(BackendError::StorageError(
-                    "No response received when fetching inbound messages".to_string(),
-                ));
+                InternalServiceResponse::LocalDBGetKVFailure(failure_response) => {
+                    let failure_message = failure_response.message;
+                    if failure_message == "Key not found" {
+                        self.initialize_inbound_map().await
+                    } else {
+                        Err(BackendError::StorageError(format!(
+                            "Failed to deserialize peer messages: {}",
+                            failure_message
+                        )))
+                    }
+                }
+                _ => Err(BackendError::StorageError(
+                    "Failed to deserialize peer messages: Unexpected response".to_string(),
+                )),
             }
+        } else {
+            Err(BackendError::StorageError(
+                "No response received when fetching inbound messages".to_string(),
+            ))
         }
+    }
 
-        Ok(state)
+    async fn initialize_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+        let key = create_key_for(self.cid, OUTBOUND_MESSAGE_PREFIX);
+
+        let new_state = State::new();
+
+        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
+            request_id: Uuid::new_v4(),
+            cid: self.cid,
+            peer_cid: None,
+            key,
+            value: bincode2::serialize(&new_state.clone()).map_err(|err| {
+                BackendError::StorageError(format!("Failed to serialize peer messages: {}", err))
+            })?,
+        });
+
+        let message = WrappedMessage {
+            source_id: self.cid,
+            destination_id: 0,
+            message_id: 0,
+            contents: request,
+        };
+
+        let stream_key = StreamKey::bypass_ism();
+        let internal_message = InternalMessage::Message(message);
+
+        self.bypass_ism_outbound_tx
+            .send((stream_key, internal_message))
+            .map_err(|err| BackendError::StorageError(err.to_string()))?;
+
+        Ok(new_state)
     }
 
     async fn get_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
-        let peers = self.get_registered_peers().await?;
+        let request_id = Uuid::new_v4();
+        let key = create_key_for(self.cid, OUTBOUND_MESSAGE_PREFIX);
 
-        let mut state: State = HashMap::new();
+        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
+            request_id,
+            cid: self.cid,
+            peer_cid: None,
+            key,
+        });
 
-        for peer_cid in peers {
-            let request_id = Uuid::new_v4();
-            let key = create_key_for(
-                self.cid,
-                &format!("{}{}", OUTBOUND_MESSAGE_PREFIX, peer_cid),
-            );
+        let message = WrappedMessage {
+            source_id: self.cid,
+            destination_id: 0,
+            message_id: 0,
+            contents: request,
+        };
 
-            let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
-                request_id,
-                cid: self.cid,
-                peer_cid: Some(peer_cid),
-                key,
-            });
+        let stream_key = StreamKey::bypass_ism();
+        let internal_message = InternalMessage::Message(message);
 
-            let message = WrappedMessage {
-                source_id: self.cid,
-                destination_id: 0,
-                message_id: 0,
-                contents: request,
-            };
+        self.bypass_ism_outbound_tx
+            .send((stream_key, internal_message))
+            .map_err(|err| BackendError::StorageError(err.to_string()))?;
 
-            let stream_key = StreamKey::bypass_ism();
-            let internal_message = InternalMessage::Message(message);
-
-            self.bypass_ism_outbound_tx
-                .send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-
-            if let Some(response) = self.wait_for_response(request_id).await {
-                if let InternalServiceResponse::LocalDBGetKVSuccess(success_response) = response {
-                    let peer_messages: HashMap<u64, WrappedMessage> =
+        if let Some(response) = self.wait_for_response(request_id).await {
+            match response {
+                InternalServiceResponse::LocalDBGetKVSuccess(success_response) => {
+                    let state: State =
                         bincode2::deserialize(&success_response.value).map_err(|err| {
                             BackendError::StorageError(format!(
                                 "Failed to deserialize peer messages: {}",
                                 err
                             ))
                         })?;
-                    state.insert(peer_cid, peer_messages);
-                } else {
-                    return Err(BackendError::StorageError(
-                        "Failed to get outbound messages".to_string(),
-                    ));
+                    Ok(state)
                 }
-            } else {
-                return Err(BackendError::StorageError(
-                    "No response received when fetching outbound messages".to_string(),
-                ));
+                InternalServiceResponse::LocalDBGetKVFailure(failure_response) => {
+                    let failure_message = failure_response.message;
+                    if failure_message == "Key not found" {
+                        self.initialize_outbound_map().await
+                    } else {
+                        Err(BackendError::StorageError(format!(
+                            "Failed to deserialize peer messages: {}",
+                            failure_message
+                        )))
+                    }
+                }
+                _ => Err(BackendError::StorageError(
+                    "Failed to deserialize peer messages: Unexpected response".to_string(),
+                )),
             }
+        } else {
+            Err(BackendError::StorageError(
+                "No response received when fetching outbound messages".to_string(),
+            ))
         }
-
-        Ok(state)
     }
 
     async fn sync_inbound_state(
