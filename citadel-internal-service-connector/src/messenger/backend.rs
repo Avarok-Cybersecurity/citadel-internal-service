@@ -8,7 +8,6 @@ use intersession_layer_messaging::{Backend, BackendError};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::time::{Duration, Instant};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -22,96 +21,33 @@ pub struct CitadelWorkspaceBackend {
 // HashMap<peer_cid, HashMap<message_id, wrapped_message>>
 type State = HashMap<u64, HashMap<u64, WrappedMessage>>;
 
+// Constants for storage prefixes
+const INBOUND_MESSAGE_PREFIX: &str = "__inbound-citadel-messenger";
+const OUTBOUND_MESSAGE_PREFIX: &str = "__outbound-citadel-messenger";
+
 impl CitadelWorkspaceBackend {
     fn next_message_id(&self) -> u64 {
         self.next_message_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
-    #[allow(dead_code)]
     async fn wait_for_response(&self, request_id: Uuid) -> Option<InternalServiceResponse> {
-        citadel_logging::debug!(target: "citadel", "[WAIT_FOR_RESPONSE] Starting wait_for_response for request_id={}", request_id);
-        let start = Instant::now();
-        let timeout = Duration::from_secs(30);
-        loop {
-            if start.elapsed() > timeout {
-                citadel_logging::error!(target: "citadel", "[WAIT_FOR_RESPONSE] Timeout waiting for response to request_id={}", request_id);
-                return None;
-            }
-
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            self.expected_requests.insert(request_id, tx);
-            match rx.await {
-                Ok(response) => {
-                    citadel_logging::debug!(target: "citadel", "[WAIT_FOR_RESPONSE] Found response for request_id={}", request_id);
-                    return Some(response);
-                }
-                Err(_) => {
-                    citadel_logging::debug!(target: "citadel", "[WAIT_FOR_RESPONSE] No response yet for request_id={}, waiting...", request_id);
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            }
-        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.expected_requests.insert(request_id, tx);
+        rx.await.ok()
     }
 
-    #[allow(dead_code)]
-    async fn process_message(
+    /// Sends a message to the network layer
+    async fn send_to_network(
         &self,
-        message: WrappedMessage,
-    ) -> Result<(), BackendError<WrappedMessage>> {
-        citadel_logging::debug!(target: "citadel", "[PROCESS_MESSAGE] Processing message: {:?}", message);
-
-        // If this is a response to a request we made, handle it
-        if let InternalServicePayload::Response(response) = &message.contents {
-            if let Some(request_id) = response.request_id() {
-                citadel_logging::debug!(target: "citadel", "[PROCESS_MESSAGE] Found response for request_id={}", request_id);
-                if let Some(tx) = self.expected_requests.remove(request_id) {
-                    let _ = tx.1.send(response.clone());
-                    return Ok(());
-                }
-            }
-        }
-
-        // Store the message in the appropriate map
-        match message.destination_id {
-            id if id == self.cid => {
-                // This is a message for us, store it in inbound
-                citadel_logging::debug!(target: "citadel", "[PROCESS_MESSAGE] Storing inbound message from {}", message.source_id);
-                self.store_inbound(message).await
-            }
-            _ => {
-                // This is a message for someone else, store it in outbound
-                citadel_logging::debug!(target: "citadel", "[PROCESS_MESSAGE] Storing outbound message to {}", message.destination_id);
-                self.store_outbound(message).await
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    async fn send_message(
-        &self,
-        peer_cid: u64,
-        payload: InternalServicePayload,
-    ) -> Result<InternalServiceResponse, BackendError<WrappedMessage>> {
-        citadel_logging::debug!(target: "citadel", "[SEND_MESSAGE] Sending message to peer_cid={} with payload={:?}", peer_cid, payload);
-
-        let request_id = if let InternalServicePayload::Request(request) = &payload {
-            request.request_id().copied().unwrap_or_default()
-        } else {
-            return Err(BackendError::StorageError(
-                "Invalid message contents".to_string(),
-            ));
-        };
-
+        request: InternalServiceRequest,
+    ) -> Result<WrappedMessage, BackendError<WrappedMessage>> {
         let message = WrappedMessage {
             source_id: self.cid,
-            destination_id: peer_cid,
+            destination_id: 0, // Send to the internal service
             message_id: self.next_message_id(),
-            contents: payload,
+            contents: InternalServicePayload::Request(request),
         };
-
-        // Store the message in the outbound map
-        self.store_outbound(message.clone()).await?;
 
         // Send the message to the network layer
         if let Some(tx) = &self.bypass_ism_outbound_tx {
@@ -120,57 +56,37 @@ impl CitadelWorkspaceBackend {
                 stream_id: 1,
             };
             let internal_message = InternalMessage::Message(message.clone());
-            tx.send((stream_key, internal_message))
-                .map_err(|_| BackendError::StorageError("Failed to send message".to_string()))?;
+            tx.send((stream_key, internal_message)).map_err(|err| {
+                BackendError::StorageError(format!("Failed to send message: {}", err))
+            })?;
         }
 
-        // Wait for the response
-        citadel_logging::debug!(target: "citadel", "[SEND_MESSAGE] Waiting for response to request_id={}", request_id);
-        self.wait_for_response(request_id)
-            .await
-            .ok_or(BackendError::StorageError(
-                "Timeout waiting for response".to_string(),
-            ))
+        Ok(message)
     }
 
-    async fn get_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+    /// Generic function to get a map (inbound or outbound)
+    async fn get_map(&self, prefix: &str) -> Result<State, BackendError<WrappedMessage>> {
         let request_id = Uuid::new_v4();
-        let key = create_key_for(self.cid, INBOUND_MESSAGE_PREFIX);
+        let key = format!("{}-{}", prefix, self.cid);
 
-        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
+        let request = InternalServiceRequest::LocalDBGetKV {
             request_id,
             cid: self.cid,
             peer_cid: None,
             key,
-        });
-
-        let message = WrappedMessage {
-            source_id: self.cid,
-            destination_id: 0,
-            message_id: self.next_message_id(),
-            contents: request,
         };
 
-        // Send the message to the network layer
-        if let Some(tx) = &self.bypass_ism_outbound_tx {
-            let stream_key = StreamKey {
-                cid: 0,
-                stream_id: 1,
-            };
-            let internal_message = InternalMessage::Message(message);
-            tx.send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-        }
+        self.send_to_network(request).await?;
 
         if let Some(response) = self.wait_for_response(request_id).await {
             match response {
                 InternalServiceResponse::LocalDBGetKVSuccess(success_response) => {
-                    citadel_logging::debug!(target: "citadel", "[GET_INBOUND_MAP] Got inbound map successfully");
+                    citadel_logging::debug!(target: "citadel", "[GET_MAP] Got {} map successfully", prefix);
                     let state: State =
                         bincode2::deserialize(&success_response.value).map_err(|err| {
                             BackendError::StorageError(format!(
-                                "Failed to deserialize inbound map: {}",
-                                err
+                                "Failed to deserialize {} map: {}",
+                                prefix, err
                             ))
                         })?;
                     Ok(state)
@@ -178,75 +94,107 @@ impl CitadelWorkspaceBackend {
                 InternalServiceResponse::LocalDBGetKVFailure(failure_response) => {
                     let failure_message = failure_response.message;
                     if failure_message == "Key not found" {
-                        citadel_logging::debug!(target: "citadel", "[GET_INBOUND_MAP] Inbound map not found, initializing new one");
-                        self.initialize_inbound_map().await
+                        citadel_logging::debug!(target: "citadel", "[GET_MAP] {} map not found, initializing new one", prefix);
+                        self.initialize_map(prefix).await
                     } else {
                         Err(BackendError::StorageError(format!(
-                            "Failed to get inbound map: {}",
-                            failure_message
+                            "Failed to get {} map: {}",
+                            prefix, failure_message
                         )))
                     }
                 }
-                _ => Err(BackendError::StorageError(
-                    "Unexpected response when getting inbound map".to_string(),
-                )),
+                _ => Err(BackendError::StorageError(format!(
+                    "Unexpected response when getting {} map",
+                    prefix
+                ))),
             }
         } else {
-            Err(BackendError::StorageError(
-                "No response received when getting inbound map".to_string(),
-            ))
+            Err(BackendError::StorageError(format!(
+                "No response received when getting {} map",
+                prefix
+            )))
         }
     }
 
-    async fn initialize_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+    /// Generic function to initialize a map (inbound or outbound)
+    async fn initialize_map(&self, prefix: &str) -> Result<State, BackendError<WrappedMessage>> {
         let request_id = Uuid::new_v4();
-        let key = create_key_for(self.cid, INBOUND_MESSAGE_PREFIX);
+        let key = format!("{}-{}", prefix, self.cid);
         let new_state = State::new();
 
         let value = bincode2::serialize(&new_state).map_err(|err| {
-            BackendError::StorageError(format!("Failed to serialize inbound map: {}", err))
+            BackendError::StorageError(format!("Failed to serialize {} map: {}", prefix, err))
         })?;
 
-        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
+        let request = InternalServiceRequest::LocalDBSetKV {
             request_id,
             cid: self.cid,
             peer_cid: None,
             key,
             value,
-        });
-
-        let message = WrappedMessage {
-            source_id: self.cid,
-            destination_id: 0,
-            message_id: self.next_message_id(),
-            contents: request,
         };
 
-        // Send the message to the network layer
-        if let Some(tx) = &self.bypass_ism_outbound_tx {
-            let stream_key = StreamKey {
-                cid: 0,
-                stream_id: 1,
-            };
-            let internal_message = InternalMessage::Message(message);
-            tx.send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-        }
+        self.send_to_network(request).await?;
 
         if let Some(response) = self.wait_for_response(request_id).await {
             if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
-                citadel_logging::debug!(target: "citadel", "[INITIALIZE_INBOUND_MAP] Initialized inbound map successfully");
+                citadel_logging::debug!(target: "citadel", "[INITIALIZE_MAP] Initialized {} map successfully", prefix);
                 Ok(new_state)
             } else {
-                Err(BackendError::StorageError(
-                    "Failed to initialize inbound map".to_string(),
-                ))
+                Err(BackendError::StorageError(format!(
+                    "Failed to initialize {} map",
+                    prefix
+                )))
             }
         } else {
-            Err(BackendError::StorageError(
-                "No response received when initializing inbound map".to_string(),
-            ))
+            Err(BackendError::StorageError(format!(
+                "No response received when initializing {} map",
+                prefix
+            )))
         }
+    }
+
+    /// Generic function to update a map (inbound or outbound)
+    async fn update_map(
+        &self,
+        prefix: &str,
+        request_id: Uuid,
+        state: State,
+    ) -> Result<(), BackendError<WrappedMessage>> {
+        let key = format!("{}-{}", prefix, self.cid);
+
+        let value = bincode2::serialize(&state).map_err(|err| {
+            BackendError::StorageError(format!("Failed to serialize {} map: {}", prefix, err))
+        })?;
+
+        let request = InternalServiceRequest::LocalDBSetKV {
+            request_id,
+            cid: self.cid,
+            peer_cid: None,
+            key,
+            value,
+        };
+
+        self.send_to_network(request).await?;
+
+        if self.wait_for_response(request_id).await.is_some() {
+            citadel_logging::debug!(target: "citadel", "[UPDATE_MAP] Updated {} map successfully", prefix);
+            Ok(())
+        } else {
+            Err(BackendError::StorageError(format!(
+                "No response received when updating {} map",
+                prefix
+            )))
+        }
+    }
+
+    // Convenience methods that use the generic functions
+    async fn get_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+        self.get_map(INBOUND_MESSAGE_PREFIX).await
+    }
+
+    async fn get_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+        self.get_map(OUTBOUND_MESSAGE_PREFIX).await
     }
 
     async fn update_inbound_map(
@@ -254,156 +202,8 @@ impl CitadelWorkspaceBackend {
         request_id: Uuid,
         state: State,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        let key = create_key_for(self.cid, INBOUND_MESSAGE_PREFIX);
-
-        let value = bincode2::serialize(&state).map_err(|err| {
-            BackendError::StorageError(format!("Failed to serialize inbound map: {}", err))
-        })?;
-
-        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
-            request_id,
-            cid: self.cid,
-            peer_cid: None,
-            key,
-            value,
-        });
-
-        let message = WrappedMessage {
-            source_id: self.cid,
-            destination_id: 0,
-            message_id: self.next_message_id(),
-            contents: request,
-        };
-
-        // Send the message to the network layer
-        if let Some(tx) = &self.bypass_ism_outbound_tx {
-            let stream_key = StreamKey {
-                cid: 0,
-                stream_id: 1,
-            };
-            let internal_message = InternalMessage::Message(message);
-            tx.send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-        }
-
-        if self.wait_for_response(request_id).await.is_some() {
-            citadel_logging::debug!(target: "citadel", "[UPDATE_INBOUND_MAP] Updated inbound map successfully");
-            Ok(())
-        } else {
-            Err(BackendError::StorageError(
-                "No response received when updating inbound map".to_string(),
-            ))
-        }
-    }
-
-    async fn get_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
-        let request_id = Uuid::new_v4();
-        let key = create_key_for(self.cid, OUTBOUND_MESSAGE_PREFIX);
-
-        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
-            request_id,
-            cid: self.cid,
-            peer_cid: None,
-            key,
-        });
-
-        let message = WrappedMessage {
-            source_id: self.cid,
-            destination_id: 0,
-            message_id: self.next_message_id(),
-            contents: request,
-        };
-
-        // Send the message to the network layer
-        if let Some(tx) = &self.bypass_ism_outbound_tx {
-            let stream_key = StreamKey {
-                cid: 0,
-                stream_id: 1,
-            };
-            let internal_message = InternalMessage::Message(message);
-            tx.send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-        }
-
-        if let Some(response) = self.wait_for_response(request_id).await {
-            match response {
-                InternalServiceResponse::LocalDBGetKVSuccess(success_response) => {
-                    citadel_logging::debug!(target: "citadel", "[GET_OUTBOUND_MAP] Got outbound map successfully");
-                    let state: State =
-                        bincode2::deserialize(&success_response.value).map_err(|err| {
-                            BackendError::StorageError(format!(
-                                "Failed to deserialize outbound map: {}",
-                                err
-                            ))
-                        })?;
-                    Ok(state)
-                }
-                InternalServiceResponse::LocalDBGetKVFailure(failure_response) => {
-                    let failure_message = failure_response.message;
-                    if failure_message == "Key not found" {
-                        citadel_logging::debug!(target: "citadel", "[GET_OUTBOUND_MAP] Outbound map not found, initializing new one");
-                        self.initialize_outbound_map().await
-                    } else {
-                        Err(BackendError::StorageError(format!(
-                            "Failed to get outbound map: {}",
-                            failure_message
-                        )))
-                    }
-                }
-                _ => Err(BackendError::StorageError(
-                    "Unexpected response when getting outbound map".to_string(),
-                )),
-            }
-        } else {
-            Err(BackendError::StorageError(
-                "No response received when getting outbound map".to_string(),
-            ))
-        }
-    }
-
-    async fn initialize_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
-        let request_id = Uuid::new_v4();
-        let key = create_key_for(self.cid, OUTBOUND_MESSAGE_PREFIX);
-        let new_state = State::new();
-
-        let value = bincode2::serialize(&new_state).map_err(|err| {
-            BackendError::StorageError(format!("Failed to serialize outbound map: {}", err))
-        })?;
-
-        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
-            request_id,
-            cid: self.cid,
-            peer_cid: None,
-            key,
-            value,
-        });
-
-        let message = WrappedMessage {
-            source_id: self.cid,
-            destination_id: 0,
-            message_id: self.next_message_id(),
-            contents: request,
-        };
-
-        // Send the message to the network layer
-        if let Some(tx) = &self.bypass_ism_outbound_tx {
-            let stream_key = StreamKey {
-                cid: 0,
-                stream_id: 1,
-            };
-            let internal_message = InternalMessage::Message(message);
-            tx.send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-        }
-
-        if self.wait_for_response(request_id).await.is_some() {
-            citadel_logging::debug!(target: "citadel", "[INITIALIZE_OUTBOUND_MAP] Initialized outbound map successfully");
-            Ok(new_state)
-        } else {
-            Err(BackendError::StorageError(
-                "No response received when initializing outbound map".to_string(),
-            ))
-        }
+        self.update_map(INBOUND_MESSAGE_PREFIX, request_id, state)
+            .await
     }
 
     async fn update_outbound_map(
@@ -411,46 +211,8 @@ impl CitadelWorkspaceBackend {
         request_id: Uuid,
         state: State,
     ) -> Result<(), BackendError<WrappedMessage>> {
-        let key = create_key_for(self.cid, OUTBOUND_MESSAGE_PREFIX);
-
-        let value = bincode2::serialize(&state).map_err(|err| {
-            BackendError::StorageError(format!("Failed to serialize outbound map: {}", err))
-        })?;
-
-        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
-            request_id,
-            cid: self.cid,
-            peer_cid: None,
-            key,
-            value,
-        });
-
-        let message = WrappedMessage {
-            source_id: self.cid,
-            destination_id: 0,
-            message_id: self.next_message_id(),
-            contents: request,
-        };
-
-        // Send the message to the network layer
-        if let Some(tx) = &self.bypass_ism_outbound_tx {
-            let stream_key = StreamKey {
-                cid: 0,
-                stream_id: 1,
-            };
-            let internal_message = InternalMessage::Message(message);
-            tx.send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-        }
-
-        if self.wait_for_response(request_id).await.is_some() {
-            citadel_logging::debug!(target: "citadel", "[UPDATE_OUTBOUND_MAP] Updated outbound map successfully");
-            Ok(())
-        } else {
-            Err(BackendError::StorageError(
-                "No response received when updating outbound map".to_string(),
-            ))
-        }
+        self.update_map(OUTBOUND_MESSAGE_PREFIX, request_id, state)
+            .await
     }
 }
 
@@ -475,9 +237,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         let peer_messages = outbound.entry(peer_cid).or_insert_with(HashMap::new);
         peer_messages.insert(message_id, message);
 
-        self.update_outbound_map(request_id, outbound).await?;
-
-        Ok(())
+        self.update_outbound_map(request_id, outbound).await
     }
 
     async fn store_inbound(
@@ -499,9 +259,7 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         let peer_messages = inbound.entry(peer_cid).or_insert_with(HashMap::new);
         peer_messages.insert(message_id, message);
 
-        self.update_inbound_map(request_id, inbound).await?;
-
-        Ok(())
+        self.update_inbound_map(request_id, inbound).await
     }
 
     async fn clear_message_inbound(
@@ -554,33 +312,17 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
         value: &[u8],
     ) -> Result<(), BackendError<WrappedMessage>> {
         let request_id = Uuid::new_v4();
-        let unique_key = create_key_for(self.cid, key);
+        let unique_key = format!("{}-{}", key, self.cid);
 
-        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
+        let request = InternalServiceRequest::LocalDBSetKV {
             request_id,
             cid: self.cid,
             peer_cid: None,
             key: unique_key,
             value: value.to_vec(),
-        });
-
-        let message = WrappedMessage {
-            source_id: self.cid,
-            destination_id: 0, // Send to the internal service
-            message_id: self.next_message_id(),
-            contents: request,
         };
 
-        // Send the message to the network layer
-        if let Some(tx) = &self.bypass_ism_outbound_tx {
-            let stream_key = StreamKey {
-                cid: 0,
-                stream_id: 1,
-            };
-            let internal_message = InternalMessage::Message(message);
-            tx.send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-        }
+        self.send_to_network(request).await?;
 
         if self.wait_for_response(request_id).await.is_some() {
             citadel_logging::debug!(target: "citadel", "[STORE_VALUE] Stored value for key={}", key);
@@ -595,32 +337,16 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
 
     async fn load_value(&self, key: &str) -> Result<Option<Vec<u8>>, BackendError<WrappedMessage>> {
         let request_id = Uuid::new_v4();
-        let unique_key = create_key_for(self.cid, key);
+        let unique_key = format!("{}-{}", key, self.cid);
 
-        let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBGetKV {
+        let request = InternalServiceRequest::LocalDBGetKV {
             request_id,
             cid: self.cid,
             peer_cid: None,
             key: unique_key,
-        });
-
-        let message = WrappedMessage {
-            source_id: self.cid,
-            destination_id: 0, // Send to the internal service
-            message_id: self.next_message_id(),
-            contents: request,
         };
 
-        // Send the message to the network layer
-        if let Some(tx) = &self.bypass_ism_outbound_tx {
-            let stream_key = StreamKey {
-                cid: 0,
-                stream_id: 1,
-            };
-            let internal_message = InternalMessage::Message(message);
-            tx.send((stream_key, internal_message))
-                .map_err(|err| BackendError::StorageError(err.to_string()))?;
-        }
+        self.send_to_network(request).await?;
 
         if let Some(response) = self.wait_for_response(request_id).await {
             citadel_logging::debug!(target: "citadel", "[LOAD_VALUE] Loaded value for key={}", key);
@@ -634,6 +360,24 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
                 key
             )))
         }
+    }
+}
+
+#[async_trait]
+pub trait CitadelBackendExt: Backend<WrappedMessage> + Clone + Send + Sync + 'static {
+    /// Creates a new instance of the backend
+    async fn new(
+        cid: u64,
+        handle: &MessengerTx<Self>,
+    ) -> Result<Self, BackendError<WrappedMessage>>;
+
+    /// Inspects a payload to see if it is relevant to the backend. If it is, the response
+    /// is not returned. Otherwise, the response is returned to the caller for further processing.
+    async fn inspect_received_payload(
+        &self,
+        response: InternalServiceResponse,
+    ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
+        Ok(Some(response))
     }
 }
 
@@ -655,41 +399,15 @@ impl CitadelBackendExt for CitadelWorkspaceBackend {
         &self,
         response: InternalServiceResponse,
     ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
-        citadel_logging::debug!(target: "citadel", "[CP0] Inspecting received payload: {:?}", response);
+        citadel_logging::debug!(target: "citadel", "Inspecting received payload: {:?}", response);
+
         if let Some(id) = response.request_id() {
-            citadel_logging::debug!(target: "citadel", "[CP1] Inspecting received payload: {:?}", response);
             if let Some(tx) = self.expected_requests.remove(id) {
-                citadel_logging::debug!(target: "citadel", "[CP2] Inspecting received payload: {:?}", response);
                 let _ = tx.1.send(response.clone());
-                citadel_logging::debug!(target: "citadel", "[CP3] Inspecting received payload");
                 return Ok(None);
             }
         }
 
-        citadel_logging::debug!(target: "citadel", "[CP4] Inspecting received payload: {:?}", response);
         Ok(Some(response))
     }
 }
-
-#[async_trait]
-pub trait CitadelBackendExt: Backend<WrappedMessage> + Clone + Send + Sync + 'static {
-    async fn new(
-        cid: u64,
-        handle: &MessengerTx<Self>,
-    ) -> Result<Self, BackendError<WrappedMessage>>;
-    /// Inspects a payload to see if it is relevant to the backend. If it is, the response
-    /// is not returned. Otherwise, the response is returned to the caller for further processing.
-    async fn inspect_received_payload(
-        &self,
-        response: InternalServiceResponse,
-    ) -> Result<Option<InternalServiceResponse>, BackendError<WrappedMessage>> {
-        Ok(Some(response))
-    }
-}
-
-fn create_key_for(session_cid: u64, prefix: &str) -> String {
-    format!("{}-{}", prefix, session_cid)
-}
-
-const INBOUND_MESSAGE_PREFIX: &str = "__inbound-citadel-messenger";
-const OUTBOUND_MESSAGE_PREFIX: &str = "__outbound-citadel-messenger";
