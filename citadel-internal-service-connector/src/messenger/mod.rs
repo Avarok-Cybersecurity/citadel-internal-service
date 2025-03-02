@@ -83,8 +83,6 @@ impl StreamKey {
     }
 }
 
-pub struct CitadelWorkspaceBackend {}
-
 type CitadelWorkspaceISM<B> = ILM<WrappedMessage, B, LocalDeliveryTx, ISMHandle<B>>;
 
 pub struct LocalDeliveryTx {
