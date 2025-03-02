@@ -90,8 +90,7 @@ fn generate_field_match_arms(
             let is_tuple_variant = variant
                 .fields
                 .iter()
-                .next()
-                .map_or(false, |field| field.ident.is_none());
+                .next().is_some_and(|field| field.ident.is_none());
             if is_tuple_variant {
                 if let syn::Type::Path(type_path) = &field.ty {
                     if type_path.path.segments.len() == 1 {
