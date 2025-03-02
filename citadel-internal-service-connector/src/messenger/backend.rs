@@ -298,7 +298,21 @@ impl CitadelWorkspaceBackend {
 
         self.bypass_ism_outbound_tx
             .send((stream_key, internal_message))
-            .map_err(|err| BackendError::StorageError(err.to_string()))
+            .map_err(|err| BackendError::StorageError(err.to_string()))?;
+
+        if let Some(response) = self.wait_for_response(request_id).await {
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
+                Ok(())
+            } else {
+                Err(BackendError::StorageError(
+                    "Failed to sync inbound state".to_string(),
+                ))
+            }
+        } else {
+            Err(BackendError::StorageError(
+                "No response received when syncing inbound state".to_string(),
+            ))
+        }
     }
 
     async fn sync_outbound_state(
@@ -330,7 +344,21 @@ impl CitadelWorkspaceBackend {
 
         self.bypass_ism_outbound_tx
             .send((stream_key, internal_message))
-            .map_err(|err| BackendError::StorageError(err.to_string()))
+            .map_err(|err| BackendError::StorageError(err.to_string()))?;
+
+        if let Some(response) = self.wait_for_response(request_id).await {
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
+                Ok(())
+            } else {
+                Err(BackendError::StorageError(
+                    "Failed to sync outbound state".to_string(),
+                ))
+            }
+        } else {
+            Err(BackendError::StorageError(
+                "No response received when syncing outbound state".to_string(),
+            ))
+        }
     }
 }
 
