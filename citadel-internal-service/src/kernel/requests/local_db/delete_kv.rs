@@ -5,10 +5,11 @@ use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, LocalDBDeleteKVFailure, LocalDBDeleteKVSuccess,
 };
 use citadel_sdk::backend_kv_store::BackendHandler;
+use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -57,8 +58,8 @@ pub async fn handle<T: IOInterface>(
 }
 
 // backend handler delete
-async fn backend_handler_delete(
-    remote: &impl BackendHandler,
+async fn backend_handler_delete<R: Ratchet>(
+    remote: &impl BackendHandler<R>,
     cid: u64,
     peer_cid: Option<u64>,
     key: String,

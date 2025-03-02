@@ -9,14 +9,13 @@ use citadel_internal_service_types::{
 use citadel_logging::info;
 use citadel_sdk::prefabs::server::client_connect_listener::ClientConnectListenerKernel;
 use citadel_sdk::prefabs::server::empty::EmptyKernel;
-use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::*;
 use core::panic;
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::error::Error;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
@@ -28,9 +27,18 @@ use uuid::Uuid;
 pub fn setup_log() {
     citadel_logging::setup_log();
     std::panic::set_hook(Box::new(|info| {
-        citadel_logging::error!(target: "citadel", "Panic: {}", info);
+        citadel_logging::error!(target: "citadel", "Panic: {:?}", info);
         std::process::exit(1);
     }));
+}
+
+/// Helper function to get a free port for testing
+pub fn get_free_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
+    listener
+        .local_addr()
+        .expect("Failed to get local address")
+        .port()
 }
 
 pub struct RegisterAndConnectItems<
@@ -122,7 +130,7 @@ pub async fn register_and_connect_to_server<
         let response_packet = stream.next().await.unwrap();
 
         if let InternalServiceResponse::RegisterSuccess(
-            citadel_internal_service_types::RegisterSuccess { request_id: _ },
+            citadel_internal_service_types::RegisterSuccess { request_id: _, .. },
         ) = response_packet
         {
             info!(
@@ -190,16 +198,18 @@ pub async fn register_and_connect_to_server<
     Ok(return_results)
 }
 
-pub async fn register_and_connect_to_server_then_peers(
+pub async fn register_and_connect_to_server_then_peers<R: Ratchet>(
     int_svc_addrs: Vec<SocketAddr>,
     server_session_password: Option<PreSharedKey>,
     peer_session_password: Option<PreSharedKey>,
 ) -> Result<Vec<PeerReturnHandle>, Box<dyn Error>> {
     // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
     let (server, server_bind_address) = if server_session_password.is_some() {
-        server_info_skip_cert_verification_with_password(server_session_password.clone().unwrap())
+        server_info_skip_cert_verification_with_password::<R>(
+            server_session_password.clone().unwrap(),
+        )
     } else {
-        server_info_skip_cert_verification()
+        server_info_skip_cert_verification::<R>()
     };
     tokio::task::spawn(server);
     let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
@@ -207,16 +217,13 @@ pub async fn register_and_connect_to_server_then_peers(
     // Spawn Internal Services with given addresses
     for int_svc_addr_iter in int_svc_addrs.clone() {
         let bind_address_internal_service = int_svc_addr_iter;
-
         info!(target: "citadel", "Internal Service Spawning");
         let internal_service_kernel =
-            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            CitadelWorkspaceService::<_, R>::new_tcp(bind_address_internal_service).await?;
         let internal_service = NodeBuilder::default()
-            .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
             .with_insecure_skip_cert_verification()
-            .build(internal_service_kernel)
-            .unwrap();
+            .build(internal_service_kernel)?;
 
         // Add NodeFuture for Internal Service to Vector to be spawned
         internal_services.push(Box::pin(async move {
@@ -466,18 +473,18 @@ pub async fn send<T: IOInterface>(
     Ok(())
 }
 
-pub fn server_test_node_skip_cert_verification<'a, K: NetKernel + 'a>(
+pub fn server_test_node_skip_cert_verification<'a, K: NetKernel<R> + 'a, R: Ratchet>(
     kernel: K,
-    opts: impl FnOnce(&mut NodeBuilder),
+    opts: impl FnOnce(&mut NodeBuilder<R>),
 ) -> (NodeFuture<'a, K>, SocketAddr) {
-    let mut builder = NodeBuilder::default();
+    let mut builder = NodeBuilder::<R>::default();
     let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let bind_addr = tcp_listener.local_addr().unwrap();
     let builder = builder
         .with_node_type(NodeType::Server(bind_addr))
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(
-            ServerUnderlyingProtocol::from_tcp_listener(tcp_listener).unwrap(),
+            ServerUnderlyingProtocol::from_std_tcp_listener(tcp_listener).unwrap(),
         );
 
     (opts)(builder);
@@ -485,12 +492,16 @@ pub fn server_test_node_skip_cert_verification<'a, K: NetKernel + 'a>(
     (builder.build(kernel).unwrap(), bind_addr)
 }
 
-pub fn server_test_node_skip_cert_verification_with_password<'a, K: NetKernel + 'a>(
+pub fn server_test_node_skip_cert_verification_with_password<
+    'a,
+    K: NetKernel<R> + 'a,
+    R: Ratchet,
+>(
     kernel: K,
     server_password: PreSharedKey,
-    opts: impl FnOnce(&mut NodeBuilder),
+    opts: impl FnOnce(&mut NodeBuilder<R>),
 ) -> (NodeFuture<'a, K>, SocketAddr) {
-    let mut builder = NodeBuilder::default();
+    let mut builder = NodeBuilder::<R>::default();
     let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let bind_addr = tcp_listener.local_addr().unwrap();
     let builder = builder
@@ -498,7 +509,7 @@ pub fn server_test_node_skip_cert_verification_with_password<'a, K: NetKernel + 
         .with_server_password(server_password)
         .with_insecure_skip_cert_verification()
         .with_underlying_protocol(
-            ServerUnderlyingProtocol::from_tcp_listener(tcp_listener).unwrap(),
+            ServerUnderlyingProtocol::from_std_tcp_listener(tcp_listener).unwrap(),
         );
 
     (opts)(builder);
@@ -506,35 +517,40 @@ pub fn server_test_node_skip_cert_verification_with_password<'a, K: NetKernel + 
     (builder.build(kernel).unwrap(), bind_addr)
 }
 
-pub fn server_info_skip_cert_verification<'a>() -> (NodeFuture<'a, EmptyKernel>, SocketAddr) {
-    server_test_node_skip_cert_verification(EmptyKernel, |_| {})
+pub fn server_info_skip_cert_verification<'a, R: Ratchet>(
+) -> (NodeFuture<'a, EmptyKernel<R>>, SocketAddr) {
+    server_test_node_skip_cert_verification(EmptyKernel::<R>::default(), |_| {})
 }
 
-pub fn server_info_skip_cert_verification_with_password<'a>(
+pub fn server_info_skip_cert_verification_with_password<'a, R: Ratchet>(
     server_password: PreSharedKey,
-) -> (NodeFuture<'a, EmptyKernel>, SocketAddr) {
-    server_test_node_skip_cert_verification_with_password(EmptyKernel, server_password, |_| {})
+) -> (NodeFuture<'a, EmptyKernel<R>>, SocketAddr) {
+    server_test_node_skip_cert_verification_with_password(
+        EmptyKernel::<R>::default(),
+        server_password,
+        |_| {},
+    )
 }
 
-pub fn server_info_reactive_skip_cert_verification<'a, F, Fut>(
+pub fn server_info_reactive_skip_cert_verification<'a, F, Fut, R: Ratchet>(
     f: F,
-    opts: impl FnOnce(&mut NodeBuilder),
-) -> (NodeFuture<'a, Box<dyn NetKernel + 'a>>, SocketAddr)
+    opts: impl FnOnce(&mut NodeBuilder<R>),
+) -> (NodeFuture<'a, Box<dyn NetKernel<R> + 'a>>, SocketAddr)
 where
-    F: Fn(ConnectionSuccess, ClientServerRemote) -> Fut + Send + Sync + 'a,
+    F: Fn(CitadelClientServerConnection<R>) -> Fut + Send + Sync + 'a,
     Fut: Future<Output = Result<(), NetworkError>> + Send + Sync + 'a,
 {
     server_test_node_skip_cert_verification(
-        Box::new(ClientConnectListenerKernel::new(f)) as Box<dyn NetKernel>,
+        Box::new(ClientConnectListenerKernel::new(f)) as Box<dyn NetKernel<R>>,
         opts,
     )
 }
 
-pub struct ReceiverFileTransferKernel(pub Option<NodeRemote>, pub Arc<AtomicBool>);
+pub struct ReceiverFileTransferKernel<R: Ratchet>(pub Option<NodeRemote<R>>, pub Arc<AtomicBool>);
 
 #[async_trait]
-impl NetKernel for ReceiverFileTransferKernel {
-    fn load_remote(&mut self, node_remote: NodeRemote) -> Result<(), NetworkError> {
+impl<R: Ratchet> NetKernel<R> for ReceiverFileTransferKernel<R> {
+    fn load_remote(&mut self, node_remote: NodeRemote<R>) -> Result<(), NetworkError> {
         self.0 = Some(node_remote);
         Ok(())
     }
@@ -543,7 +559,7 @@ impl NetKernel for ReceiverFileTransferKernel {
         Ok(())
     }
 
-    async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
+    async fn on_node_event_received(&self, message: NodeResult<R>) -> Result<(), NetworkError> {
         citadel_logging::trace!(target: "citadel", "SERVER received {:?}", message);
         if let NodeResult::ObjectTransferHandle(object_transfer_handle) = message {
             let mut handle = object_transfer_handle.handle;
@@ -573,7 +589,7 @@ impl NetKernel for ReceiverFileTransferKernel {
                             assert_eq!(
                                 cmp_data.as_slice(),
                                 streamed_data.as_slice(),
-                                "Original data and streamed data do not match"
+                                "Original data and streamed data does not match"
                             );
                         }
                     }
@@ -598,9 +614,9 @@ impl NetKernel for ReceiverFileTransferKernel {
     }
 }
 
-pub fn server_info_file_transfer<'a>(
+pub fn server_info_file_transfer<'a, R: Ratchet>(
     switch: Arc<AtomicBool>,
-) -> (NodeFuture<'a, ReceiverFileTransferKernel>, SocketAddr) {
+) -> (NodeFuture<'a, ReceiverFileTransferKernel<R>>, SocketAddr) {
     let (server, bind_addr) =
         server_test_node_skip_cert_verification(ReceiverFileTransferKernel(None, switch), |_| {});
     (server, bind_addr)

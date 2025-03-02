@@ -6,10 +6,11 @@ use citadel_internal_service_types::{
     LocalDBClearAllKVSuccess,
 };
 use citadel_sdk::backend_kv_store::BackendHandler;
+use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -57,8 +58,8 @@ pub async fn handle<T: IOInterface>(
 }
 
 // backend handler clear all
-async fn backend_handler_clear_all(
-    remote: &impl BackendHandler,
+async fn backend_handler_clear_all<R: Ratchet>(
+    remote: &impl BackendHandler<R>,
     cid: u64,
     peer_cid: Option<u64>,
     request_id: Option<Uuid>,

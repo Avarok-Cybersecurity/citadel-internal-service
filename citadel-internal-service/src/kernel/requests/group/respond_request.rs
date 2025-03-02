@@ -7,13 +7,13 @@ use citadel_internal_service_types::{
 };
 use citadel_sdk::prelude::{
     GroupBroadcast, GroupBroadcastCommand, GroupChannelCreated, GroupEvent, NodeRequest,
-    NodeResult, TargetLockedRemote,
+    NodeResult, Ratchet, TargetLockedRemote,
 };
 use futures::StreamExt;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -42,7 +42,7 @@ pub async fn handle<T: IOInterface>(
     };
 
     let request = NodeRequest::GroupBroadcastCommand(GroupBroadcastCommand {
-        implicated_cid: cid,
+        session_cid: cid,
         command: group_request,
     });
 
@@ -99,7 +99,7 @@ pub async fn handle<T: IOInterface>(
                                     break;
                                 }
                                 NodeResult::GroupEvent(GroupEvent {
-                                    implicated_cid: _,
+                                    session_cid: _,
                                     ticket: _,
                                     event:
                                         GroupBroadcast::AcceptMembershipResponse { key: _, success },
@@ -108,7 +108,7 @@ pub async fn handle<T: IOInterface>(
                                     break;
                                 }
                                 NodeResult::GroupEvent(GroupEvent {
-                                    implicated_cid: _,
+                                    session_cid: _,
                                     ticket: _,
                                     event:
                                         GroupBroadcast::DeclineMembershipResponse { key: _, success },

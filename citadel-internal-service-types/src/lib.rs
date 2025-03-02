@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use citadel_internal_service_macros::{IsError, IsNotification, RequestId};
+use citadel_internal_service_macros::{Cid, IsError, IsNotification, RequestId};
 pub use citadel_types::prelude::{
     ConnectMode, MemberState, MessageGroupKey, ObjectTransferStatus, SecBuffer, SecurityLevel,
     SessionSecuritySettings, TransferType, UdpMode, UserIdentifier, VirtualObjectMetadata,
@@ -12,6 +12,7 @@ use std::time::Duration;
 use uuid::Uuid;
 // TODO: Move PreSharedKey into citadel-types
 use citadel_sdk::prelude::PreSharedKey;
+use citadel_types::prelude::ObjectId;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectSuccess {
@@ -21,23 +22,27 @@ pub struct ConnectSuccess {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectFailure {
+    pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegisterSuccess {
+    pub cid: u64,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegisterFailure {
+    pub cid: u64,
     pub message: String,
     pub request_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServiceConnectionAccepted {
+    pub cid: u64,
     pub request_id: Option<Uuid>,
 }
 
@@ -545,6 +550,7 @@ pub struct LocalDBClearAllKVFailure {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GetSessionsResponse {
+    pub cid: u64,
     pub sessions: Vec<SessionInformation>,
     pub request_id: Option<Uuid>,
 }
@@ -560,7 +566,7 @@ pub struct FileTransferRequestNotification {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileTransferStatusNotification {
     pub cid: u64,
-    pub object_id: u64,
+    pub object_id: ObjectId,
     pub success: bool,
     pub response: bool,
     pub message: Option<String>,
@@ -575,7 +581,7 @@ pub struct FileTransferTickNotification {
     pub request_id: Option<Uuid>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification, RequestId)]
+#[derive(Serialize, Deserialize, Debug, Clone, IsError, IsNotification, RequestId, Cid)]
 pub enum InternalServiceResponse {
     ConnectSuccess(ConnectSuccess),
     ConnectFailure(ConnectFailure),
@@ -702,7 +708,7 @@ pub enum InternalServiceRequest {
     RespondFileTransfer {
         cid: u64,
         peer_cid: u64,
-        object_id: u64,
+        object_id: ObjectId,
         accept: bool,
         download_location: Option<PathBuf>,
         request_id: Uuid,
@@ -849,6 +855,7 @@ pub struct SessionInformation {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Accounts {
+    pub cid: u64,
     pub accounts: HashMap<u64, AccountInformation>,
     pub request_id: Option<Uuid>,
 }
@@ -896,6 +903,7 @@ mod tests {
             request_id: None,
         });
         let error_response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+            cid: 0,
             message: "test".to_string(),
             request_id: None,
         });
@@ -934,5 +942,16 @@ mod tests {
             server_password: None,
         };
         assert_eq!(request.request_id(), Some(&request_id));
+    }
+
+    #[test]
+    fn test_cid_derive() {
+        let cid = 1234;
+        let request = InternalServiceResponse::ConnectSuccess(ConnectSuccess {
+            cid,
+            request_id: None,
+        });
+
+        assert_eq!(request.cid(), cid);
     }
 }

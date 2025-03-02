@@ -4,12 +4,12 @@ use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     ConnectFailure, InternalServiceRequest, InternalServiceResponse, MessageNotification,
 };
-use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt};
+use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
 use futures::StreamExt;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -42,7 +42,7 @@ pub async fn handle<T: IOInterface>(
         Ok(conn_success) => {
             let cid = conn_success.cid;
 
-            let (sink, mut stream) = conn_success.channel.split();
+            let (sink, mut stream) = conn_success.split();
             let client_server_remote = create_client_server_remote(
                 stream.vconn_type,
                 remote.clone(),
@@ -93,6 +93,7 @@ pub async fn handle<T: IOInterface>(
 
         Err(err) => {
             let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                cid: 0,
                 message: err.into_string(),
                 request_id: Some(request_id),
             });

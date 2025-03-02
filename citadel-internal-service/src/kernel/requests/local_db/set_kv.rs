@@ -5,10 +5,11 @@ use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, LocalDBSetKVFailure, LocalDBSetKVSuccess,
 };
 use citadel_sdk::backend_kv_store::BackendHandler;
+use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -66,8 +67,8 @@ pub async fn handle<T: IOInterface>(
 
 // backend_handler_set
 #[allow(clippy::too_many_arguments)]
-async fn backend_handler_set(
-    remote: &impl BackendHandler,
+async fn backend_handler_set<R: Ratchet>(
+    remote: &impl BackendHandler<R>,
     cid: u64,
     peer_cid: Option<u64>,
     key: String,

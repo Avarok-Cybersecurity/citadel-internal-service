@@ -5,6 +5,7 @@ use citadel_internal_service_types::{
     ServiceConnectionAccepted,
 };
 use citadel_logging::{error, info, warn};
+use citadel_sdk::prelude::Ratchet;
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use uuid::Uuid;
 
 pub trait IOInterfaceExt: IOInterface {
     #[allow(clippy::too_many_arguments)]
-    fn spawn_connection_handler(
+    fn spawn_connection_handler<R: Ratchet>(
         &mut self,
         mut sink: Self::Sink,
         mut stream: Self::Stream,
@@ -22,12 +23,13 @@ pub trait IOInterfaceExt: IOInterface {
         mut from_kernel: UnboundedReceiver<InternalServiceResponse>,
         conn_id: Uuid,
         tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
-        server_connection_map: Arc<Mutex<HashMap<u64, Connection>>>,
+        server_connection_map: Arc<Mutex<HashMap<u64, Connection<R>>>>,
     ) {
         tokio::task::spawn(async move {
             let write_task = async move {
                 let response =
                     InternalServiceResponse::ServiceConnectionAccepted(ServiceConnectionAccepted {
+                        cid: 0,
                         request_id: Some(conn_id),
                     });
 

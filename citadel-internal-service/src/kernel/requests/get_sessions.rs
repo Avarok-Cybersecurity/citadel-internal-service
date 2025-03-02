@@ -5,12 +5,12 @@ use citadel_internal_service_types::{
     GetSessionsResponse, InternalServiceRequest, InternalServiceResponse, PeerSessionInformation,
     SessionInformation,
 };
-use citadel_sdk::prelude::TargetLockedRemote;
+use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -32,7 +32,11 @@ pub async fn handle<T: IOInterface>(
                     PeerSessionInformation {
                         cid: *cid,
                         peer_cid: *peer_cid,
-                        peer_username: conn.remote.target_username().cloned().unwrap_or_default(),
+                        peer_username: conn
+                            .remote
+                            .target_username()
+                            .map(ToString::to_string)
+                            .unwrap_or_default(),
                     },
                 );
             }
@@ -41,6 +45,7 @@ pub async fn handle<T: IOInterface>(
     }
 
     let response = InternalServiceResponse::GetSessionsResponse(GetSessionsResponse {
+        cid: 0,
         sessions,
         request_id: Some(request_id),
     });

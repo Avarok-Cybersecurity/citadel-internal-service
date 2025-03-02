@@ -3,7 +3,7 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::{
-        exhaust_stream_to_file_completion, register_and_connect_to_server,
+        exhaust_stream_to_file_completion, get_free_port, register_and_connect_to_server,
         register_and_connect_to_server_then_peers, server_info_file_transfer,
         RegisterAndConnectItems,
     };
@@ -37,18 +37,21 @@ mod tests {
 
         crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
+        let bind_address_internal_service: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         // TCP client (GUI, CLI) -> Internal Service -> Receiver File Transfer Kernel server
         let server_success = &Arc::new(AtomicBool::new(false));
         //let (server, server_bind_address) = server_info_file_transfer(server_success.clone());
-        let (server, server_bind_address) = server_info_file_transfer(server_success.clone());
+        let (server, server_bind_address) =
+            server_info_file_transfer::<StackedRatchet>(server_success.clone());
 
         tokio::task::spawn(server);
 
         info!(target: "citadel", "sub server spawn");
         let internal_service_kernel =
-            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
+                .await?;
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
@@ -97,19 +100,22 @@ mod tests {
     async fn test_internal_service_peer_standard_file_transfer() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
         let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();
@@ -192,17 +198,21 @@ mod tests {
     async fn test_internal_service_c2s_revfs() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
+        let bind_address_internal_service: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         // TCP client (GUI, CLI) -> Internal Service -> Receiver File Transfer Kernel server
         let server_success = &Arc::new(AtomicBool::new(false));
-        let (server, server_bind_address) = server_info_file_transfer(server_success.clone());
+        let (server, server_bind_address) =
+            server_info_file_transfer::<StackedRatchet>(server_success.clone());
 
         tokio::task::spawn(server);
 
         info!(target: "citadel", "sub server spawn");
         let internal_service_kernel =
-            CitadelWorkspaceService::new_tcp(bind_address_internal_service).await?;
+            CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
+                .await?;
+
         let internal_service = NodeBuilder::default()
             .with_backend(BackendType::Filesystem("filesystem".into()))
             .with_node_type(NodeType::Peer)
@@ -316,19 +326,22 @@ mod tests {
     async fn test_internal_service_peer_revfs() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (peer_one, peer_two) = peer_return_handle_vec.as_mut_slice().split_at_mut(1_usize);
         let (to_service_a, from_service_a, cid_a) = peer_one.get_mut(0_usize).unwrap();

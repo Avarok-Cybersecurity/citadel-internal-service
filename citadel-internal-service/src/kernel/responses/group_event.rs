@@ -6,15 +6,15 @@ use citadel_internal_service_types::{
     GroupMembershipResponse, GroupMessageNotification, GroupMessageResponse,
     GroupRequestJoinDeclineResponse, GroupRequestJoinPendingNotification, InternalServiceResponse,
 };
-use citadel_sdk::prelude::{GroupBroadcast, GroupEvent, NetworkError};
+use citadel_sdk::prelude::{GroupBroadcast, GroupEvent, NetworkError, Ratchet};
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     group_event: GroupEvent,
 ) -> Result<(), NetworkError> {
     let server_connection_map = &this.server_connection_map;
     let group_broadcast = group_event.event;
-    let implicated_cid = group_event.implicated_cid;
+    let implicated_cid = group_event.session_cid;
     let tcp_connection_map = &this.tcp_connection_map;
 
     let mut server_connection_map = server_connection_map.lock().await;

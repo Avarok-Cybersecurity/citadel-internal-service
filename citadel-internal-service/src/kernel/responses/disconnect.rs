@@ -1,20 +1,20 @@
 use crate::kernel::{send_response_to_tcp_client, CitadelWorkspaceService};
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{DisconnectNotification, InternalServiceResponse};
-use citadel_sdk::prelude::{Disconnect, NetworkError, VirtualTargetType};
+use citadel_sdk::prelude::{Disconnect, NetworkError, Ratchet, VirtualTargetType};
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     disconnect: Disconnect,
 ) -> Result<(), NetworkError> {
     if let Some(conn) = disconnect.v_conn_type {
         let (signal, conn_uuid) = match conn {
-            VirtualTargetType::LocalGroupServer { implicated_cid } => {
+            VirtualTargetType::LocalGroupServer { session_cid } => {
                 let mut server_connection_map = this.server_connection_map.lock().await;
-                if let Some(conn) = server_connection_map.remove(&implicated_cid) {
+                if let Some(conn) = server_connection_map.remove(&session_cid) {
                     (
                         InternalServiceResponse::DisconnectNotification(DisconnectNotification {
-                            cid: implicated_cid,
+                            cid: session_cid,
                             peer_cid: None,
                             request_id: None,
                         }),
@@ -25,13 +25,13 @@ pub async fn handle<T: IOInterface>(
                 }
             }
             VirtualTargetType::LocalGroupPeer {
-                implicated_cid,
+                session_cid,
                 peer_cid,
             } => {
-                if let Some(conn) = this.clear_peer_connection(implicated_cid, peer_cid).await {
+                if let Some(conn) = this.clear_peer_connection(session_cid, peer_cid).await {
                     (
                         InternalServiceResponse::DisconnectNotification(DisconnectNotification {
-                            cid: implicated_cid,
+                            cid: session_cid,
                             peer_cid: Some(peer_cid),
                             request_id: None,
                         }),

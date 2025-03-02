@@ -3,10 +3,10 @@ use crate::kernel::{
 };
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{GroupChannelCreateSuccess, InternalServiceResponse};
-use citadel_sdk::prelude::{GroupChannelCreated, NetworkError};
+use citadel_sdk::prelude::{GroupChannelCreated, NetworkError, Ratchet};
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     group_channel_created: GroupChannelCreated,
 ) -> Result<(), NetworkError> {
     let channel = group_channel_created.channel;

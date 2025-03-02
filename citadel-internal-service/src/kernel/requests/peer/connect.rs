@@ -7,12 +7,14 @@ use citadel_internal_service_types::{
 };
 use citadel_logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
-use citadel_sdk::prelude::{ProtocolRemoteExt, ProtocolRemoteTargetExt, VirtualTargetType};
+use citadel_sdk::prelude::{
+    ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, VirtualTargetType,
+};
 use futures::StreamExt;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -49,11 +51,13 @@ pub async fn handle<T: IOInterface>(
 
     let client_to_server_remote = ClientServerRemote::new(
         VirtualTargetType::LocalGroupPeer {
-            implicated_cid: cid,
+            session_cid: cid,
             peer_cid,
         },
         remote.clone(),
         session_security_settings,
+        None,
+        None,
     );
 
     let response = match client_to_server_remote.find_target(cid, peer_cid).await {

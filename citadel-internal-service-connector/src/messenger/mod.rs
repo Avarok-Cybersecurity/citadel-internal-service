@@ -1,5 +1,6 @@
 use crate::connector::InternalServiceConnector;
 use crate::io_interface::IOInterface;
+use crate::messenger::backend::CitadelBackendExt;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use citadel_internal_service_types::{
@@ -11,7 +12,7 @@ use dashmap::DashMap;
 use futures::future::Either;
 use futures::{SinkExt, StreamExt};
 use intersession_layer_messaging::{
-    Backend, DeliveryError, MessageMetadata, NetworkError, Payload, UnderlyingSessionTransport, ILM,
+    DeliveryError, MessageMetadata, NetworkError, Payload, UnderlyingSessionTransport, ILM,
 };
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -25,10 +26,12 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+pub mod backend;
+
 /// A multiplexer for the InternalServiceConnector that allows for multiple handles
 pub struct CitadelWorkspaceMessenger<B>
 where
-    B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    B: CitadelBackendExt,
 {
     // Local subscriptions where the key is the CID
     txs_to_inbound: Arc<DashMap<StreamKey, UnboundedSender<InternalMessage>>>,
@@ -39,13 +42,13 @@ where
     // to ISM or the end user
     background_invoked_requests: Arc<parking_lot::Mutex<HashSet<Uuid>>>,
     is_running: Arc<AtomicBool>,
-    backend: B,
+    backends: Arc<DashMap<u64, B>>,
     final_tx: UnboundedSender<InternalServiceResponse>,
 }
 
 impl<B> Clone for CitadelWorkspaceMessenger<B>
 where
-    B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    B: CitadelBackendExt,
 {
     fn clone(&self) -> Self {
         Self {
@@ -55,7 +58,7 @@ where
             background_invoked_requests: self.background_invoked_requests.clone(),
             is_running: self.is_running.clone(),
             final_tx: self.final_tx.clone(),
-            backend: self.backend.clone(),
+            backends: self.backends.clone(),
         }
     }
 }
@@ -80,8 +83,6 @@ impl StreamKey {
     }
 }
 
-pub struct CitadelWorkspaceBackend {}
-
 type CitadelWorkspaceISM<B> = ILM<WrappedMessage, B, LocalDeliveryTx, ISMHandle<B>>;
 
 pub struct LocalDeliveryTx {
@@ -105,17 +106,16 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
 
 impl<B> CitadelWorkspaceMessenger<B>
 where
-    B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    B: CitadelBackendExt,
 {
-    pub async fn new<T: IOInterface>(
+    pub fn new<T: IOInterface>(
         connector: InternalServiceConnector<T>,
-        backend: B,
-    ) -> Result<(Self, UnboundedReceiver<InternalServiceResponse>), MessengerError> {
+    ) -> (Self, UnboundedReceiver<InternalServiceResponse>) {
         let (final_tx, final_rx) = tokio::sync::mpsc::unbounded_channel();
         // background layer
         let (bypass_ism_tx_to_outbound, rx_to_outbound) = tokio::sync::mpsc::unbounded_channel();
         let this = Self {
-            backend,
+            backends: Arc::new(Default::default()),
             txs_to_inbound: Arc::new(Default::default()),
             connected_peers: Arc::new(Default::default()),
             is_running: Arc::new(AtomicBool::new(true)),
@@ -126,7 +126,7 @@ where
 
         this.spawn_background_tasks(connector, rx_to_outbound);
 
-        Ok((this, final_rx))
+        (this, final_rx)
     }
 
     /// Multiplexes the messenger, creating a unique handle for the specified local client, `cid`
@@ -139,12 +139,6 @@ where
         let local_delivery_wrapper = LocalDeliveryTx {
             final_tx: self.final_tx.clone(),
         };
-        let backend = self.backend.clone();
-        let ism = ILM::new(backend, local_delivery_wrapper, ism_handle)
-            .await
-            .map_err(|err| MessengerError::OtherError {
-                reason: format!("{err:?}"),
-            })?;
 
         let BackgroundHandle {
             mut background_from_ism_outbound,
@@ -153,12 +147,29 @@ where
         self.txs_to_inbound
             .insert(stream_key, background_to_ism_inbound);
 
-        let handle = MessengerTx {
+        let mut handle = MessengerTx {
             bypass_ism_outbound_tx: self.bypass_ism_tx_to_outbound.clone(),
             messenger: self.clone(),
             stream_key,
-            ism,
+            ism: None,
         };
+
+        let backend =
+            B::new(cid, &handle)
+                .await
+                .map_err(|err| MessengerError::CreateMultiplexError {
+                    reason: format!("{err:?}"),
+                })?;
+
+        self.backends.insert(cid, backend.clone());
+
+        let ism = ILM::new(backend, local_delivery_wrapper, ism_handle)
+            .await
+            .map_err(|err| MessengerError::OtherError {
+                reason: format!("{err:?}"),
+            })?;
+
+        handle.ism = Some(ism);
 
         // We only have to spawn a single task: the one that listens for messages from the ISM and forwards them to the background task
         let this = self.clone();
@@ -199,7 +210,7 @@ where
                 contents: Vec<u8>,
             },
             ISMAux {
-                signal: InternalMessage,
+                signal: Box<InternalMessage>,
             },
         }
 
@@ -223,7 +234,7 @@ where
                                 // Assume this is an ISM message
 
                                 let ism_message = match ism_message {
-                                    WireWrapper::ISMAux { signal } => signal,
+                                    WireWrapper::ISMAux { signal } => *signal,
                                     WireWrapper::Message {
                                         contents,
                                         source,
@@ -266,6 +277,7 @@ where
                             }
                         }
                     }
+
                     non_ism_message => {
                         // Process all other messages here
                         if matches!(
@@ -310,8 +322,26 @@ where
                             }
                         }
 
+                        // Pass through backend inspection
+                        let uncaught_non_ism_message =
+                            if let Some(backend) = this.backends.get(&non_ism_message.cid()) {
+                                let backend = backend.value();
+                                if let Some(value) = backend
+                                    .inspect_received_payload(non_ism_message)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                {
+                                    value
+                                } else {
+                                    continue;
+                                }
+                            } else {
+                                non_ism_message
+                            };
+
                         // Send to default direct handle
-                        if let Err(err) = tx_to_local_user_clone.send(non_ism_message) {
+                        if let Err(err) = tx_to_local_user_clone.send(uncaught_non_ism_message) {
                             log::error!(target: "citadel", "Error while sending message to local user: {err:?}");
                             return;
                         }
@@ -389,7 +419,9 @@ where
                         log::info!(target: "citadel", "[NO-BYPASS] Received a message for another node: {stream_key:?}");
                         let cid = ism_proto.source_id();
                         let peer_cid = ism_proto.destination_id();
-                        let wire_message = WireWrapper::ISMAux { signal: ism_proto };
+                        let wire_message = WireWrapper::ISMAux {
+                            signal: Box::new(ism_proto),
+                        };
                         let serialized_message = bincode2::serialize(&wire_message)
                             .expect("Should be able to serialize message");
                         // TODO: Add support for group messaging
@@ -478,17 +510,17 @@ where
 
 pub struct MessengerTx<B>
 where
-    B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    B: CitadelBackendExt,
 {
     bypass_ism_outbound_tx: UnboundedSender<(StreamKey, InternalMessage)>,
     messenger: CitadelWorkspaceMessenger<B>,
     stream_key: StreamKey,
-    ism: CitadelWorkspaceISM<B>,
+    ism: Option<CitadelWorkspaceISM<B>>,
 }
 
 impl<B> Drop for MessengerTx<B>
 where
-    B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    B: CitadelBackendExt,
 {
     fn drop(&mut self) {
         // Remove the handle from the list of active handles
@@ -556,6 +588,9 @@ pub enum MessengerError {
     InitError {
         reason: String,
     },
+    CreateMultiplexError {
+        reason: String,
+    },
     Shutdown,
 }
 
@@ -569,7 +604,7 @@ impl std::error::Error for MessengerError {}
 
 impl<B> MessengerTx<B>
 where
-    B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    B: CitadelBackendExt,
 {
     /// Waits for a peer to connect to the local client
     pub async fn wait_for_peer_to_connect(&self, peer_cid: u64) -> Result<(), MessengerError> {
@@ -588,7 +623,7 @@ where
 
     /// Returns a list of peers that the local client is connected to
     pub async fn get_connected_peers(&self) -> Vec<u64> {
-        self.ism.get_connected_peers().await
+        self.get_ism().get_connected_peers().await
     }
 
     pub fn local_cid(&self) -> u64 {
@@ -655,7 +690,7 @@ where
         peer_cid: u64,
         request: impl Into<InternalServicePayload>,
     ) -> Result<(), MessengerError> {
-        self.ism
+        self.get_ism()
             .send_to(peer_cid, request.into())
             .await
             .map_err(|err| match err {
@@ -677,6 +712,10 @@ where
                 },
             })
     }
+
+    fn get_ism(&self) -> &CitadelWorkspaceISM<B> {
+        self.ism.as_ref().expect("ISM should be initialized")
+    }
 }
 
 /// This implements UnderlyingSessionTransport. It is responsible for sending messages from ISM
@@ -684,7 +723,7 @@ where
 /// and forwarding them to the ISM for processing.
 struct ISMHandle<B>
 where
-    B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    B: CitadelBackendExt,
 {
     ism_to_background_outbound: UnboundedSender<InternalMessage>,
     ism_from_background_inbound: Mutex<UnboundedReceiver<InternalMessage>>,
@@ -703,7 +742,7 @@ fn create_ipc_handles<B>(
     stream_key: StreamKey,
 ) -> (ISMHandle<B>, BackgroundHandle)
 where
-    B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    B: CitadelBackendExt,
 {
     let (ism_to_background_outbound, background_from_ism_outbound) =
         tokio::sync::mpsc::unbounded_channel();
@@ -727,7 +766,7 @@ where
 #[async_trait]
 impl<B> UnderlyingSessionTransport for ISMHandle<B>
 where
-    B: Backend<WrappedMessage> + Clone + Send + Sync + 'static,
+    B: CitadelBackendExt,
 {
     type Message = WrappedMessage;
 

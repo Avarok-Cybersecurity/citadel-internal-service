@@ -2,15 +2,17 @@ use crate::kernel::{send_response_to_tcp_client, spawn_tick_updater, CitadelWork
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{FileTransferRequestNotification, InternalServiceResponse};
 use citadel_logging::info;
-use citadel_sdk::prelude::{NetworkError, ObjectTransferHandle, ObjectTransferOrientation};
+use citadel_sdk::prelude::{
+    NetworkError, ObjectTransferHandle, ObjectTransferOrientation, Ratchet,
+};
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     object_transfer_handle: ObjectTransferHandle,
 ) -> Result<(), NetworkError> {
     let metadata = object_transfer_handle.handle.metadata.clone();
     let object_id = metadata.object_id;
-    let implicated_cid = object_transfer_handle.implicated_cid;
+    let implicated_cid = object_transfer_handle.session_cid;
     let peer_cid = if object_transfer_handle.handle.receiver != implicated_cid {
         object_transfer_handle.handle.receiver
     } else {

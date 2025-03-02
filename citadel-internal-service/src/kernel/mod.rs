@@ -27,14 +27,16 @@ pub(crate) mod ext;
 pub(crate) mod requests;
 pub(crate) mod responses;
 
-pub struct CitadelWorkspaceService<T> {
-    pub remote: Option<NodeRemote>,
-    pub server_connection_map: Arc<Mutex<HashMap<u64, Connection>>>,
+pub type RatchetType = StackedRatchet;
+
+pub struct CitadelWorkspaceService<T, R: Ratchet> {
+    pub remote: Option<NodeRemote<R>>,
+    pub server_connection_map: Arc<Mutex<HashMap<u64, Connection<R>>>>,
     pub tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
     io: Arc<Mutex<Option<T>>>,
 }
 
-impl<T> Clone for CitadelWorkspaceService<T> {
+impl<T, R: Ratchet> Clone for CitadelWorkspaceService<T, R> {
     fn clone(&self) -> Self {
         CitadelWorkspaceService {
             remote: self.remote.clone(),
@@ -45,7 +47,7 @@ impl<T> Clone for CitadelWorkspaceService<T> {
     }
 }
 
-impl<T: IOInterface> From<T> for CitadelWorkspaceService<T> {
+impl<T: IOInterface, R: Ratchet> From<T> for CitadelWorkspaceService<T, R> {
     fn from(io: T) -> Self {
         CitadelWorkspaceService {
             remote: None,
@@ -56,30 +58,30 @@ impl<T: IOInterface> From<T> for CitadelWorkspaceService<T> {
     }
 }
 
-impl<T: IOInterface> CitadelWorkspaceService<T> {
+impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     pub fn new(io: T) -> Self {
         io.into()
     }
 
-    pub fn remote(&self) -> &NodeRemote {
+    pub fn remote(&self) -> &NodeRemote<R> {
         self.remote.as_ref().expect("Kernel not loaded")
     }
 }
 
-impl CitadelWorkspaceService<TcpIOInterface> {
+impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
     pub async fn new_tcp(
         bind_address: SocketAddr,
-    ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface>> {
+    ) -> std::io::Result<CitadelWorkspaceService<TcpIOInterface, R>> {
         Ok(TcpIOInterface::new(bind_address).await?.into())
     }
 }
 
-impl CitadelWorkspaceService<InMemoryInterface> {
+impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
     /// Generates an in-memory service connector and kernel. This is useful for programs that do not need
     /// networking to connect between the application and the internal service
     pub fn new_in_memory() -> (
         InternalServiceConnector<InMemoryInterface>,
-        CitadelWorkspaceService<InMemoryInterface>,
+        CitadelWorkspaceService<InMemoryInterface, R>,
     ) {
         let (tx_to_consumer, rx_from_consumer) = tokio::sync::mpsc::unbounded_channel();
         let (tx_to_svc, rx_from_svc) = tokio::sync::mpsc::unbounded_channel();
@@ -101,20 +103,20 @@ impl CitadelWorkspaceService<InMemoryInterface> {
 }
 
 #[allow(dead_code)]
-pub struct Connection {
-    pub sink_to_server: PeerChannelSendHalf,
-    pub client_server_remote: ClientServerRemote,
-    pub peers: HashMap<u64, PeerConnection>,
+pub struct Connection<R: Ratchet> {
+    pub sink_to_server: PeerChannelSendHalf<R>,
+    pub client_server_remote: ClientServerRemote<R>,
+    pub peers: HashMap<u64, PeerConnection<R>>,
     pub(crate) associated_tcp_connection: Uuid,
-    pub c2s_file_transfer_handlers: HashMap<u64, Option<ObjectTransferHandler>>,
+    pub c2s_file_transfer_handlers: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     pub groups: HashMap<MessageGroupKey, GroupConnection>,
 }
 
 #[allow(dead_code)]
-pub struct PeerConnection {
-    sink: PeerChannelSendHalf,
-    remote: PeerRemote,
-    handler_map: HashMap<u64, Option<ObjectTransferHandler>>,
+pub struct PeerConnection<R: Ratchet> {
+    sink: PeerChannelSendHalf<R>,
+    remote: PeerRemote<R>,
+    handler_map: HashMap<ObjectId, Option<ObjectTransferHandler>>,
     associated_tcp_connection: Uuid,
 }
 
@@ -125,10 +127,10 @@ pub struct GroupConnection {
     cid: u64,
 }
 
-impl Connection {
+impl<R: Ratchet> Connection<R> {
     fn new(
-        sink: PeerChannelSendHalf,
-        client_server_remote: ClientServerRemote,
+        sink: PeerChannelSendHalf<R>,
+        client_server_remote: ClientServerRemote<R>,
         associated_tcp_connection: Uuid,
     ) -> Self {
         Connection {
@@ -144,8 +146,8 @@ impl Connection {
     fn add_peer_connection(
         &mut self,
         peer_cid: u64,
-        sink: PeerChannelSendHalf,
-        remote: PeerRemote,
+        sink: PeerChannelSendHalf<R>,
+        remote: PeerRemote<R>,
     ) {
         self.peers.insert(
             peer_cid,
@@ -158,17 +160,17 @@ impl Connection {
         );
     }
 
-    fn clear_peer_connection(&mut self, peer_cid: u64) -> Option<PeerConnection> {
+    fn clear_peer_connection(&mut self, peer_cid: u64) -> Option<PeerConnection<R>> {
         self.peers.remove(&peer_cid)
     }
 
     fn add_object_transfer_handler(
         &mut self,
         peer_cid: u64,
-        object_id: u64,
+        object_id: ObjectId,
         handler: Option<ObjectTransferHandler>,
     ) {
-        if self.implicated_cid() == peer_cid {
+        if self.session_cid() == peer_cid {
             // C2S
             self.c2s_file_transfer_handlers.insert(object_id, handler);
         } else {
@@ -190,9 +192,9 @@ impl Connection {
     fn take_file_transfer_handle(
         &mut self,
         peer_cid: u64,
-        object_id: u64,
+        object_id: ObjectId,
     ) -> Option<Option<ObjectTransferHandler>> {
-        if self.implicated_cid() == peer_cid {
+        if self.session_cid() == peer_cid {
             // C2S
             self.c2s_file_transfer_handlers.remove(&object_id)
         } else {
@@ -203,17 +205,17 @@ impl Connection {
     }
 
     /// Returns the CID of this C2S connection
-    fn implicated_cid(&self) -> u64 {
-        self.client_server_remote.user().get_implicated_cid()
+    fn session_cid(&self) -> u64 {
+        self.client_server_remote.user().get_session_cid()
     }
 }
 
-impl<T: IOInterface> CitadelWorkspaceService<T> {
+impl<T: IOInterface, R: Ratchet> CitadelWorkspaceService<T, R> {
     async fn clear_peer_connection(
         &self,
         implicated_cid: u64,
         peer_cid: u64,
-    ) -> Option<PeerConnection> {
+    ) -> Option<PeerConnection<R>> {
         self.server_connection_map
             .lock()
             .await
@@ -223,8 +225,8 @@ impl<T: IOInterface> CitadelWorkspaceService<T> {
 }
 
 #[async_trait]
-impl<T: IOInterface> NetKernel for CitadelWorkspaceService<T> {
-    fn load_remote(&mut self, node_remote: NodeRemote) -> Result<(), NetworkError> {
+impl<T: IOInterface, R: Ratchet> NetKernel<R> for CitadelWorkspaceService<T, R> {
+    fn load_remote(&mut self, node_remote: NodeRemote<R>) -> Result<(), NetworkError> {
         self.remote = Some(node_remote);
         Ok(())
     }
@@ -284,7 +286,7 @@ impl<T: IOInterface> NetKernel for CitadelWorkspaceService<T> {
                 };
 
                 // Spawn the task to allow for parallel request handling
-                tokio::task::spawn(task);
+                drop(tokio::task::spawn(task));
             }
             Ok(())
         };
@@ -299,7 +301,7 @@ impl<T: IOInterface> NetKernel for CitadelWorkspaceService<T> {
         res
     }
 
-    async fn on_node_event_received(&self, message: NodeResult) -> Result<(), NetworkError> {
+    async fn on_node_event_received(&self, message: NodeResult<R>) -> Result<(), NetworkError> {
         responses::handle_node_result(self, message).await
     }
 
@@ -324,12 +326,13 @@ async fn send_response_to_tcp_client(
         })
 }
 
-fn create_client_server_remote(
+// TODO: return scoped wrapper type
+fn create_client_server_remote<R: Ratchet>(
     conn_type: VirtualTargetType,
-    remote: NodeRemote,
+    remote: NodeRemote<R>,
     security_settings: SessionSecuritySettings,
-) -> ClientServerRemote {
-    ClientServerRemote::new(conn_type, remote, security_settings)
+) -> ClientServerRemote<R> {
+    ClientServerRemote::new(conn_type, remote, security_settings, None, None)
 }
 
 pub(crate) async fn sink_send_payload<T: IOInterface>(
@@ -348,11 +351,11 @@ pub(crate) fn send_to_kernel(
     Ok(())
 }
 
-fn spawn_tick_updater(
+fn spawn_tick_updater<R: Ratchet>(
     object_transfer_handler: ObjectTransferHandler,
     implicated_cid: u64,
     peer_cid: Option<u64>,
-    server_connection_map: &mut HashMap<u64, Connection>,
+    server_connection_map: &mut HashMap<u64, Connection<R>>,
     tcp_connection_map: Arc<Mutex<HashMap<Uuid, UnboundedSender<InternalServiceResponse>>>>,
     request_id: Option<Uuid>,
 ) {

@@ -5,10 +5,11 @@ use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, MessageSendFailure, MessageSendSuccess,
 };
 use citadel_logging::info;
+use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -30,7 +31,7 @@ pub async fn handle<T: IOInterface>(
                 // send to peer
                 if let Some(peer_conn) = conn.peers.get_mut(&peer_cid) {
                     peer_conn.sink.set_security_level(security_level);
-                    peer_conn.sink.clone()
+                    &mut peer_conn.sink
                 } else {
                     // TODO: refactor all connection not found messages, we have too many duplicates
                     citadel_logging::error!(target: "citadel","connection not found");
@@ -46,12 +47,14 @@ pub async fn handle<T: IOInterface>(
             } else {
                 // send to server
                 conn.sink_to_server.set_security_level(security_level);
-                conn.sink_to_server.clone()
+                &mut conn.sink_to_server
             };
 
-            drop(server_connection_map);
+            // Note: not dropping the lock should not hold up the conn map for long
+            // if it does, we can always use a tx/rx pair
+            // drop(server_connection_map);
 
-            if let Err(err) = sink.send_message(message.into()).await {
+            if let Err(err) = sink.send(message).await {
                 let response = InternalServiceResponse::MessageSendFailure(MessageSendFailure {
                     cid,
                     message: format!("Error sending message: {err:?}"),

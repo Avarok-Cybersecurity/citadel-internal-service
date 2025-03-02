@@ -31,8 +31,9 @@ mod local_db;
 mod peer;
 
 #[async_recursion]
-pub async fn handle_request<T>(
-    this: &CitadelWorkspaceService<T>,
+#[allow(clippy::multiple_bound_locations)]
+pub async fn handle_request<T, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     command: InternalServiceRequest,
 ) -> Option<HandledRequestResult>
@@ -41,117 +42,103 @@ where
 {
     match &command {
         InternalServiceRequest::GetAccountInformation { .. } => {
-            return get_account_information::handle(this, uuid, command).await
+            get_account_information::handle(this, uuid, command).await
         }
         InternalServiceRequest::GetSessions { .. } => {
-            return get_sessions::handle(this, uuid, command).await
+            get_sessions::handle(this, uuid, command).await
         }
-        InternalServiceRequest::Connect { .. } => {
-            return connect::handle(this, uuid, command).await
-        }
-        InternalServiceRequest::Register { .. } => {
-            return register::handle(this, uuid, command).await
-        }
-        InternalServiceRequest::Message { .. } => {
-            return message::handle(this, uuid, command).await
-        }
+        InternalServiceRequest::Connect { .. } => connect::handle(this, uuid, command).await,
+        InternalServiceRequest::Register { .. } => register::handle(this, uuid, command).await,
+        InternalServiceRequest::Message { .. } => message::handle(this, uuid, command).await,
 
-        InternalServiceRequest::Disconnect { .. } => {
-            return disconnect::handle(this, uuid, command).await
-        }
+        InternalServiceRequest::Disconnect { .. } => disconnect::handle(this, uuid, command).await,
 
-        InternalServiceRequest::SendFile { .. } => {
-            return file::upload::handle(this, uuid, command).await
-        }
+        InternalServiceRequest::SendFile { .. } => file::upload::handle(this, uuid, command).await,
 
         InternalServiceRequest::RespondFileTransfer { .. } => {
-            return file::respond_file_transfer::handle(this, uuid, command).await
+            file::respond_file_transfer::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::DownloadFile { .. } => {
-            return file::download::handle(this, uuid, command).await
+            file::download::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::DeleteVirtualFile { .. } => {
-            return file::delete_virtual_file::handle(this, uuid, command).await
+            file::delete_virtual_file::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::ListRegisteredPeers { .. } => {
-            return peer::list_registered::handle(this, uuid, command).await
+            peer::list_registered::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::ListAllPeers { .. } => {
-            return peer::list_all::handle(this, uuid, command).await
+            peer::list_all::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::PeerRegister { .. } => {
-            return peer::register::handle(this, uuid, command).await
+            peer::register::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::PeerConnect { .. } => {
-            return peer::connect::handle(this, uuid, command).await
+            peer::connect::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::PeerDisconnect { .. } => {
-            return peer::disconnect::handle(this, uuid, command).await
+            peer::disconnect::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::LocalDBGetKV { .. } => {
-            return local_db::get_kv::handle(this, uuid, command).await
+            local_db::get_kv::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::LocalDBSetKV { .. } => {
-            return local_db::set_kv::handle(this, uuid, command).await
+            local_db::set_kv::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::LocalDBDeleteKV { .. } => {
-            return local_db::delete_kv::handle(this, uuid, command).await
+            local_db::delete_kv::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::LocalDBGetAllKV { .. } => {
-            return local_db::get_all_kv::handle(this, uuid, command).await
+            local_db::get_all_kv::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::LocalDBClearAllKV { .. } => {
-            return local_db::clear_all_kv::handle(this, uuid, command).await
+            local_db::clear_all_kv::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::GroupCreate { .. } => {
-            return group::create::handle(this, uuid, command).await
+            group::create::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::GroupLeave { .. } => {
-            return group::leave::handle(this, uuid, command).await
+            group::leave::handle(this, uuid, command).await
         }
 
-        InternalServiceRequest::GroupEnd { .. } => {
-            return group::end::handle(this, uuid, command).await
-        }
+        InternalServiceRequest::GroupEnd { .. } => group::end::handle(this, uuid, command).await,
 
         InternalServiceRequest::GroupMessage { .. } => {
-            return group::message::handle(this, uuid, command).await
+            group::message::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::GroupInvite { .. } => {
-            return group::invite::handle(this, uuid, command).await
+            group::invite::handle(this, uuid, command).await
         }
 
-        InternalServiceRequest::GroupKick { .. } => {
-            return group::kick::handle(this, uuid, command).await
-        }
+        InternalServiceRequest::GroupKick { .. } => group::kick::handle(this, uuid, command).await,
 
         InternalServiceRequest::GroupListGroupsFor { .. } => {
-            return group::group_list_groups::handle(this, uuid, command).await
+            group::group_list_groups::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::GroupRespondRequest { .. } => {
-            return group::respond_request::handle(this, uuid, command).await
+            group::respond_request::handle(this, uuid, command).await
         }
 
         InternalServiceRequest::GroupRequestJoin { .. } => {
-            return group::request_join::handle(this, uuid, command).await
+            group::request_join::handle(this, uuid, command).await
         }
-    };
+    }
 }
 
 pub(crate) fn spawn_group_channel_receiver(

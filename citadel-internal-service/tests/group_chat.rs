@@ -14,7 +14,7 @@ mod tests {
         GroupRespondRequestSuccess, InternalServiceRequest, InternalServiceResponse,
     };
     use citadel_logging::info;
-    use citadel_sdk::prelude::{MemberState, UserIdentifier};
+    use citadel_sdk::prelude::{MemberState, StackedRatchet, UserIdentifier};
     use std::error::Error;
     use std::net::SocketAddr;
     use uuid::Uuid;
@@ -23,22 +23,26 @@ mod tests {
     async fn test_internal_service_group_create() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer C
-        let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
+        let bind_address_internal_service_c: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-                bind_address_internal_service_c,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                    bind_address_internal_service_c,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();
@@ -173,22 +177,26 @@ mod tests {
     async fn test_internal_service_group_invite() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer C
-        let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
+        let bind_address_internal_service_c: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-                bind_address_internal_service_c,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                    bind_address_internal_service_c,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();
@@ -224,8 +232,10 @@ mod tests {
             if let InternalServiceResponse::GroupInviteSuccess(GroupInviteSuccess { .. }) =
                 &deserialized_service_a_payload_response
             {
-                let service_b_group_inbound = from_service_b.recv().await.unwrap();
                 let owner_group_key = *group_key;
+
+                // Service B Declines Group Invitation
+                let service_b_group_inbound = from_service_b.recv().await.unwrap();
                 info!(target: "citadel","Service B: {service_b_group_inbound:?}");
                 if let InternalServiceResponse::GroupInviteNotification(GroupInviteNotification {
                     cid: _,
@@ -287,8 +297,10 @@ mod tests {
             if let InternalServiceResponse::GroupInviteSuccess(GroupInviteSuccess { .. }) =
                 &deserialized_service_a_payload_response
             {
-                let service_c_group_inbound = from_service_c.recv().await.unwrap();
                 let owner_group_key = *group_key;
+
+                // Service C Accepts Group Invitation
+                let service_c_group_inbound = from_service_c.recv().await.unwrap();
                 info!(target: "citadel","Service C: {service_c_group_inbound:?}");
                 if let InternalServiceResponse::GroupInviteNotification(GroupInviteNotification {
                     cid: _,
@@ -346,22 +358,26 @@ mod tests {
     async fn test_internal_service_group_request_join() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer C
-        let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
+        let bind_address_internal_service_c: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-                bind_address_internal_service_c,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                    bind_address_internal_service_c,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();
@@ -582,22 +598,26 @@ mod tests {
     async fn test_internal_service_group_leave_and_end() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer C
-        let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
+        let bind_address_internal_service_c: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-                bind_address_internal_service_c,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                    bind_address_internal_service_c,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();
@@ -795,22 +815,26 @@ mod tests {
     async fn test_internal_service_group_kick() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer C
-        let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
+        let bind_address_internal_service_c: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-                bind_address_internal_service_c,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                    bind_address_internal_service_c,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();
@@ -1019,22 +1043,26 @@ mod tests {
     async fn test_internal_service_group_message() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer C
-        let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
+        let bind_address_internal_service_c: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
-        let mut peer_return_handle_vec = register_and_connect_to_server_then_peers(
-            vec![
-                bind_address_internal_service_a,
-                bind_address_internal_service_b,
-                bind_address_internal_service_c,
-            ],
-            None,
-            None,
-        )
-        .await?;
+        let mut peer_return_handle_vec =
+            register_and_connect_to_server_then_peers::<StackedRatchet>(
+                vec![
+                    bind_address_internal_service_a,
+                    bind_address_internal_service_b,
+                    bind_address_internal_service_c,
+                ],
+                None,
+                None,
+            )
+            .await?;
 
         let (to_service_a, mut from_service_a, cid_a) =
             peer_return_handle_vec.take_next_service_handle();

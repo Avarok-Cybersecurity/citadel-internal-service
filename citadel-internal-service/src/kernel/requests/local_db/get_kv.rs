@@ -5,10 +5,11 @@ use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, LocalDBGetKVFailure, LocalDBGetKVSuccess,
 };
 use citadel_sdk::backend_kv_store::BackendHandler;
+use citadel_sdk::prelude::Ratchet;
 use uuid::Uuid;
 
-pub async fn handle<T: IOInterface>(
-    this: &CitadelWorkspaceService<T>,
+pub async fn handle<T: IOInterface, R: Ratchet>(
+    this: &CitadelWorkspaceService<T, R>,
     uuid: Uuid,
     request: InternalServiceRequest,
 ) -> Option<HandledRequestResult> {
@@ -56,8 +57,8 @@ pub async fn handle<T: IOInterface>(
     Some(HandledRequestResult { response, uuid })
 }
 
-pub async fn backend_handler_get(
-    remote: &impl BackendHandler,
+pub async fn backend_handler_get<R: Ratchet>(
+    remote: &impl BackendHandler<R>,
     cid: u64,
     peer_cid: Option<u64>,
     key: String,
