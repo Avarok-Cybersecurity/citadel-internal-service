@@ -3,7 +3,7 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::{
-        exhaust_stream_to_file_completion, register_and_connect_to_server,
+        exhaust_stream_to_file_completion, get_free_port, register_and_connect_to_server,
         server_info_skip_cert_verification, RegisterAndConnectItems,
     };
     use citadel_internal_service::kernel::CitadelWorkspaceService;
@@ -23,7 +23,7 @@ mod tests {
         let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
-        let service_addr = "127.0.0.1:55778".parse().unwrap();
+        let service_addr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
@@ -93,7 +93,7 @@ mod tests {
         let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
-        let service_addr = "127.0.0.1:55778".parse().unwrap();
+        let service_addr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
@@ -199,7 +199,7 @@ mod tests {
         let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
-        let service_addr = "127.0.0.1:55778".parse().unwrap();
+        let service_addr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()
@@ -340,7 +340,7 @@ mod tests {
         let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
         tokio::task::spawn(server);
 
-        let service_addr = "127.0.0.1:55778".parse().unwrap();
+        let service_addr = format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let service = CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(service_addr).await?;
 
         let internal_service = NodeBuilder::default()

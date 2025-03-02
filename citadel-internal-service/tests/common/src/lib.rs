@@ -15,7 +15,7 @@ use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::error::Error;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
@@ -30,6 +30,15 @@ pub fn setup_log() {
         citadel_logging::error!(target: "citadel", "Panic: {:?}", info);
         std::process::exit(1);
     }));
+}
+
+/// Helper function to get a free port for testing
+pub fn get_free_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
+    listener
+        .local_addr()
+        .expect("Failed to get local address")
+        .port()
 }
 
 pub struct RegisterAndConnectItems<
@@ -580,7 +589,7 @@ impl<R: Ratchet> NetKernel<R> for ReceiverFileTransferKernel<R> {
                             assert_eq!(
                                 cmp_data.as_slice(),
                                 streamed_data.as_slice(),
-                                "Original data and streamed data do not match"
+                                "Original data and streamed data does not match"
                             );
                         }
                     }

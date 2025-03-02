@@ -2,7 +2,7 @@ use citadel_internal_service_test_common as common;
 
 #[cfg(test)]
 mod tests {
-    use crate::common::register_and_connect_to_server_then_peers;
+    use crate::common::{get_free_port, register_and_connect_to_server_then_peers};
     use citadel_internal_service_connector::connector::InternalServiceConnector;
     use citadel_internal_service_connector::io_interface::in_memory::InMemoryInterface;
     use citadel_internal_service_connector::io_interface::IOInterface;
@@ -26,9 +26,11 @@ mod tests {
     async fn test_connector_mapping() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         let mut peer_return_handle_vec =
             register_and_connect_to_server_then_peers::<StackedRatchet>(
@@ -100,9 +102,11 @@ mod tests {
     async fn test_messenger_requests_and_session_state() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         let mut peer_return_handle_vec =
             register_and_connect_to_server_then_peers::<StackedRatchet>(
@@ -199,11 +203,14 @@ mod tests {
     async fn test_messenger_messaging() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer C
-        let bind_address_internal_service_c: SocketAddr = "127.0.0.1:55538".parse().unwrap();
+        let bind_address_internal_service_c: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         let mut peer_return_handle_vec =
             register_and_connect_to_server_then_peers::<StackedRatchet>(
@@ -279,8 +286,10 @@ mod tests {
     #[tokio::test]
     async fn test_citadel_workspace_backend_ping_pong() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55636".parse().unwrap();
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55637".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         let mut peer_return_handle_vec =
             register_and_connect_to_server_then_peers::<StackedRatchet>(

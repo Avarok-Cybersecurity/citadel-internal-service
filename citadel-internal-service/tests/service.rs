@@ -3,8 +3,8 @@ use citadel_internal_service_test_common as common;
 #[cfg(test)]
 mod tests {
     use crate::common::{
-        register_and_connect_to_server, register_and_connect_to_server_then_peers, send,
-        server_info_reactive_skip_cert_verification, server_info_skip_cert_verification,
+        get_free_port, register_and_connect_to_server, register_and_connect_to_server_then_peers,
+        send, server_info_reactive_skip_cert_verification, server_info_skip_cert_verification,
         server_info_skip_cert_verification_with_password, spawn_services, test_kv_for_service,
         InternalServicesFutures, RegisterAndConnectItems,
     };
@@ -26,7 +26,8 @@ mod tests {
     #[tokio::test]
     async fn test_internal_service_register_connect() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+        let bind_address_internal_service: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
@@ -83,7 +84,8 @@ mod tests {
     async fn test_internal_service_server_password() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+        let bind_address_internal_service: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = server_info_skip_cert_verification_with_password::<
@@ -96,6 +98,7 @@ mod tests {
         let internal_service_kernel =
             CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
                 .await?;
+
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -143,7 +146,8 @@ mod tests {
     async fn test_internal_service_server_password_negative_case() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55556".parse().unwrap();
+        let bind_address_internal_service: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) = server_info_skip_cert_verification_with_password::<
@@ -156,6 +160,7 @@ mod tests {
         let internal_service_kernel =
             CitadelWorkspaceService::<_, StackedRatchet>::new_tcp(bind_address_internal_service)
                 .await?;
+
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -319,7 +324,8 @@ mod tests {
     async fn message_test() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55518".parse().unwrap();
+        let bind_address_internal_service: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) =
@@ -423,7 +429,8 @@ mod tests {
     async fn connect_after_register_true() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         info!(target: "citadel", "above server spawn");
-        let bind_address_internal_service: SocketAddr = "127.0.0.1:55568".parse().unwrap();
+        let bind_address_internal_service: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         // TCP client (GUI, CLI) -> internal service -> empty kernel server(s)
         let (server, server_bind_address) =
@@ -537,8 +544,8 @@ mod tests {
         crate::common::setup_log();
         let _ = register_and_connect_to_server_then_peers::<StackedRatchet>(
             vec![
-                "127.0.0.1:55526".parse().unwrap(),
-                "127.0.0.1:55527".parse().unwrap(),
+                format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
+                format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
             ],
             None,
             None,
@@ -552,8 +559,8 @@ mod tests {
         crate::common::setup_log();
         let _ = register_and_connect_to_server_then_peers::<StackedRatchet>(
             vec![
-                "127.0.0.1:55526".parse().unwrap(),
-                "127.0.0.1:55527".parse().unwrap(),
+                format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
+                format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
             ],
             Some(PreSharedKey::from("SecretServerPassword".as_bytes())),
             Some(PreSharedKey::from("SecretPeerPassword".as_bytes())),
@@ -642,8 +649,8 @@ mod tests {
         tokio::task::spawn(server);
 
         let int_svc_addrs = vec![
-            "127.0.0.1:55526".parse().unwrap(),
-            "127.0.0.1:55527".parse().unwrap(),
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
         ];
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
@@ -803,8 +810,8 @@ mod tests {
         let mut peer_return_handle_vec =
             register_and_connect_to_server_then_peers::<StackedRatchet>(
                 vec![
-                    "127.0.0.1:55526".parse().unwrap(),
-                    "127.0.0.1:55527".parse().unwrap(),
+                    format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
+                    format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
                 ],
                 None,
                 None,
@@ -827,9 +834,11 @@ mod tests {
     async fn test_internal_service_peer_message_test() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         let mut peer_return_handle_vec =
             register_and_connect_to_server_then_peers::<StackedRatchet>(
@@ -888,7 +897,8 @@ mod tests {
         crate::common::setup_log();
         let (server, server_bind_address) = server_info_skip_cert_verification::<StackedRatchet>();
 
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         let internal_service = NodeBuilder::default()
             .with_node_type(NodeType::Peer)
             .with_backend(BackendType::InMemory)
@@ -937,9 +947,11 @@ mod tests {
     async fn test_p2p_kv() -> Result<(), Box<dyn Error>> {
         crate::common::setup_log();
         // internal service for peer A
-        let bind_address_internal_service_a: SocketAddr = "127.0.0.1:55536".parse().unwrap();
+        let bind_address_internal_service_a: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
         // internal service for peer B
-        let bind_address_internal_service_b: SocketAddr = "127.0.0.1:55537".parse().unwrap();
+        let bind_address_internal_service_b: SocketAddr =
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap();
 
         let mut peer_return_handle_vec =
             register_and_connect_to_server_then_peers::<StackedRatchet>(
@@ -970,8 +982,8 @@ mod tests {
 
         let mut internal_services: Vec<InternalServicesFutures> = Vec::new();
         let internal_service_addresses = vec![
-            "127.0.0.1:55536".parse().unwrap(),
-            "127.0.0.1:55537".parse().unwrap(),
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
+            format!("127.0.0.1:{}", get_free_port()).parse().unwrap(),
         ];
 
         for internal_service_address in internal_service_addresses.clone() {
@@ -980,6 +992,7 @@ mod tests {
                 bind_address_internal_service,
             )
             .await?;
+
             let internal_service = NodeBuilder::default()
                 .with_node_type(NodeType::Peer)
                 .with_insecure_skip_cert_verification()

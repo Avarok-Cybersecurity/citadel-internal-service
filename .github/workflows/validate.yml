@@ -27,9 +27,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - run: cargo nextest run --package citadel-internal-service --features=vendored
+      - run: cargo nextest run --features=vendored
         if: startsWith(matrix.os, 'windows')
-      - run: cargo nextest run --package citadel-internal-service
+      - run: cargo nextest run
         if: ${{ !startsWith(matrix.os, 'windows') }}
 
   clippy:
