@@ -62,12 +62,13 @@ impl CitadelWorkspaceBackend {
     }
 
     async fn initialize_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+        let request_id = Uuid::new_v4();
         let key = create_key_for(self.cid, INBOUND_MESSAGE_PREFIX);
 
         let new_state = State::new();
 
         let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
-            request_id: Uuid::new_v4(),
+            request_id,
             cid: self.cid,
             peer_cid: None,
             key,
@@ -90,7 +91,19 @@ impl CitadelWorkspaceBackend {
             .send((stream_key, internal_message))
             .map_err(|err| BackendError::StorageError(err.to_string()))?;
 
-        Ok(new_state)
+        if let Some(response) = self.wait_for_response(request_id).await {
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
+                Ok(new_state)
+            } else {
+                Err(BackendError::StorageError(
+                    "Failed to initialize inbound map".to_string(),
+                ))
+            }
+        } else {
+            Err(BackendError::StorageError(
+                "No response received when initializing inbound map".to_string(),
+            ))
+        }
     }
 
     async fn get_inbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
@@ -153,12 +166,13 @@ impl CitadelWorkspaceBackend {
     }
 
     async fn initialize_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
+        let request_id = Uuid::new_v4();
         let key = create_key_for(self.cid, OUTBOUND_MESSAGE_PREFIX);
 
         let new_state = State::new();
 
         let request = InternalServicePayload::Request(InternalServiceRequest::LocalDBSetKV {
-            request_id: Uuid::new_v4(),
+            request_id,
             cid: self.cid,
             peer_cid: None,
             key,
@@ -181,7 +195,19 @@ impl CitadelWorkspaceBackend {
             .send((stream_key, internal_message))
             .map_err(|err| BackendError::StorageError(err.to_string()))?;
 
-        Ok(new_state)
+        if let Some(response) = self.wait_for_response(request_id).await {
+            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
+                Ok(new_state)
+            } else {
+                Err(BackendError::StorageError(
+                    "Failed to initialize outbound map".to_string(),
+                ))
+            }
+        } else {
+            Err(BackendError::StorageError(
+                "No response received when initializing outbound map".to_string(),
+            ))
+        }
     }
 
     async fn get_outbound_map(&self) -> Result<State, BackendError<WrappedMessage>> {
