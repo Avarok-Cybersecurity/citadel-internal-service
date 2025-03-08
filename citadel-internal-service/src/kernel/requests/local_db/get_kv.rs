@@ -28,7 +28,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         None => InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
             cid,
             peer_cid,
-            message: "Server connection not found".to_string(),
+            message: "get_kv: Server connection not found".to_string(),
             request_id: Some(request_id),
         }),
         Some(conn) => {

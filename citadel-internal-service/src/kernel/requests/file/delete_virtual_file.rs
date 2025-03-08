@@ -73,10 +73,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             }
         }
         None => {
-            error!(target: "citadel","server connection not found");
+            error!(target: "citadel","delete_virtual_file: server connection not found");
             InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
                 cid,
-                message: String::from("Server Connection Not Found"),
+                message: String::from("delete_virtual_file: Server Connection Not Found"),
                 request_id: Some(request_id),
             })
         }

@@ -38,11 +38,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         )
         .await
     {
-        Ok(_res) => match connect_after_register {
+        Ok(res) => match connect_after_register {
             false => {
                 let response = InternalServiceResponse::RegisterSuccess(
                     citadel_internal_service_types::RegisterSuccess {
-                        cid: 0,
+                        cid: res.cid,
                         request_id: Some(request_id),
                     },
                 );

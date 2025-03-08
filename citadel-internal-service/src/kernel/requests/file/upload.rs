@@ -87,11 +87,11 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         }
 
         None => {
-            error!(target: "citadel","server connection not found");
+            error!(target: "citadel","upload: server connection not found");
             let response =
                 InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
                     cid,
-                    message: "Server Connection Not Found".into(),
+                    message: "upload: Server Connection Not Found".into(),
                     request_id: Some(request_id),
                 });
 

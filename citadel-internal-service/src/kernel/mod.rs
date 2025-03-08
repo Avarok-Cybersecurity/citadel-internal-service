@@ -403,6 +403,6 @@ fn spawn_tick_updater<R: Ratchet>(
         };
         tokio::task::spawn(sender_status_updater);
     } else {
-        info!(target: "citadel", "Server Connection Not Found")
+        info!(target: "citadel", "tick_updater: Server Connection Not Found")
     }
 }

@@ -70,10 +70,10 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             }
         }
         None => {
-            error!(target: "citadel","server connection not found");
+            error!(target: "citadel","download: server connection not found");
             InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
                 cid,
-                message: String::from("Server Connection Not Found"),
+                message: String::from("download: Server Connection Not Found"),
                 request_id: Some(request_id),
             })
         }

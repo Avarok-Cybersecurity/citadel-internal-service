@@ -38,7 +38,7 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     let response = match lock.get_mut(&cid) {
         None => InternalServiceResponse::PeerDisconnectFailure(PeerDisconnectFailure {
             cid,
-            message: "Server connection not found".to_string(),
+            message: "disconnect: Server connection not found".to_string(),
             request_id: Some(request_id),
         }),
         Some(conn) => match conn.peers.get_mut(&peer_cid) {
