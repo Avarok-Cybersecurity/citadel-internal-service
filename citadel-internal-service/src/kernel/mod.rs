@@ -500,15 +500,31 @@ impl<T: IOInterface + Sync, R: Ratchet> NetKernel<R> for CitadelWorkspaceService
                             response,
                             uuid,
                         ) {
-                            // The TCP connection no longer exists. Delete it from both maps
+                            // The localhost CONNECTION is gone. The SESSIONS are not.
+                            //
+                            // This also did
+                            // `server_connection_map.retain(|_, v| v.associated_localhost_connection != uuid)`,
+                            // deleting every session that connection owned. A failed
+                            // send is the ordinary case of a tab navigating between a
+                            // request and its response -- so a page refresh at the
+                            // wrong moment logged the user out of every session in
+                            // that tab, and any later claim or reconnect found
+                            // nothing to claim.
+                            //
+                            // `ext.rs` states the rule for exactly this case: "ALWAYS
+                            // preserve sessions when TCP drops... Sessions are only
+                            // explicitly cleaned up via: 1. Disconnect request
+                            // (user-initiated logout) 2. Deregister request (account
+                            // deletion)". This was a third path, and the one nobody
+                            // asked for.
+                            //
+                            // The channel and the media lane DO go: those belong to
+                            // the dead connection. The session belongs to the user.
                             error!(target: "citadel", "Failed to send response to TCP client: {err:?}");
                             this.tx_to_localhost_clients.write().remove(&uuid);
                             if let Some(lane) = this.media_lanes.write().remove(&uuid) {
                                 lane.close();
                             }
-                            this.server_connection_map.write().retain(|_, v| {
-                                v.associated_localhost_connection.load(Ordering::Relaxed) != uuid
-                            });
                         }
                     }
                 };

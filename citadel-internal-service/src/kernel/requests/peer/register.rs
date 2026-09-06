@@ -110,7 +110,33 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         Ok(symmetric_identifier_handle_ref) => {
             info!(target: "citadel", "[PeerRegister] propose_target succeeded, calling register_to_peer()...");
             match symmetric_identifier_handle_ref.register_to_peer().await {
-                Ok(_peer_register_success) => {
+                // `Ok` means the exchange COMPLETED, not that the peer said yes.
+                //
+                // `PeerRegisterStatus` is `Accepted | Declined | Failed { reason }`,
+                // and this arm bound it to `_peer_register_success` and carried on
+                // -- so a peer who DECLINED produced a `PeerRegisterSuccess` for the
+                // requester, whose UI then showed the registration as done and moved
+                // on to connecting to somebody who had refused.
+                //
+                // The SDK added `is_accepted()` and `refusal_reason()` for exactly
+                // this; both were already available at the pinned revision.
+                Ok(status) if !status.is_accepted() => {
+                    let msg = status
+                        .refusal_reason()
+                        .unwrap_or_else(|| "The peer did not accept the request".to_string());
+                    info!(target: "citadel", "[PeerRegister] peer did not accept: {}", msg);
+                    return Some(HandledRequestResult {
+                        response: InternalServiceResponse::PeerRegisterFailure(
+                            PeerRegisterFailure {
+                                cid,
+                                message: msg,
+                                request_id: Some(request_id),
+                            },
+                        ),
+                        uuid,
+                    });
+                }
+                Ok(_accepted) => {
                     info!(target: "citadel", "[PeerRegister] register_to_peer succeeded, getting account_manager...");
                     let account_manager = symmetric_identifier_handle_ref.account_manager();
                     info!(target: "citadel", "[PeerRegister] Calling find_target_information({}, {})...", cid, peer_cid);
