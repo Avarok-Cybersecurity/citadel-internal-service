@@ -802,12 +802,36 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
             message: REFUSED.to_string(),
             request_id: Some(*request_id),
         }),
+        // A refused read is ANSWERED, because it has somewhere to say so.
+        //
+        // This sat in the silent list below, under the reason that the queries
+        // "return DATA, and their response types carry no failure variant". That
+        // is true of GroupListGroupsFor. It was never true of LocalDBGetKV:
+        // `LocalDBGetKVFailure` exists, the handler already builds one when
+        // `propose_target` fails, and the client matches it by request id.
+        //
+        // The false premise was load-bearing. Being silent is why the variant
+        // could not be added to `requires_owned_session` -- gating it would have
+        // meant refusing reads into nothing, and the browser waiting out its own
+        // timeout -- and not being gated is why any connection could read a known
+        // account's stored ILM payloads while it had no mapped session.
+        InternalServiceRequest::LocalDBGetKV {
+            request_id,
+            cid,
+            peer_cid,
+            ..
+        } => InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
+            cid: *cid,
+            peer_cid: *peer_cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
         // Everything else stays silent, and each is a deliberate decision.
         //
-        // The queries -- GroupListGroupsFor and LocalDBGetKV -- return DATA,
-        // and their response types carry no failure variant. A refusal would have to invent an empty result, which reads
-        // as "there is nothing" and is the absence-for-failure confusion this
-        // codebase has spent a dozen rounds removing.
+        // GroupListGroupsFor returns DATA and has no failure variant, so a
+        // refusal would have to invent an empty result -- which reads as "there
+        // is nothing" and is the absence-for-failure confusion this codebase has
+        // spent a dozen rounds removing.
         //
         // The media requests (MediaOpen, MediaClose, MediaSend) and
         // RespondFileTransfer / PeerRegisterRespond answer over their own
@@ -817,7 +841,6 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
         // list and nothing wider: a variant added to the gate without a
         // decision fails that test rather than joining a silent default.
         InternalServiceRequest::GroupListGroupsFor { .. }
-        | InternalServiceRequest::LocalDBGetKV { .. }
         | InternalServiceRequest::MediaOpen { .. }
         | InternalServiceRequest::MediaClose { .. }
         | InternalServiceRequest::MediaSend { .. }
@@ -839,6 +862,27 @@ pub(crate) fn requires_owned_session(command: &InternalServiceRequest) -> bool {
             | InternalServiceRequest::LocalDBDeleteKV { .. }
             | InternalServiceRequest::LocalDBClearAllKV { .. }
             | InternalServiceRequest::LocalDBGetAllKV { .. }
+            // Reads too, and the destructive pair the gate's own comment names.
+            //
+            // The gate lets an unmapped cid proceed on the grounds that "the
+            // handler owns that error and already reports it". For a cid naming
+            // an account that is UNKNOWN, that holds: `propose_target` fails and
+            // the handler answers. For one that is KNOWN but merely has no live
+            // session -- after a Disconnect, or an agent restart while the
+            // browser keeps its cid -- `propose_target` SUCCEEDS, by its own doc
+            // checking only that the cid names a locally-known account. The read
+            // then returns that account's stored ILM payloads to any connection
+            // that can name the cid, and a cid is a u64 that travels in peer
+            // lists and `GetSessions` responses, not a secret.
+            //
+            // Deregister is the same shape with a worse ending: its handler
+            // sends `DeregisterFromHypernode{cid}` without consulting the map at
+            // all, so an unmapped cid deletes the account permanently. The
+            // comment on `handle` already lists it among the operations that
+            // "are gated now" -- it was gated only against a session held by
+            // somebody else, never against one held by nobody.
+            | InternalServiceRequest::LocalDBGetKV { .. }
+            | InternalServiceRequest::Deregister { .. }
     )
 }
 
@@ -864,7 +908,7 @@ fn is_ilm_key_for(key: &str, cid: u64) -> bool {
 mod ownership_gate_tests {
     use super::{
         gate_decision, is_exempt_from_ownership_gate, is_ilm_key_for, refusal_response,
-        requires_owned_session, GateDecision,
+        requires_owned_session, GateDecision, HandledRequestResult,
     };
     use citadel_internal_service_types::{InternalServiceRequest, InternalServiceResponse};
     use uuid::Uuid;
@@ -1150,20 +1194,47 @@ mod ownership_gate_tests {
         assert!(!messages[0].to_lowercase().contains("own"));
     }
 
-    /// Everything the gate does not refuse keeps being dropped.
+    /// A refused request is answered when it has somewhere to say so.
     ///
-    /// The gate only ever refuses these four; inventing a response shape for
-    /// anything else would be guesswork, and a wrong shape is worse than silence
-    /// because the caller matches on it.
+    /// This asserted that `LocalDBGetKV` gets NO response, quoting the rule that
+    /// "inventing a response shape would be guesswork". That rule is right, and
+    /// it did not apply: `LocalDBGetKVFailure` is a real variant, the handler
+    /// already builds one when `propose_target` fails, and the client matches it
+    /// by request id. Nothing was being invented.
+    ///
+    /// The false premise mattered. Being silent is exactly why the variant could
+    /// not be gated -- gating it would have refused reads into nothing and left
+    /// the browser waiting out its own timeout -- and not being gated is what let
+    /// any connection read a disconnected account's store.
+    ///
+    /// `GroupListGroupsFor` genuinely has no failure variant and stays silent.
     #[test]
-    fn requests_the_gate_does_not_refuse_get_no_invented_response() {
+    fn a_refused_read_is_answered_rather_than_dropped() {
         let read = InternalServiceRequest::LocalDBGetKV {
             request_id: Uuid::new_v4(),
             cid: 1,
             peer_cid: None,
             key: "k".into(),
         };
-        assert!(refusal_response(&read, Uuid::new_v4()).is_none());
+        let answer = refusal_response(&read, Uuid::new_v4());
+        assert!(
+            matches!(
+                answer,
+                Some(HandledRequestResult {
+                    response: InternalServiceResponse::LocalDBGetKVFailure(_),
+                    ..
+                })
+            ),
+            "a refused read must answer with its own failure variant"
+        );
+
+        // Still silent, and for the reason that survives scrutiny.
+        let groups = InternalServiceRequest::GroupListGroupsFor {
+            request_id: Uuid::new_v4(),
+            cid: 1,
+            peer_cid: Some(2),
+        };
+        assert!(refusal_response(&groups, Uuid::new_v4()).is_none());
         // Whatever `requires_owned_session` covers, `refusal_response` must
         // answer -- otherwise a variant added to the gate silently hangs again.
         for command in gated_requests(Uuid::new_v4(), 1) {
@@ -1236,21 +1307,71 @@ mod ownership_gate_tests {
         }
     }
 
-    /// A read of an unmapped session still proceeds.
+    /// A read of an unmapped session is REFUSED.
     ///
-    /// The gate exists to stop writes to a store the caller does not own; it
-    /// was never meant to stop the handler from reporting an unknown cid
-    /// honestly, and turning reads into refusals here would hide that.
+    /// This asserted the opposite, on the reasoning that the gate "was never
+    /// meant to stop the handler from reporting an unknown cid honestly". The
+    /// handler does report an UNKNOWN cid honestly -- `propose_target` fails and
+    /// it answers. But for a cid naming an account that is KNOWN and merely has
+    /// no live session, `propose_target` SUCCEEDS: by its own doc it checks only
+    /// that the cid names a locally-known account. The read then hands that
+    /// account's stored ILM payloads to any connection that can name the cid,
+    /// and a cid is a u64 that travels in peer lists and `GetSessions`
+    /// responses, not a secret.
+    ///
+    /// So the test was pinning the hole rather than the property. The honest
+    /// report the old reasoning wanted is still there -- it is now a refusal
+    /// with a `LocalDBGetKVFailure`, which the client already matches on.
     #[test]
-    fn an_unmapped_session_still_allows_a_read() {
+    fn an_unmapped_session_refuses_a_read() {
         let read = InternalServiceRequest::LocalDBGetKV {
             request_id: Uuid::new_v4(),
             cid: 1,
             peer_cid: None,
             key: "credentials".into(),
         };
-        assert_eq!(
+        assert!(matches!(
             gate_decision(&read, None, Uuid::new_v4()),
+            GateDecision::Refuse { .. }
+        ));
+    }
+
+    /// Deregistering an unmapped session is refused, and answered.
+    ///
+    /// `deregister::handle` never consults the connection map: it sends
+    /// `DeregisterFromHypernode{cid}` for whatever cid it is given. Ungated for
+    /// an unmapped session, that deletes an account permanently on the word of
+    /// any connection -- the most irreversible operation the agent has, on the
+    /// least evidence.
+    #[test]
+    fn an_unmapped_session_refuses_a_deregister() {
+        let dereg = InternalServiceRequest::Deregister {
+            request_id: Uuid::new_v4(),
+            cid: 1,
+        };
+        assert!(matches!(
+            gate_decision(&dereg, None, Uuid::new_v4()),
+            GateDecision::Refuse { .. }
+        ));
+        assert!(refusal_response(&dereg, Uuid::new_v4()).is_some());
+    }
+
+    /// An owned session still reads, which is the access ILM actually needs.
+    ///
+    /// The control for the two above: if the gate refused reads outright rather
+    /// than only unowned ones, every messenger read would fail and both tests
+    /// would still pass.
+    #[test]
+    fn an_owned_session_still_allows_a_read() {
+        let mine = Uuid::new_v4();
+        let read = InternalServiceRequest::LocalDBGetKV {
+            request_id: Uuid::new_v4(),
+            cid: 1,
+            peer_cid: None,
+            key: "inbound_messages-1".into(),
+        };
+        assert_eq!(
+            gate_decision(&read, Some(mine), mine),
             GateDecision::Proceed
         );
     }
