@@ -75,10 +75,33 @@ fn origin_check(
     }
 }
 
+/// The browser interface must never claim its caller can already read local
+/// files: that constant is the whole of the `SendFile` path confinement, and
+/// flipping it re-opens an arbitrary-file-read to page script in one character.
+///
+/// Asserted at COMPILE time, not in a test. The first version of this was a
+/// `#[test]` behind `#[cfg(feature = "websockets")]` -- and the connector has
+/// `default = []` while CI runs a bare `cargo nextest run`, so it was filtered
+/// out of every run that mattered. It passed by never executing, which is the
+/// failure mode this repository keeps finding. A `const` assertion fails the
+/// BUILD of the very module whose behaviour it constrains, so it cannot be
+/// skipped by a feature set or a test filter.
+const _: () = assert!(
+    !<WebSocketInterface as IOInterface>::CALLER_CAN_ALREADY_READ_LOCAL_FILES,
+    "page script cannot read the filesystem; crediting it with that access \
+     would let a SendFile name any path on the machine"
+);
+
 #[async_trait]
 impl IOInterface for WebSocketInterface {
     type Sink = WebSocketSink;
     type Stream = WebSocketStream_;
+
+    /// Script in a browser page cannot read the filesystem, so an accepted
+    /// absolute path is a real escalation rather than a convenience. It keeps
+    /// `PickFileRef` and `ByteContents`, which are both driven by a choice the
+    /// user actually made.
+    const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = false;
 
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
         loop {

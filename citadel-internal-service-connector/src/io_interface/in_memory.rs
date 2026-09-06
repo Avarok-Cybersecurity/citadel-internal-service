@@ -64,10 +64,24 @@ impl InMemoryInterface {
     }
 }
 
+/// Counterpart to the assertion in `websockets.rs`. In-process: the caller IS this process.
+///
+/// Compile-time, like that one: a `#[test]` here would sit behind a feature
+/// the default CI invocation does not enable, and would pass by never
+/// running.
+const _: () = assert!(
+    <InMemoryInterface as IOInterface>::CALLER_CAN_ALREADY_READ_LOCAL_FILES,
+    "a native caller must keep the ability to name a file by path"
+);
+
 #[async_trait]
 impl IOInterface for InMemoryInterface {
     type Sink = InMemorySink;
     type Stream = InMemoryStream;
+
+    /// In-process: the caller IS this process, so it can read anything the
+    /// agent can by definition.
+    const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = true;
 
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
         // This can only be called once

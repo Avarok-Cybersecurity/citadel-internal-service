@@ -164,6 +164,12 @@ impl IOInterface for WasmWebSocketIO {
     type Sink = WasmWebSocketSink;
     type Stream = WasmWebSocketStream;
 
+    /// This runs INSIDE a browser tab, which has no filesystem access at all.
+    /// The value is what it is for every browser-reachable interface; it does
+    /// not gate anything here today, because this crate is the client rather
+    /// than the agent, but answering it any other way would be false.
+    const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = false;
+
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
         if let (Some(sink_tx), Some(stream_rx)) = (self.sink_tx.take(), self.stream_rx.take()) {
             let sink = WasmWebSocketSink { tx: sink_tx };

@@ -682,7 +682,51 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     // OUTSIDE any lock so concurrent connection-map writers are not
     // stalled by the spawn_blocking write.
     let resolved_path: Result<PathBuf, NetworkError> = match source {
-        FileSource::Path(path) => Ok(path),
+        // Confined to paths THIS session picked. Accepting the path verbatim
+        // meant whatever absolute path arrived on the socket was opened and
+        // sent to the peer: the agent holds the ratchets, so the protocol
+        // would faithfully encrypt and deliver the caller's own files to a
+        // peer the caller controls. Script in the allowlisted page is the
+        // reachable caller, and `PickFile` hands the browser real absolute
+        // paths to ask for.
+        //
+        // This is exactly the legitimate flow and costs it nothing: the UI
+        // only ever sends back a `Path` it received from `PickFile` on this
+        // same session.
+        FileSource::Path(path) => {
+            // A caller that can already read the filesystem -- a native CLI or
+            // desktop client over TCP -- gains nothing from being refused, and
+            // refusing it would break that contract for no security. A browser
+            // caller cannot read files at all, so for it an accepted path is a
+            // real escalation. See
+            // IOInterface::CALLER_CAN_ALREADY_READ_LOCAL_FILES.
+            let picked = T::CALLER_CAN_ALREADY_READ_LOCAL_FILES || {
+                let lock = this.server_connection_map.read();
+                let ok = match lock.get(&cid) {
+                    Some(conn) => crate::kernel::picked_files::was_picked(
+                        &conn.picked_files,
+                        &path,
+                        std::time::Instant::now(),
+                    ),
+                    None => false,
+                };
+                drop(lock);
+                ok
+            };
+            if picked {
+                Ok(path)
+            } else {
+                // Does not echo the path back. The caller supplied it, so
+                // repeating it teaches them nothing they did not know, and a
+                // rejected path is exactly the kind of value that should not
+                // be written into a log a probe can read.
+                Err(NetworkError::msg(
+                    "SendFile source must be a file chosen through this session's \
+                     file picker. Use PickFile first and send the resulting \
+                     PickFileRef, or send the bytes as ByteContents.",
+                ))
+            }
+        }
         FileSource::PickFileRef {
             pick_file_request_id,
         } => {

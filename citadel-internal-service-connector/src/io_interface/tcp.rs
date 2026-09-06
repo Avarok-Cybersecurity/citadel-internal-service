@@ -46,6 +46,18 @@ impl InternalServiceConnector<TcpIOInterface> {
     }
 }
 
+/// Counterpart to the assertion in `websockets.rs`. A native process runs as the user and can already open any file the agent
+/// could, so refusing it a path protects nothing -- and the file-transfer
+/// integration tests send by path over exactly this interface.
+///
+/// Compile-time, like that one: a `#[test]` here would sit behind a feature
+/// the default CI invocation does not enable, and would pass by never
+/// running.
+const _: () = assert!(
+    <TcpIOInterface as IOInterface>::CALLER_CAN_ALREADY_READ_LOCAL_FILES,
+    "a native caller must keep the ability to name a file by path"
+);
+
 #[async_trait]
 impl IOInterface for TcpIOInterface {
     type Sink = SplitSink<
@@ -53,6 +65,11 @@ impl IOInterface for TcpIOInterface {
         InternalServicePayload,
     >;
     type Stream = SplitStream<Framed<TcpStream, SerializingCodec<InternalServicePayload>>>;
+
+    /// A native process on this machine runs as the user and can already open
+    /// any file the agent could, so refusing a path would protect nothing and
+    /// would break the CLI and desktop contract.
+    const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = true;
 
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
         self.listener

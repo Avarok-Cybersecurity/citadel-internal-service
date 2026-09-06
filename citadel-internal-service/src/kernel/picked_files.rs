@@ -87,6 +87,46 @@ pub fn store(
     }
 }
 
+/// Whether this session actually picked `path`, and recently enough to use.
+///
+/// `FileSource::Path` used to be accepted verbatim: whatever absolute path
+/// arrived on the socket was opened and sent to the peer, with no check that
+/// the user had ever chosen it. The agent holds the ratchets, so the protocol
+/// would then faithfully encrypt and deliver the caller's own files to a peer
+/// the caller controls.
+///
+/// The reachable caller is script running in the allowlisted page -- a hostile
+/// MDX document (the production CSP grants `unsafe-eval` so documents can
+/// execute), an XSS, or a compromised dependency. `PickFile` even returns the
+/// absolute path to the browser, so a page learns real paths to ask for.
+///
+/// The confinement is exactly the legitimate flow and costs it nothing: the UI
+/// only ever sends a `Path` it received from `PickFile` on this same session
+/// (`send-with-native-picker.ts` is its only producer). Anything else was never
+/// a path this user chose.
+///
+/// Note what this means in the SHIPPED configuration. `native-dialogs` is off
+/// by default and the Dockerfile does not enable it -- its own comment says
+/// "Only enable when building for native desktop (not in Docker/server)" -- so
+/// there is no picker, this set is permanently empty, and every `Path` is
+/// refused. That is correct rather than a regression: a build with no picker
+/// has no way to have legitimately produced a path, yet it was the one build
+/// where the unvalidated branch was the ONLY one that worked, because
+/// `PickFileRef` cannot resolve without a picker either.
+///
+/// Compared by exact `PathBuf` equality, deliberately. Canonicalising here
+/// would touch the filesystem on a path the caller chose, and the value being
+/// matched is one this process handed out, so it needs no normalising.
+pub fn was_picked(
+    picked_files: &HashMap<Uuid, PickedFileInfo>,
+    path: &std::path::Path,
+    now: Instant,
+) -> bool {
+    picked_files
+        .values()
+        .any(|info| info.file_path == path && now.duration_since(info.picked_at) < PICKED_FILE_TTL)
+}
+
 /// Resolve a pick, distinguishing "never seen" from "too old".
 pub fn lookup<'a>(
     picked_files: &'a HashMap<Uuid, PickedFileInfo>,
@@ -147,6 +187,42 @@ mod tests {
             lookup(&map, &Uuid::new_v4(), Instant::now()).unwrap_err(),
             PickLookupFailure::Unknown
         );
+    }
+
+    #[test]
+    fn a_path_this_session_picked_is_accepted() {
+        let mut map = HashMap::new();
+        let now = Instant::now();
+        store(&mut map, Uuid::new_v4(), info(now), now);
+        assert!(was_picked(&map, &PathBuf::from("/tmp/f"), now));
+    }
+
+    #[test]
+    fn a_path_nobody_picked_is_refused() {
+        // The whole point: an arbitrary absolute path arriving on the socket
+        // is not a file the user chose, however well-formed it looks.
+        let mut map = HashMap::new();
+        let now = Instant::now();
+        store(&mut map, Uuid::new_v4(), info(now), now);
+        assert!(!was_picked(&map, &PathBuf::from("/etc/passwd"), now));
+        assert!(!was_picked(&map, &PathBuf::from("/tmp/f2"), now));
+    }
+
+    #[test]
+    fn a_pick_past_its_ttl_no_longer_authorises_its_path() {
+        let mut map = HashMap::new();
+        let now = Instant::now();
+        map.insert(Uuid::new_v4(), info(now - PICKED_FILE_TTL));
+        assert!(!was_picked(&map, &PathBuf::from("/tmp/f"), now));
+    }
+
+    #[test]
+    fn an_empty_set_authorises_nothing() {
+        // The shipped build has no picker, so this is its steady state. A
+        // `.any()` over an empty map is false, but assert it rather than
+        // trust it: the failure mode would be silent and total.
+        let map = HashMap::new();
+        assert!(!was_picked(&map, &PathBuf::from("/tmp/f"), Instant::now()));
     }
 
     #[test]
