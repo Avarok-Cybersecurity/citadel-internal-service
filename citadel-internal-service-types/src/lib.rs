@@ -17,6 +17,20 @@ use uuid::Uuid;
 #[cfg(feature = "typescript")]
 use ts_rs::TS;
 
+/// The `LocalDBGetKVFailure` message that means "no such key", as opposed to a
+/// real backend error.
+///
+/// It is the pivot of a distinction the whole messaging queue rests on: a read
+/// that found nothing is an empty map to be initialised, while a read that
+/// FAILED must not be. Both sides live in different crates — the agent's
+/// `local_db/get_kv.rs` writes it, the connector's `messenger/backend.rs`
+/// compares against it — so it was a string literal typed out twice, matched
+/// with `==`. A reworded message would not break a build or a test; it would
+/// silently turn every genuine miss into a hard error, or a rename in the other
+/// direction turn every error into "empty", which is the exact failure mode
+/// that has already been fixed five times in the agent's request handlers.
+pub const KEY_NOT_FOUND: &str = "Key not found";
+
 pub fn bytes_debug_fmt<T: std::fmt::Debug + AsRef<[u8]>>(
     val: &T,
     f: &mut std::fmt::Formatter,

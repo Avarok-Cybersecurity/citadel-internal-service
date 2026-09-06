@@ -3,6 +3,7 @@ use crate::kernel::CitadelWorkspaceService;
 use citadel_internal_service_connector::io_interface::IOInterface;
 use citadel_internal_service_types::{
     InternalServiceRequest, InternalServiceResponse, LocalDBGetKVFailure, LocalDBGetKVSuccess,
+    KEY_NOT_FOUND,
 };
 use citadel_sdk::backend_kv_store::BackendHandler;
 use citadel_sdk::prelude::Ratchet;
@@ -64,7 +65,7 @@ pub async fn backend_handler_get<R: Ratchet>(
                 InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
                     cid,
                     peer_cid,
-                    message: "Key not found".to_string(),
+                    message: KEY_NOT_FOUND.to_string(),
                     request_id,
                 })
             }

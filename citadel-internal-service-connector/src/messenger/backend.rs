@@ -3,6 +3,7 @@ use crate::messenger::{sleep_internal, timeout_internal, BypasserTx, MessengerTx
 use async_trait::async_trait;
 use citadel_internal_service_types::{
     BatchedResponseData, InternalServicePayload, InternalServiceRequest, InternalServiceResponse,
+    KEY_NOT_FOUND,
 };
 use citadel_io::tokio::sync::Mutex;
 use dashmap::DashMap;
@@ -31,6 +32,61 @@ pub struct CitadelWorkspaceBackend {
 // Constants for storage prefixes
 pub const INBOUND_MESSAGE_PREFIX: &str = "inbound_messages";
 pub const OUTBOUND_MESSAGE_PREFIX: &str = "outbound_messages";
+
+/// Did that write actually happen?
+///
+/// Separated from the socket so the decision can be tested exhaustively against
+/// real response values instead of a mocked agent, and so the three write paths
+/// share ONE answer. They did not: `update_map` and `store_value` asked
+/// `wait_for_response(..).is_some()` — the presence of a reply — while
+/// `store_values_batched` matched the variant and carried a comment saying all
+/// three "must agree". A `LocalDBSetKVFailure` is a reply, and the agent sends
+/// one on a backend error, on a failed `propose_target`, and on the ownership-gate
+/// refusal. So a refused write returned `Ok(())`, the map read as stored, ILM read
+/// as queued, and the sender saw a message as sent that nothing would retransmit.
+pub(crate) fn write_outcome(
+    response: Option<InternalServiceResponse>,
+    what: &str,
+) -> Result<(), BackendError<WrappedMessage>> {
+    match response {
+        Some(InternalServiceResponse::LocalDBSetKVSuccess(_)) => Ok(()),
+        Some(other) => Err(BackendError::StorageError(format!(
+            "Writing {what} was refused or failed: {other:?}"
+        ))),
+        // A timeout is not a success either; the caller must be able to retry.
+        None => Err(BackendError::StorageError(format!(
+            "Timed out writing {what}; the change may not be stored"
+        ))),
+    }
+}
+
+/// Absent, present, or unreadable — three outcomes, not two.
+///
+/// `load_values_batched` folded every non-success into `None`, so a backend
+/// error read as "no such key". `MessageTracker::new` then starts with an empty
+/// delivery frontier: already-received messages are re-delivered, ACK state is
+/// reset and the next-id counter restarts, on an error that should have failed
+/// initialisation. `get_map` draws this distinction and explains it; this is the
+/// same mechanism in the batched path, which it was never carried to.
+pub(crate) fn read_outcome(
+    response: InternalServiceResponse,
+    key: &str,
+) -> Result<Option<Vec<u8>>, BackendError<WrappedMessage>> {
+    match response {
+        InternalServiceResponse::LocalDBGetKVSuccess(success) => Ok(Some(success.value)),
+        InternalServiceResponse::LocalDBGetKVFailure(failure)
+            if failure.message == KEY_NOT_FOUND =>
+        {
+            Ok(None)
+        }
+        InternalServiceResponse::LocalDBGetKVFailure(failure) => Err(BackendError::StorageError(
+            format!("Failed to read key={key}: {}", failure.message),
+        )),
+        other => Err(BackendError::StorageError(format!(
+            "Unexpected response reading key={key}: {other:?}"
+        ))),
+    }
+}
 
 impl CitadelWorkspaceBackend {
     async fn wait_for_response(&self, request_id: Uuid) -> Option<InternalServiceResponse> {
@@ -106,7 +162,7 @@ impl CitadelWorkspaceBackend {
                 }
                 InternalServiceResponse::LocalDBGetKVFailure(failure_response) => {
                     let failure_message = failure_response.message;
-                    if failure_message == "Key not found" {
+                    if failure_message == KEY_NOT_FOUND {
                         citadel_logging::debug!(target: "citadel", "[GET_MAP] {} map not found, initializing new one", prefix);
                         self.initialize_map(prefix).await
                     } else {
@@ -156,25 +212,14 @@ impl CitadelWorkspaceBackend {
 
         self.send_to_network(request).await?;
 
-        if let Some(response) = self.wait_for_response(request_id).await {
-            if let InternalServiceResponse::LocalDBSetKVSuccess(_) = response {
-                citadel_logging::debug!(target: "citadel", "[INITIALIZE_MAP] Initialized {} map successfully", prefix);
-                Ok(new_state)
-            } else {
-                Err(BackendError::StorageError(format!(
-                    "Failed to initialize {prefix} map"
-                )))
-            }
-        } else {
-            // Not "assume it worked". Handing back an empty State on an
-            // unacknowledged write says the map is initialised when the key may
-            // not exist, and the caller then treats an empty queue as fact.
-            // `update_map` two functions below already refuses to do this; the
-            // two had drifted apart.
-            Err(BackendError::StorageError(format!(
-                "Timed out initializing the {prefix} map; it may not exist"
-            )))
-        }
+        // Was correct on its own terms and worded differently from the other two;
+        // now literally the same decision, so they cannot drift apart again.
+        write_outcome(
+            self.wait_for_response(request_id).await,
+            &format!("the initial {prefix} map"),
+        )?;
+        citadel_logging::debug!(target: "citadel", "[INITIALIZE_MAP] Initialized {} map successfully", prefix);
+        Ok(new_state)
     }
 
     /// Generic function to update a map (inbound or outbound)
@@ -200,18 +245,13 @@ impl CitadelWorkspaceBackend {
 
         self.send_to_network(request).await?;
 
-        if self.wait_for_response(request_id).await.is_some() {
+        write_outcome(
+            self.wait_for_response(request_id).await,
+            &format!("the {prefix} map"),
+        )
+        .inspect(|_| {
             citadel_logging::debug!(target: "citadel", "[UPDATE_MAP] Updated {} map successfully", prefix);
-            Ok(())
-        } else {
-            // Reporting success for a write we never saw acknowledged tells the
-            // sender their message is durably queued when it may not be. Fail,
-            // so the caller marks it failed and the user can retry — a visible
-            // failure beats a checkmark on a message that is gone.
-            Err(BackendError::StorageError(format!(
-                "Timed out writing the {prefix} map; the change may not be stored"
-            )))
-        }
+        })
     }
 
     // Convenience methods that use the generic functions
@@ -303,14 +343,11 @@ impl CitadelWorkspaceBackend {
 
         let responses = self.send_batched(requests).await?;
 
-        // Extract values from responses
-        let results: Vec<Option<Vec<u8>>> = responses
-            .into_iter()
-            .map(|resp| match resp {
-                InternalServiceResponse::LocalDBGetKVSuccess(success) => Some(success.value),
-                _ => None,
-            })
-            .collect();
+        let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(responses.len());
+        for (index, resp) in responses.into_iter().enumerate() {
+            let key = keys.get(index).copied().unwrap_or("<unknown>");
+            results.push(read_outcome(resp, key)?);
+        }
 
         Ok(results)
     }
@@ -540,18 +577,13 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
 
         self.send_to_network(request).await?;
 
-        if self.wait_for_response(request_id).await.is_some() {
+        write_outcome(
+            self.wait_for_response(request_id).await,
+            &format!("the value for key={key}"),
+        )
+        .inspect(|_| {
             citadel_logging::debug!(target: "citadel", "[STORE_VALUE] Stored value for key={}", key);
-            Ok(())
-        } else {
-            // Not "assume it worked". This is how the delivery frontier and
-            // the next-id counter are persisted, and a silent loss of either is
-            // what turns a reconnect into re-minted ids the receiver swallows
-            // as duplicates. A caller told Ok has no reason to retry.
-            Err(BackendError::StorageError(format!(
-                "Timed out storing the value for key={key}; it may not be stored"
-            )))
-        }
+        })
     }
 
     async fn load_value(&self, key: &str) -> Result<Option<Vec<u8>>, BackendError<WrappedMessage>> {
@@ -567,16 +599,24 @@ impl Backend<WrappedMessage> for CitadelWorkspaceBackend {
 
         self.send_to_network(request).await?;
 
-        if let Some(response) = self.wait_for_response(request_id).await {
-            citadel_logging::debug!(target: "citadel", "[LOAD_VALUE] Loaded value for key={}", key);
-            match response {
-                InternalServiceResponse::LocalDBGetKVSuccess(success) => Ok(Some(success.value)),
-                _ => Ok(None),
+        // The singular twin of `load_values_batched`, and it had the same defect
+        // twice: `_ => Ok(None)` turned a backend error into an absent key, and a
+        // TIMEOUT returned `Ok(None)` under a comment that said so out loud --
+        // "assume the key doesn't exist". Neither was flagged; both were found by
+        // grepping the mechanism after fixing the batched path.
+        //
+        // This is how the delivery frontier and the next-id counter are read. A
+        // read that failed, reported as "nothing stored", restarts the counter and
+        // re-delivers messages the peer has already seen.
+        match self.wait_for_response(request_id).await {
+            Some(response) => {
+                let value = read_outcome(response, key)?;
+                citadel_logging::debug!(target: "citadel", "[LOAD_VALUE] Loaded value for key={}", key);
+                Ok(value)
             }
-        } else {
-            // If we get no response, assume the key doesn't exist
-            citadel_logging::warn!(target: "citadel", "[LOAD_VALUE] No response received when loading value for key={}, assuming key doesn't exist", key);
-            Ok(None)
+            None => Err(BackendError::StorageError(format!(
+                "Timed out reading key={key}; whether it exists is unknown"
+            ))),
         }
     }
 
@@ -686,5 +726,125 @@ impl CitadelBackendExt for CitadelWorkspaceBackend {
         }
 
         Ok(Some(response))
+    }
+}
+
+#[cfg(test)]
+mod response_classification {
+    //! What counts as a stored write, and what counts as an absent key.
+    //!
+    //! These two questions were answered four different ways across five call
+    //! sites in this file, and two of the answers were wrong in the direction
+    //! that loses data silently. Testing the decisions rather than the sockets
+    //! is why there is nothing mocked here: the functions are pure, so the whole
+    //! space of responses can be walked with real values.
+    use super::*;
+    use citadel_internal_service_types::{
+        LocalDBGetKVFailure, LocalDBGetKVSuccess, LocalDBSetKVFailure, LocalDBSetKVSuccess,
+    };
+
+    fn set_ok() -> InternalServiceResponse {
+        InternalServiceResponse::LocalDBSetKVSuccess(LocalDBSetKVSuccess {
+            cid: 1,
+            peer_cid: None,
+            key: "k".into(),
+            request_id: None,
+        })
+    }
+
+    fn set_failed(message: &str) -> InternalServiceResponse {
+        InternalServiceResponse::LocalDBSetKVFailure(LocalDBSetKVFailure {
+            cid: 1,
+            peer_cid: None,
+            message: message.into(),
+            request_id: None,
+        })
+    }
+
+    fn get_ok(value: &[u8]) -> InternalServiceResponse {
+        InternalServiceResponse::LocalDBGetKVSuccess(LocalDBGetKVSuccess {
+            cid: 1,
+            peer_cid: None,
+            key: "k".into(),
+            value: value.to_vec(),
+            request_id: None,
+        })
+    }
+
+    fn get_failed(message: &str) -> InternalServiceResponse {
+        InternalServiceResponse::LocalDBGetKVFailure(LocalDBGetKVFailure {
+            cid: 1,
+            peer_cid: None,
+            message: message.into(),
+            request_id: None,
+        })
+    }
+
+    #[test]
+    fn an_acknowledged_write_is_a_write() {
+        assert!(write_outcome(Some(set_ok()), "the outbound map").is_ok());
+    }
+
+    #[test]
+    fn a_refused_write_is_not_a_write() {
+        // The whole finding. `.is_some()` said yes to every one of these, so the
+        // sender saw a message as sent that nothing would ever retransmit.
+        for message in [
+            "Backend error",
+            "propose_target failed",
+            "This request is not permitted for this session",
+        ] {
+            let outcome = write_outcome(Some(set_failed(message)), "the outbound map");
+            assert!(
+                outcome.is_err(),
+                "a LocalDBSetKVFailure({message:?}) must not report a stored write"
+            );
+        }
+    }
+
+    #[test]
+    fn a_write_answered_by_the_wrong_variant_is_not_a_write() {
+        // A response addressed to this request that is not a set-KV answer at all
+        // is a protocol confusion, not a success.
+        assert!(write_outcome(Some(get_ok(b"x")), "the outbound map").is_err());
+    }
+
+    #[test]
+    fn an_unanswered_write_is_not_a_write() {
+        assert!(write_outcome(None, "the outbound map").is_err());
+    }
+
+    #[test]
+    fn a_stored_value_reads_back() {
+        assert_eq!(
+            read_outcome(get_ok(b"hello"), "k").unwrap(),
+            Some(b"hello".to_vec())
+        );
+    }
+
+    #[test]
+    fn a_missing_key_is_absent_not_an_error() {
+        // The one case that legitimately maps to None -- and it is keyed to the
+        // constant the agent writes, not to a string retyped here.
+        assert_eq!(read_outcome(get_failed(KEY_NOT_FOUND), "k").unwrap(), None);
+    }
+
+    #[test]
+    fn a_failed_read_is_not_an_absent_key() {
+        // `_ => None` made these indistinguishable from the case above, which is
+        // how a backend error became an empty delivery frontier.
+        let outcome = read_outcome(get_failed("Backend error: disk failure"), "k");
+        assert!(
+            outcome.is_err(),
+            "a failed read must not read as an absent key"
+        );
+    }
+
+    #[test]
+    fn the_agent_and_this_module_agree_on_what_missing_means() {
+        // The two sides of KEY_NOT_FOUND live in different crates and are compared
+        // with `==`. If the agent reworded its message, every genuine miss would
+        // become a hard error; this asserts the exact value both sides share.
+        assert_eq!(KEY_NOT_FOUND, "Key not found");
     }
 }
