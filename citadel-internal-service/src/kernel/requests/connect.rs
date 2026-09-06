@@ -237,13 +237,43 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 session_security_settings,
             );
 
-            let username = remote
-                .account_manager()
-                .get_username_by_cid(cid)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "#INVALID_USERNAME".to_string());
+            // Refuse, for the same reason the server-address read below refuses.
+            //
+            // This was `.ok().flatten().unwrap_or_else(|| "#INVALID_USERNAME")`,
+            // and the session is RECORDED under whatever this produces. GUARD 2
+            // above compares the next Connect's username against
+            // `conn.username`, so a session stored as `#INVALID_USERNAME` matches
+            // nothing: the guard sees no existing session, and a second SDK
+            // connect runs against a live one -- which is the ratchet reset that
+            // guard exists to prevent.
+            //
+            // The fix landed on the `server_address` read fifteen lines down and
+            // not on this one, which is the same shape of miss: an unreadable
+            // value replaced by a placeholder that every later comparison fails
+            // against.
+            let username = match remote.account_manager().get_username_by_cid(cid).await {
+                Ok(Some(username)) => username,
+                Ok(None) | Err(_) => {
+                    citadel_sdk::logging::warn!(
+                        target: "citadel",
+                        "[Connect] Could not read the username for {}; reporting the connect as \
+                         failed rather than recording the session under a placeholder no later \
+                         request will match",
+                        cid
+                    );
+                    cleanup_username(this, &username_for_cleanup);
+                    let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                        cid,
+                        message: format!(
+                            "Connected, but could not determine the username for session {}. \
+                             Nothing is recorded under a name that would not match; try again.",
+                            cid
+                        ),
+                        request_id: Some(request_id),
+                    });
+                    return Some(HandledRequestResult { response, uuid });
+                }
+            };
 
             // Get server address from the CNAC's connection info.
             //
@@ -272,7 +302,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                          connect as failed rather than under an address nothing matches",
                         cid
                     );
-                    cleanup_username(this, &username);
+                    // `username_for_cleanup`, not the shadowed `username`.
+                    //
+                    // GUARD 1 inserted the REQUEST's username into
+                    // `connecting_usernames`; the binding in scope here is the
+                    // SDK-derived one that shadows it. Removing the wrong key
+                    // leaves the request's username in the set, and GUARD 1 then
+                    // refuses that user every subsequent attempt until the agent
+                    // restarts. The two other exits below already use it.
+                    cleanup_username(this, &username_for_cleanup);
                     let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
                         cid,
                         message: format!(
