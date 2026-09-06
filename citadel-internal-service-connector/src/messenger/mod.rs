@@ -229,26 +229,43 @@ impl intersession_layer_messaging::local_delivery::LocalDelivery<WrappedMessage>
         //
         // Deliberately target: "ism". The messenger's existing `target: "citadel"`
         // lines do not appear in these runs at all, whereas every ILM line does.
-        if let InternalServiceResponse::MessageNotification(n) = &response {
-            let mut fp: u64 = 0xcbf2_9ce4_8422_2325;
-            for b in &n.message {
-                fp ^= *b as u64;
-                fp = fp.wrapping_mul(0x100_0000_01b3);
+        // `log_enabled!` FIRST, before the loop.
+        //
+        // The fingerprint is FNV-1a over the WHOLE payload -- three operations
+        // per byte -- and it was computed unconditionally, then handed to a
+        // macro that discards it whenever the `ism` target is filtered out,
+        // which is every deployment that is not this test run. A 1 MiB document
+        // update paid 1,048,576 iterations per delivery, on the delivery path,
+        // for no output.
+        //
+        // The UI hit exactly this and fixed it: `debugLog` is a noop in
+        // production but its ARGUMENTS are still evaluated, so `fnv1a64` ran
+        // over every inbound message. That fix never crossed into Rust, where
+        // `log::info!` has the same property. A correct fix applied in one of
+        // the places its mechanism appears is this repository's most common
+        // defect, and this was one of them.
+        if ::log::log_enabled!(target: "ism", ::log::Level::Info) {
+            if let InternalServiceResponse::MessageNotification(n) = &response {
+                let mut fp: u64 = 0xcbf2_9ce4_8422_2325;
+                for b in &n.message {
+                    fp ^= *b as u64;
+                    fp = fp.wrapping_mul(0x100_0000_01b3);
+                }
+                // Field ORDER matters here, not just content. CI truncates console
+                // lines around 348 chars, and two 20-digit CIDs ahead of the
+                // fingerprint meant every one of these lines was cut off exactly at
+                // `len=` — 26 of them logged, not one readable. The join key goes
+                // first, and the CIDs are trimmed to their last 6 digits, which is
+                // plenty to tell two peers apart in one run.
+                ::log::info!(
+                    target: "ism",
+                    "[ILM-DELIVER] fp={:016x} msg_id={msg_id} len={} cid=..{} peer=..{}",
+                    fp,
+                    n.message.len(),
+                    n.cid % 1_000_000,
+                    n.peer_cid % 1_000_000
+                );
             }
-            // Field ORDER matters here, not just content. CI truncates console
-            // lines around 348 chars, and two 20-digit CIDs ahead of the
-            // fingerprint meant every one of these lines was cut off exactly at
-            // `len=` — 26 of them logged, not one readable. The join key goes
-            // first, and the CIDs are trimmed to their last 6 digits, which is
-            // plenty to tell two peers apart in one run.
-            ::log::info!(
-                target: "ism",
-                "[ILM-DELIVER] fp={:016x} msg_id={msg_id} len={} cid=..{} peer=..{}",
-                fp,
-                n.message.len(),
-                n.cid % 1_000_000,
-                n.peer_cid % 1_000_000
-            );
         }
 
         self.final_tx
@@ -324,8 +341,14 @@ where
         self.txs_to_inbound
             .insert(stream_key, background_to_ism_inbound.clone());
 
-        let all_keys: Vec<StreamKey> = self.txs_to_inbound.iter().map(|r| *r.key()).collect();
-        log::info!(target: "ism", "[MULTIPLEX] Registered ILM for CID {}. All registered stream_keys: {:?}", cid, all_keys);
+        // Same rule as the two on the message path. This one runs per ILM
+        // registration rather than per message, so the cost is small -- but it
+        // is the same shape, and leaving it is how the next reader concludes the
+        // shape is acceptable.
+        if log::log_enabled!(target: "ism", log::Level::Info) {
+            let all_keys: Vec<StreamKey> = self.txs_to_inbound.iter().map(|r| *r.key()).collect();
+            log::info!(target: "ism", "[MULTIPLEX] Registered ILM for CID {}. All registered stream_keys: {:?}", cid, all_keys);
+        }
 
         // Process any pending messages that arrived before the ILM was ready.
         // This fixes the race condition where messages/ACKs arrive before multiplex() is called.
@@ -477,12 +500,18 @@ where
                                     stream_id: ISM_STREAM_ID,
                                 };
 
-                                let available_keys: Vec<StreamKey> =
-                                    this.txs_to_inbound.iter().map(|r| *r.key()).collect();
-                                log::info!(target: "ism", "[MSG-ROUTE] Routing message: source={} dest={} msg_id={} | Looking for stream_key={:?} | Available: {:?}",
-                                    ism_message.source_id(), ism_message.destination_id(),
-                                    match &ism_message { InternalMessage::Message(m) => m.message_id, _ => 0 },
-                                    stream_key, available_keys);
+                                // Same rule as the delivery fingerprint above: the
+                                // collect walks the WHOLE routing table on every
+                                // routed message, and exists only to be formatted
+                                // into a line the default filter drops.
+                                if log::log_enabled!(target: "ism", log::Level::Info) {
+                                    let available_keys: Vec<StreamKey> =
+                                        this.txs_to_inbound.iter().map(|r| *r.key()).collect();
+                                    log::info!(target: "ism", "[MSG-ROUTE] Routing message: source={} dest={} msg_id={} | Looking for stream_key={:?} | Available: {:?}",
+                                        ism_message.source_id(), ism_message.destination_id(),
+                                        match &ism_message { InternalMessage::Message(m) => m.message_id, _ => 0 },
+                                        stream_key, available_keys);
+                                }
 
                                 if let Some(tx) = this.txs_to_inbound.get(&stream_key) {
                                     if let Err(err) = tx.send(ism_message) {
@@ -493,6 +522,14 @@ where
                                 } else {
                                     // Queue message for later delivery when multiplex() is called.
                                     // This fixes the race condition where messages arrive before ILM is ready.
+                                    // Collected HERE rather than once above: this
+                                    // branch runs only when no ILM is registered
+                                    // for the CID, which is rare, whereas the
+                                    // routing line above runs for every message.
+                                    // One `let` shared by both made the rare
+                                    // branch's cost the common branch's cost.
+                                    let available_keys: Vec<StreamKey> =
+                                        this.txs_to_inbound.iter().map(|r| *r.key()).collect();
                                     log::warn!(target: "ism", "[MSG-ROUTE] QUEUED - No ILM registered for CID {}. Queuing for later delivery. Available: {:?}",
                                         stream_key.cid, available_keys);
                                     this.pending_inbound_messages
