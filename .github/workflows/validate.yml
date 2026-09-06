@@ -30,9 +30,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "ci-${{ matrix.os }}"
-      - run: cargo nextest run --features=vendored
+      # `websockets` is not a default feature, and the origin-policy and
+      # handshake tests are behind `#[cfg(feature = "websockets")]`. Without it
+      # they are not skipped -- they are not COMPILED, so the run is green with
+      # 11 tests instead of 27, and the 16 missing ones are the entire test
+      # suite for the agent's loopback boundary: which browser origins may open
+      # a control connection to it.
+      #
+      # Production ships the feature (citadel-workspace-internal-service depends
+      # on this crate with features = ["websockets"]), so CI was testing a
+      # configuration nobody runs and skipping the security-relevant half.
+      #
+      # This is a REGRESSION. docs/ROBUSTNESS.md round 564 records exactly this,
+      # and the fix -- "6 passed" becoming "33 passed". The flag was lost again.
+      # check-security-tests-are-compiled.mjs now fails if it goes missing.
+      - run: cargo nextest run --features=vendored,websockets
         if: startsWith(matrix.os, 'windows')
-      - run: cargo nextest run
+      - run: cargo nextest run --features=websockets
         if: ${{ !startsWith(matrix.os, 'windows') }}
 
   clippy:
