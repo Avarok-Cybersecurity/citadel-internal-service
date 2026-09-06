@@ -31,6 +31,27 @@ use ts_rs::TS;
 /// that has already been fixed five times in the agent's request handlers.
 pub const KEY_NOT_FOUND: &str = "Key not found";
 
+/// Length only, for material that is the user's own content.
+///
+/// `bytes_debug_fmt` below shows the first and last five bytes, which is the right
+/// trade for a key, a ratchet sample or a file chunk: it identifies the value
+/// without disclosing anything a reader could use.
+///
+/// It is the wrong trade for a decrypted message BODY. The first five bytes of a
+/// chat message are its opening word, and across a log they are a great many
+/// opening words. The agent exists to keep this material off disk; a sample of it
+/// in a log line is still the material.
+///
+/// The length is kept deliberately. It is what distinguishes an empty body from a
+/// truncated one from a whole one, which is the question a delivery bug actually
+/// asks, and it discloses nothing beyond what the ciphertext length already does.
+pub fn plaintext_debug_fmt<T: AsRef<[u8]>>(
+    val: &T,
+    f: &mut std::fmt::Formatter,
+) -> std::fmt::Result {
+    write!(f, "{{Plaintext(len: {}, redacted)}}", val.as_ref().len())
+}
+
 pub fn bytes_debug_fmt<T: std::fmt::Debug + AsRef<[u8]>>(
     val: &T,
     f: &mut std::fmt::Formatter,
@@ -204,7 +225,20 @@ pub struct MessageSendFailure {
 #[cfg_attr(feature = "typescript", derive(TS))]
 #[cfg_attr(feature = "typescript", ts(export))]
 pub struct MessageNotification {
+    // The DECRYPTED body of a peer-to-peer message.
+    //
+    // This was the only `Vec<u8>` in this file with no debug formatter, and
+    // `kernel/ext.rs` logs every response with `{:?}`. At `RUST_LOG=debug` --
+    // which is the first thing an operator raises when diagnosing delivery --
+    // the full plaintext of every message the agent handled went to the log,
+    // and from there to whatever collects it and to whatever gets pasted into
+    // an issue. The agent exists to keep this material off disk and off the
+    // wire; putting it in a log line one level away defeats that.
+    //
+    // `bytes_debug_fmt` prints the length and the first and last five bytes,
+    // which is what every other byte field in this file already does.
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
+    #[debug(with = plaintext_debug_fmt)]
     pub message: Vec<u8>,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub cid: u64,
@@ -739,8 +773,14 @@ pub struct GroupMessageNotification {
     pub cid: u64,
     #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
     pub peer_cid: u64,
+    // Length only, for the same reason as MessageNotification above: this is a
+    // decrypted body, and a group one reaches more people than a direct one.
+    //
+    // It carried `bytes_debug_fmt`, which samples the first and last five bytes.
+    // That is the right trade for a key or a chunk and the wrong one for a
+    // message: five bytes of a chat line is its opening word.
     #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-    #[debug(with = bytes_debug_fmt)]
+    #[debug(with = plaintext_debug_fmt)]
     pub message: Vec<u8>,
     #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
     pub group_key: MessageGroupKey,
