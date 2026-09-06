@@ -33,7 +33,7 @@ impl InternalServiceConnector<TcpIOInterface> {
                 InternalServiceResponse::ServiceConnectionAccepted { .. }
             )
         ) {
-            let stream = WrappedStream { inner: stream };
+            let stream = WrappedStream::new(stream);
             let sink = WrappedSink { inner: sink };
             Ok(Self { sink, stream })
         } else {

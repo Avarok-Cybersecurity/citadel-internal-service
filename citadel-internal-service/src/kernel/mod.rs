@@ -162,9 +162,7 @@ impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {
             sink: WrappedSink {
                 inner: InMemorySink(tx_to_svc),
             },
-            stream: WrappedStream {
-                inner: InMemoryStream(rx_from_consumer),
-            },
+            stream: WrappedStream::new(InMemoryStream(rx_from_consumer)),
         };
         let kernel = InMemoryInterface {
             sink: Some(tx_to_consumer),

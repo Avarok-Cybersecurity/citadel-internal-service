@@ -22,13 +22,27 @@ impl<T: IOInterface> InternalServiceConnector<T> {
         let (sink, stream) = io.next_connection().await?;
         Some(Self {
             sink: WrappedSink { inner: sink },
-            stream: WrappedStream { inner: stream },
+            stream: WrappedStream::new(stream),
         })
     }
 }
 
 pub struct WrappedStream<T: IOInterface> {
     pub inner: T::Stream,
+    /// Consecutive items that were not a response, for the backstop in `poll_next`.
+    undecodable_in_a_row: usize,
+}
+
+impl<T: IOInterface> WrappedStream<T> {
+    /// The only way to build one, so the counter cannot be forgotten at a new
+    /// site. There are three construction sites across two crates, and a struct
+    /// literal at a fourth would have to re-decide what the field starts at.
+    pub fn new(inner: T::Stream) -> Self {
+        Self {
+            inner,
+            undecodable_in_a_row: 0,
+        }
+    }
 }
 
 pub struct WrappedSink<T: IOInterface> {
@@ -38,12 +52,54 @@ pub struct WrappedSink<T: IOInterface> {
 impl<T: IOInterface> Stream for WrappedStream<T> {
     type Item = InternalServiceResponse;
 
+    /// One unreadable frame is not the end of the stream.
+    ///
+    /// This was `_ => Poll::Ready(None)`, which collapsed three different things
+    /// into "the peer hung up": a genuine end of stream, a single frame that
+    /// failed to decode, and a `Request` arriving where a `Response` belongs.
+    ///
+    /// The middle one is reachable without anything being broken. There is no
+    /// `#[serde(other)]` anywhere in the wire types, so an agent one release ahead
+    /// of the client emits a variant the client cannot parse -- and that ended the
+    /// messenger's inbound task, which the TypeScript client reads as "Stream
+    /// closed", restarting the socket and clearing every messenger handle. One
+    /// unknown frame per restart, dead after three.
+    ///
+    /// The WASM read loop already skips such items and keeps reading; this is the
+    /// same decision one layer down, where it had not been made.
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let item = futures::ready!(self.inner.poll_next_unpin(cx));
-        match item {
-            Some(Ok(InternalServicePayload::Response(response))) => Poll::Ready(Some(response)),
+        /// Enough that a burst of version skew is survivable, few enough that a
+        /// stream erroring without consuming cannot spin forever. A decoder that
+        /// cannot read ANYTHING is a different fault from one bad frame, and this
+        /// is where the two stop being treated the same.
+        const GIVE_UP_AFTER: usize = 64;
 
-            _ => Poll::Ready(None),
+        loop {
+            let item = futures::ready!(self.inner.poll_next_unpin(cx));
+            match item {
+                Some(Ok(InternalServicePayload::Response(response))) => {
+                    self.undecodable_in_a_row = 0;
+                    return Poll::Ready(Some(response));
+                }
+                // The peer really did hang up.
+                None => return Poll::Ready(None),
+                other => {
+                    self.undecodable_in_a_row += 1;
+                    let seen = self.undecodable_in_a_row;
+                    match other {
+                        Some(Err(err)) => {
+                            citadel_logging::warn!(target: "citadel", "[CONNECTOR] Skipping an undecodable frame ({seen} in a row): {err:?}");
+                        }
+                        _ => {
+                            citadel_logging::warn!(target: "citadel", "[CONNECTOR] Skipping a payload that is not a response ({seen} in a row)");
+                        }
+                    }
+                    if seen >= GIVE_UP_AFTER {
+                        citadel_logging::error!(target: "citadel", "[CONNECTOR] {seen} consecutive unreadable frames; ending the stream. This is a decoder or version mismatch, not one bad message.");
+                        return Poll::Ready(None);
+                    }
+                }
+            }
         }
     }
 }
