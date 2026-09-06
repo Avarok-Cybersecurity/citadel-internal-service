@@ -130,6 +130,18 @@ echo "📦 Creating index.ts file for convenient imports..."
   for ts_file in $(ls *.ts | grep -v '^index\.ts$' | LC_ALL=C sort); do
     echo "export * from './${ts_file%.ts}.js';"
   done
+  echo ""
+  # NOT derivable from this directory, and dropping it broke the build.
+  #
+  # These come from an external package, not from ts-rs, and
+  # `InternalServiceRequest` references them in its field types -- so a consumer
+  # importing `SecurityLevel` from this package gets TS2614 without them. The
+  # first version of this derivation compared the directory against the index in
+  # both directions, was satisfied, and silently lost this line, because the old
+  # heredoc contained something the directory does not.
+  echo "// Re-export protocol types used in InternalServiceRequest fields."
+  echo "// From an external package, so not derivable from this directory."
+  echo "export type { ConnectMode, UdpMode, SessionSecuritySettings, SecurityLevel, TransferType, ObjectId, PreSharedKey, MessageGroupKey, UserIdentifier } from '@avarok/citadel-protocol-types';"
 } > index.ts
 
 generated_count=$(ls *.ts | grep -v '^index\.ts$' | wc -l | tr -d ' ')

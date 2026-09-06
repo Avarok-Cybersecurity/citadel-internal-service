@@ -106,3 +106,7 @@ export * from './SendFileRequestSuccess.js';
 export * from './ServiceConnectionAccepted.js';
 export * from './SessionAlreadyActive.js';
 export * from './SessionInformation.js';
+
+// Re-export protocol types used in InternalServiceRequest fields.
+// From an external package, so not derivable from this directory.
+export type { ConnectMode, UdpMode, SessionSecuritySettings, SecurityLevel, TransferType, ObjectId, PreSharedKey, MessageGroupKey, UserIdentifier } from '@avarok/citadel-protocol-types';
