@@ -343,10 +343,33 @@ impl CitadelWorkspaceBackend {
 
         let responses = self.send_batched(requests).await?;
 
+        // Positional mapping needs the positions to line up.
+        //
+        // `store_values_batched` below already refuses a short reply; this twin
+        // did not, and instead papered over one with `keys.get(index)` falling
+        // back to `"<unknown>"`. The agent builds a batch response with
+        // `filter_map`, dropping any sub-command whose handler answered nothing,
+        // so a short array is reachable -- and every value after the gap is then
+        // attributed to the WRONG KEY.
+        //
+        // That is not a visible error. `MessageTracker::new` loads six keys, and
+        // five of them are `HashMap<u64, u64>`: `last_acked` deserialises
+        // perfectly from `last_sent`'s bytes. The result is a delivery frontier
+        // built from the wrong counters -- re-minted ids, re-delivery, and
+        // duplicates swallowed as already-seen -- with nothing anywhere reporting
+        // a fault.
+        if responses.len() != keys.len() {
+            return Err(BackendError::StorageError(format!(
+                "Batched read expected {} results, got {}; the remaining values would be \
+                 attributed to the wrong keys",
+                keys.len(),
+                responses.len()
+            )));
+        }
+
         let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(responses.len());
         for (index, resp) in responses.into_iter().enumerate() {
-            let key = keys.get(index).copied().unwrap_or("<unknown>");
-            results.push(read_outcome(resp, key)?);
+            results.push(read_outcome(resp, keys[index])?);
         }
 
         Ok(results)
