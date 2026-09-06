@@ -35,14 +35,39 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
 
     // Check if peer is already registered before attempting registration
     // This prevents "Ratchet does not exist" errors from stale registration requests
-    let already_registered = remote
-        .account_manager()
-        .get_hyperlan_peer_list(cid)
-        .await
-        .ok()
-        .flatten()
-        .map(|peers| peers.contains(&peer_cid))
-        .unwrap_or(false);
+    // A FAILED query is not "not registered". `.ok().flatten()...unwrap_or(false)`
+    // turned an unreadable peer list into "go ahead and register", which walks
+    // straight into the SDK error this check exists to prevent -- its own
+    // comment names it. Worse, the resulting PeerRegisterFailure carries the
+    // SDK's wording, and the UI only treats a message containing "already
+    // registered" as success, so a transient read error surfaces to the user as
+    // a failed registration for a peer they are already registered to.
+    //
+    // Fourth site of this mechanism, after the three `sessions()` queries.
+    let already_registered = match remote.account_manager().get_hyperlan_peer_list(cid).await {
+        Ok(Some(peers)) => peers.contains(&peer_cid),
+        Ok(None) => false,
+        Err(err) => {
+            citadel_sdk::logging::warn!(
+                target: "citadel",
+                "[PeerRegister] Could not read the peer list for {}: {:?}; refusing rather than \
+                 assuming the peer is not registered",
+                cid, err
+            );
+            return Some(HandledRequestResult {
+                response: InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
+                    cid,
+                    message: format!(
+                        "Could not determine whether {} is already registered: {:?}. \
+                         Nothing was changed; try again.",
+                        peer_cid, err
+                    ),
+                    request_id: Some(request_id),
+                }),
+                uuid,
+            });
+        }
+    };
 
     if already_registered {
         info!(target: "citadel", "[PeerRegister] Peer {} is already registered to {}, returning error", peer_cid, cid);

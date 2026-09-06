@@ -245,16 +245,46 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
                 .flatten()
                 .unwrap_or_else(|| "#INVALID_USERNAME".to_string());
 
-            // Get server address from the CNAC's connection info
-            let server_address = remote
+            // Get server address from the CNAC's connection info.
+            //
+            // `.ok().flatten()...unwrap_or_default()` turned an unreadable CNAC
+            // into an EMPTY address, right after a connect the server had
+            // accepted. The UI keys every stored session on
+            // `username@serverAddress` -- auto-reconnect, sign-out records and
+            // findSessionForServer all do -- so an empty one never matches its
+            // stored record: the live session reads as "not active", gets
+            // reconnected, is answered SessionAlreadyActive, and the account
+            // ends up in the dead state auto-reconnect used to leave behind.
+            //
+            // Refuse instead. The session is up either way; what we cannot do
+            // is report it under a name nothing will match.
+            let server_address = match remote
                 .account_manager()
                 .get_persistence_handler()
                 .get_cnac_by_cid(cid)
                 .await
-                .ok()
-                .flatten()
-                .map(|cnac| cnac.get_connect_info().addr.to_string())
-                .unwrap_or_default();
+            {
+                Ok(Some(cnac)) => cnac.get_connect_info().addr.to_string(),
+                Ok(None) | Err(_) => {
+                    citadel_sdk::logging::warn!(
+                        target: "citadel",
+                        "[Connect] Could not read the server address for {}; reporting the \
+                         connect as failed rather than under an address nothing matches",
+                        cid
+                    );
+                    cleanup_username(this, &username);
+                    let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                        cid,
+                        message: format!(
+                            "Connected, but could not determine the server address for session \
+                             {}. Nothing is recorded under a name that would not match; try again.",
+                            cid
+                        ),
+                        request_id: Some(request_id),
+                    });
+                    return Some(HandledRequestResult { response, uuid });
+                }
+            };
 
             // Recorded from the password the SERVER just accepted, so a later
             // reuse request has something to prove itself against.

@@ -63,13 +63,31 @@ async fn add_account_to_map<R: Ratchet>(
     let mut peers = HashMap::new();
 
     // Get all the peers for this CID
-    let peer_cids = remote
+    // best-effort: this response is informational and has no consumer that acts
+    // destructively on an empty peer list -- nothing removes or forgets a peer
+    // because this came back short. An unreadable list is reported as no peers
+    // and logged, which is the honest degradation here; the alternative is
+    // failing an account-information request over a cache miss.
+    let peer_cids = match remote
         .account_manager()
         .get_hyperlan_peer_list(account.cid)
         .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    {
+        Ok(Some(list)) => list,
+        Ok(None) => Default::default(),
+        Err(err) => {
+            // best-effort: this response is informational and no consumer acts
+            // destructively on a short peer list -- nothing removes or forgets
+            // a peer because this came back empty. Failing an
+            // account-information request over a cache miss would be worse.
+            citadel_sdk::logging::warn!(
+                target: "citadel",
+                "[GetAccountInformation] Could not read the peer list for {}: {:?}; reporting none",
+                account.cid, err
+            );
+            Default::default()
+        }
+    };
     let peers_info = remote
         .account_manager()
         .get_persistence_handler()
