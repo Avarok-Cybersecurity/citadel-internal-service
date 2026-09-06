@@ -7,9 +7,8 @@ use citadel_internal_service_types::{
 use citadel_sdk::logging::{error, info};
 use citadel_sdk::prefabs::ClientServerRemote;
 use citadel_sdk::prelude::{
-    NodeRequest, ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, VirtualTargetType,
+    ProtocolRemoteExt, ProtocolRemoteTargetExt, Ratchet, VirtualTargetType,
 };
-use futures::StreamExt;
 use uuid::Uuid;
 
 pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
@@ -89,21 +88,9 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
         None,
     );
 
-    // DEBUG: Query active sessions in the kernel's session_manager
-    info!(target: "citadel", "[PeerRegister] Querying active sessions in session_manager...");
-    match remote
-        .send_callback_subscription(NodeRequest::GetActiveSessions)
-        .await
-    {
-        Ok(mut stream) => {
-            if let Some(result) = stream.next().await {
-                info!(target: "citadel", "[PeerRegister] GetActiveSessions result: {:?}", result);
-            }
-        }
-        Err(e) => {
-            error!(target: "citadel", "[PeerRegister] Failed to query active sessions: {:?}", e);
-        }
-    }
+    // The same DEBUG `GetActiveSessions` subscription that stood on the connect
+    // path stood here too, with the same unbounded `.next().await` and the same
+    // single consumer: a log line. See `requests/connect.rs`.
 
     info!(target: "citadel", "[PeerRegister] Calling propose_target({}, {})...", cid, peer_cid);
     let response = match client_to_server_remote.propose_target(cid, peer_cid).await {

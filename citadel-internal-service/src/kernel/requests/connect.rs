@@ -27,7 +27,7 @@ use citadel_internal_service_types::{
     AtomicUuid, ConnectFailure, InternalServiceRequest, InternalServiceResponse,
     MessageNotification,
 };
-use citadel_sdk::prelude::{AuthenticationRequest, NodeRequest, ProtocolRemoteExt, Ratchet};
+use citadel_sdk::prelude::{AuthenticationRequest, ProtocolRemoteExt, Ratchet};
 use futures::StreamExt;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -214,21 +214,21 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
             let cid = conn_success.cid;
             citadel_sdk::logging::info!(target: "citadel", "[Connect] SUCCESS: cid={}", cid);
 
-            // DEBUG: Query active sessions in the kernel's session_manager after connect
-            citadel_sdk::logging::info!(target: "citadel", "[Connect] Querying active sessions after connect...");
-            match remote
-                .send_callback_subscription(NodeRequest::GetActiveSessions)
-                .await
-            {
-                Ok(mut stream_sessions) => {
-                    if let Some(result) = stream_sessions.next().await {
-                        citadel_sdk::logging::info!(target: "citadel", "[Connect] GetActiveSessions result: {:?}", result);
-                    }
-                }
-                Err(e) => {
-                    citadel_sdk::logging::error!(target: "citadel", "[Connect] Failed to query active sessions: {:?}", e);
-                }
-            }
+            // A `GetActiveSessions` subscription stood here, between the
+            // successful SDK connect and building the `Connection`, so
+            // `ConnectSuccess` waited on it. It was labelled DEBUG and its only
+            // consumer was the `info!` that printed the result.
+            //
+            // Its `.next().await` was UNBOUNDED. Every other SDK query in this
+            // tree carries a limit -- PEER_LIST_TIMEOUT, PEER_SEND_TIMEOUT, the
+            // 30s connect_to_peer_custom -- and a subscription that never
+            // yields would have left login permanently unanswered, with the last
+            // log line reading "Querying active sessions after connect...",
+            // which reads as an SDK connect failure rather than as a discarded
+            // debug query.
+            //
+            // The liveness check that is actually used elsewhere is
+            // `remote.sessions()`, which does not go through a subscription.
 
             let (sink, mut stream) = conn_success.split();
             let client_server_remote = create_client_server_remote(
