@@ -179,7 +179,7 @@ pub async fn register_and_connect_to_server<
         info!(target = "citadel", "Sending Register Request");
         let register_command = InternalServiceRequest::Register {
             request_id: Uuid::new_v4(),
-            server_addr: item.server_addr,
+            server_addr: item.server_addr.to_string(),
             full_name,
             username: username.clone(),
             proposed_password: password.clone(),

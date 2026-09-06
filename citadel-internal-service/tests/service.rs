@@ -181,7 +181,7 @@ mod tests {
         info!(target: "citadel", "C2S Attempting to register without PSK");
         let register_command = InternalServiceRequest::Register {
             request_id: Uuid::new_v4(),
-            server_addr: server_bind_address,
+            server_addr: server_bind_address.to_string(),
             full_name: "Full Name".into(),
             username: "Username".into(),
             proposed_password: "Password".into(),
@@ -202,7 +202,7 @@ mod tests {
         info!(target: "citadel", "C2S Attempting to register with Incorrect PSK");
         let register_command = InternalServiceRequest::Register {
             request_id: Uuid::new_v4(),
-            server_addr: server_bind_address,
+            server_addr: server_bind_address.to_string(),
             full_name: "Full Name".into(),
             username: "Username".into(),
             proposed_password: "Password".into(),
@@ -223,7 +223,7 @@ mod tests {
         info!(target: "citadel", "C2S Attempting to register with correct PSK");
         let register_command = InternalServiceRequest::Register {
             request_id: Uuid::new_v4(),
-            server_addr: server_bind_address,
+            server_addr: server_bind_address.to_string(),
             full_name: "Full Name".into(),
             username: "Username".into(),
             proposed_password: "Password".into(),
@@ -474,7 +474,7 @@ mod tests {
                 .split();
 
         let register_command = InternalServiceRequest::Register {
-            server_addr: server_bind_address,
+            server_addr: server_bind_address.to_string(),
             full_name: String::from("John"),
             username: String::from("john_doe"),
             proposed_password: String::from("test12345").into_bytes().into(),
