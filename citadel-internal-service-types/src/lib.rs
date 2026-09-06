@@ -8,7 +8,6 @@ pub use citadel_types::prelude::{
 use custom_debug::Debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
