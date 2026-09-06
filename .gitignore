@@ -29,3 +29,14 @@ target_ide/
 # Nothing reads these paths: the suite passes with the directory deleted
 # outright (277/277). They were never fixtures, only residue.
 citadel-internal-service/filesystem/
+
+# The WASM source stamp that sync-wasm-clients.sh drops into every destination
+# it copies to.
+#
+# Only ONE copy is authoritative: the parent repo's
+# `citadel-workspace-client-ts/pkg/.wasm-source-tree`, which is tracked and is
+# the one `check-wasm-matches-its-source.mjs` reads. This copy is written and
+# never read. Tracking it would be a second source for the same fact, free to
+# disagree with the first; leaving it untracked makes every sync leave a dirty
+# tree, which is how residue ends up in an unrelated `git add -A`.
+typescript-client/.wasm-source-tree
