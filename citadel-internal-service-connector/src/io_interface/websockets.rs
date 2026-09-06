@@ -5,11 +5,13 @@ use citadel_internal_service_types::InternalServicePayload;
 // installs console_log -- a log-facade logger -- and no tracing subscriber
 // anywhere, so every `log::` macro here went nowhere in the browser. The
 // dependency was already added for this fix; the `use` was never changed.
+use citadel_io::tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use crate::io_interface::origin_policy::OriginPolicy;
 use citadel_io::tokio::net::{TcpListener, TcpStream};
@@ -22,9 +24,19 @@ use tokio_tungstenite::{
 };
 
 pub struct WebSocketInterface {
-    listener: TcpListener,
+    /// Taken when the accept loop starts, so it can move into that task.
+    listener: Option<TcpListener>,
     origins: OriginPolicy,
+    /// Completed handshakes, in the order they finished.
+    incoming: Option<UnboundedReceiver<(WebSocketSink, WebSocketStream_)>>,
 }
+
+/// How long a peer may take to finish the WebSocket upgrade.
+///
+/// A browser completes it in milliseconds. This is generous for a loaded
+/// machine and still bounded, which is the whole point: the handshake used to
+/// have no limit at all.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl WebSocketInterface {
     /// Bind, admitting only handshakes `origins` permits.
@@ -34,7 +46,20 @@ impl WebSocketInterface {
     /// and a caller that has not thought about it should be made to.
     pub async fn new(addr: SocketAddr, origins: OriginPolicy) -> std::io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-        Ok(Self { listener, origins })
+        Ok(Self {
+            listener: Some(listener),
+            origins,
+            incoming: None,
+        })
+    }
+
+    /// The bound address, while the listener has not yet been moved into the
+    /// accept task. Tests bind port 0 and need to learn what they got.
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.listener
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("the listener has moved into the accept task"))?
+            .local_addr()
     }
 }
 
@@ -103,32 +128,82 @@ impl IOInterface for WebSocketInterface {
     /// user actually made.
     const CALLER_CAN_ALREADY_READ_LOCAL_FILES: bool = false;
 
+    /// The next connection whose handshake has COMPLETED.
+    ///
+    /// The handshake used to be awaited here, inline, before this function
+    /// returned -- and the only caller is a serial
+    /// `while let Some(..) = io.next_connection().await` loop. So one local
+    /// process that opened a TCP connection to the agent and sent nothing
+    /// parked the accept loop FOREVER: every later tab, reload or new account
+    /// got a socket that never completed, and nothing appeared in the log,
+    /// because no bytes ever reached `handle_request`. A suspended laptop's
+    /// half-open TCP or a port scanner did it by accident; anything on the
+    /// machine could do it on purpose, and the agent holds decrypted P2P
+    /// plaintext.
+    ///
+    /// Two changes, and BOTH are needed. Spawning each handshake means a stalled
+    /// one no longer blocks the others -- but without a bound, stalled sockets
+    /// accumulate, so `HANDSHAKE_TIMEOUT` closes them. And a timeout alone would
+    /// not have been enough either: with the handshake still inline, repeated
+    /// connect-and-stall would occupy the loop continuously, one timeout at a
+    /// time.
+    ///
+    /// Origin enforcement is unchanged: `origin_check` still runs inside the
+    /// handshake, so a refused page gets a 403 and never becomes a connection.
     async fn next_connection(&mut self) -> Option<(Self::Sink, Self::Stream)> {
-        loop {
-            match self.listener.accept().await {
-                Ok((stream, addr)) => {
-                    log::debug!(target: "citadel", "New WebSocket connection from {}", addr);
+        if self.incoming.is_none() {
+            let listener = self.listener.take()?;
+            let origins = self.origins.clone();
+            let (tx, rx) = unbounded_channel();
+            self.incoming = Some(rx);
 
-                    match accept_hdr_async(stream, origin_check(&self.origins)).await {
-                        Ok(ws_stream) => {
-                            let (sink, stream) = ws_stream.split();
-                            return Some((
-                                WebSocketSink { inner: sink },
-                                WebSocketStream_ { inner: stream },
-                            ));
-                        }
+            // The JoinHandle is dropped on purpose: the acceptor lives for the
+            // life of the process, and a per-handshake task cleans itself up.
+            drop(citadel_io::tokio::task::spawn(async move {
+                loop {
+                    let (stream, addr) = match listener.accept().await {
+                        Ok(accepted) => accepted,
                         Err(err) => {
-                            log::error!(target: "citadel", "WebSocket handshake failed: {}", err);
+                            log::error!(target: "citadel", "Failed to accept TCP connection: {}", err);
                             continue;
                         }
-                    }
+                    };
+                    log::debug!(target: "citadel", "New WebSocket connection from {}", addr);
+
+                    let origins = origins.clone();
+                    let tx = tx.clone();
+                    drop(citadel_io::tokio::task::spawn(async move {
+                        match citadel_io::tokio::time::timeout(
+                            HANDSHAKE_TIMEOUT,
+                            accept_hdr_async(stream, origin_check(&origins)),
+                        )
+                        .await
+                        {
+                            Ok(Ok(ws_stream)) => {
+                                let (sink, stream) = ws_stream.split();
+                                let _ = tx.send((
+                                    WebSocketSink { inner: sink },
+                                    WebSocketStream_ { inner: stream },
+                                ));
+                            }
+                            Ok(Err(err)) => {
+                                log::error!(target: "citadel", "WebSocket handshake failed: {}", err);
+                            }
+                            Err(_elapsed) => {
+                                log::warn!(
+                                    target: "citadel",
+                                    "WebSocket handshake from {} did not complete within {:?}; closing",
+                                    addr,
+                                    HANDSHAKE_TIMEOUT
+                                );
+                            }
+                        }
+                    }));
                 }
-                Err(err) => {
-                    log::error!(target: "citadel", "Failed to accept TCP connection: {}", err);
-                    continue;
-                }
-            }
+            }));
         }
+
+        self.incoming.as_mut()?.recv().await
     }
 }
 
@@ -331,7 +406,7 @@ mod tests {
         let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
             .await
             .unwrap();
-        let bound_addr = interface.listener.local_addr().unwrap();
+        let bound_addr = interface.local_addr().unwrap();
 
         // Spawn server task
         let server_task = tokio::spawn(async move {
@@ -417,7 +492,7 @@ mod tests {
         let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
             .await
             .unwrap();
-        let bound_addr = interface.listener.local_addr().unwrap();
+        let bound_addr = interface.local_addr().unwrap();
 
         // Spawn server task that echoes JSON
         let server_task = tokio::spawn(async move {
@@ -496,7 +571,7 @@ mod tests {
         let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
             .await
             .unwrap();
-        let bound_addr = interface.listener.local_addr().unwrap();
+        let bound_addr = interface.local_addr().unwrap();
 
         // Spawn server task that handles multiple messages
         let server_task = tokio::spawn(async move {
@@ -573,7 +648,7 @@ mod tests {
         let mut interface = WebSocketInterface::new(addr, OriginPolicy::Any)
             .await
             .unwrap();
-        let bound_addr = interface.listener.local_addr().unwrap();
+        let bound_addr = interface.local_addr().unwrap();
 
         // Spawn server task
         let server_task = tokio::spawn(async move {
@@ -619,6 +694,72 @@ mod tests {
     ///
     /// Both use a real TCP handshake against a real listener, because that is
     /// the only place `Origin` exists.
+    /// A socket that connects and says nothing must not stop anyone else.
+    ///
+    /// The handshake used to be awaited inline inside `next_connection`, whose
+    /// only caller is a serial `while let` loop. So one local process that
+    /// opened a TCP connection to the agent and sent no bytes parked the accept
+    /// loop FOREVER -- every later tab, reload or new account got a socket that
+    /// never completed, with nothing in the log, because no bytes reached
+    /// `handle_request`. Any process on the machine could do it, deliberately or
+    /// by accident, and the agent holds decrypted P2P plaintext.
+    ///
+    /// This test stalls first and connects second, which is the order that
+    /// mattered: with the old code the second connection could never be
+    /// accepted, so the test hangs until its timeout rather than failing on an
+    /// assertion.
+    #[tokio::test]
+    async fn a_silent_socket_does_not_block_the_next_connection() {
+        use citadel_io::tokio::net::TcpStream as RawStream;
+
+        let mut interface =
+            WebSocketInterface::new("127.0.0.1:0".parse().unwrap(), OriginPolicy::Any)
+                .await
+                .expect("bind");
+        let addr = interface.local_addr().expect("addr");
+
+        // The attacker: connect, send nothing, hold it open for the whole test.
+        let _silent = RawStream::connect(addr).await.expect("silent connect");
+
+        // A real client, arriving after it.
+        let client = tokio::spawn(async move {
+            tokio_tungstenite::connect_async(format!("ws://{addr}"))
+                .await
+                .map(|_| ())
+        });
+
+        let accepted = tokio::time::timeout(Duration::from_secs(5), interface.next_connection())
+            .await
+            .expect(
+                "a silent socket blocked the accept loop -- the handshake is being awaited inline \
+                 again, and one connection that sends nothing denies the agent to everyone",
+            );
+
+        assert!(
+            accepted.is_some(),
+            "the real client's handshake completed but no connection was handed to the caller"
+        );
+        let _ = tokio::time::timeout(Duration::from_secs(5), client).await;
+    }
+
+    /// And the stalled one is eventually closed rather than accumulating.
+    ///
+    /// Spawning alone would leave a stalled socket resident for the life of the
+    /// process, so enough of them would still exhaust the agent. The bound is
+    /// what makes spawning safe; this pins that the bound exists and is not
+    /// something absurd.
+    #[test]
+    fn the_handshake_is_bounded() {
+        assert!(
+            HANDSHAKE_TIMEOUT <= Duration::from_secs(30),
+            "a handshake bound this loose is not a bound: {HANDSHAKE_TIMEOUT:?}"
+        );
+        assert!(
+            HANDSHAKE_TIMEOUT >= Duration::from_secs(1),
+            "a browser on a loaded machine needs more than {HANDSHAKE_TIMEOUT:?}"
+        );
+    }
+
     mod origin_enforcement {
         use super::*;
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -628,7 +769,7 @@ mod tests {
             let interface = WebSocketInterface::new(addr, OriginPolicy::parse(spec).unwrap())
                 .await
                 .unwrap();
-            let bound = interface.listener.local_addr().unwrap();
+            let bound = interface.local_addr().unwrap();
             (interface, bound)
         }
 
