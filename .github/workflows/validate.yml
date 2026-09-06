@@ -2,6 +2,18 @@ name: Validate PR
 on:
   workflow_call:
   pull_request:
+  # `master` was validated by NOTHING.
+  #
+  # There was no `push:` trigger, and the `workflow_call` above has no caller:
+  # the only `uses: ./.github/workflows/validate.yml` anywhere is the PARENT
+  # invoking its OWN workflow, since `./` is repo-relative. So two PRs could
+  # each pass alone, conflict once merged, and leave master broken with nothing
+  # running to say so -- until the parent bumped its submodule pointer and the
+  # failure landed on the bumper rather than on the change that caused it. This
+  # file already documents that misattribution for the websockets feature flag;
+  # it applied to the trigger itself.
+  push:
+    branches: [master]
 
 concurrency:
   group: ${{ github.head_ref || github.run_id }}
@@ -65,7 +77,12 @@ jobs:
         with:
           shared-key: "ci-clippy"
       - run: rustup component add clippy-preview
-      - run: cargo clippy --tests -- -D warnings
+      # `--features websockets`, matching the test job above. Without it clippy
+      # compiles 11 tests where the feature compiles 27, so the origin-policy
+      # and handshake modules -- the agent's loopback boundary -- were never
+      # linted under `-D warnings` at all. Compiling tests is compiling tests,
+      # whichever command does it.
+      - run: cargo clippy --tests --features websockets -- -D warnings
 
   fmt:
     runs-on: ubuntu-latest
