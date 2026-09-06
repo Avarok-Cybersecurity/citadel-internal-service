@@ -5,7 +5,7 @@ use citadel_internal_service_types::{
     GetSessionsResponse, InternalServiceRequest, InternalServiceResponse, PeerSessionInformation,
     SessionInformation,
 };
-use citadel_sdk::logging::{debug, info};
+use citadel_sdk::logging::{debug, info, tracing};
 use citadel_sdk::prelude::{Ratchet, TargetLockedRemote};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -20,8 +20,15 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         unreachable!("Should never happen if programmed properly")
     };
 
-    // Log current state at request start
-    {
+    // Log current state at request start.
+    //
+    // Behind `log_enabled!`: `session_usernames` CLONES every username, and
+    // both vectors are built under a read lock on the connection map for a line
+    // the default filter drops. The leader tab polls GetSessions every 5
+    // seconds for as long as a browser is open, so this ran ~17,000 times a day
+    // per browser, allocating a String per session each time, to produce
+    // nothing.
+    if tracing::enabled!(target: "citadel", tracing::Level::INFO) {
         let lock = this.server_connection_map.read();
         let session_cids: Vec<u64> = lock.keys().copied().collect();
         let session_usernames: Vec<String> = lock.values().map(|c| c.username.clone()).collect();
