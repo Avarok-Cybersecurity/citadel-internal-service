@@ -88,7 +88,22 @@ where
     // messenger backend, and every key ILM touches is one of seven fixed names
     // suffixed with `-{cid}`. Scoping to those preserves exactly the access the
     // evidence justified and withdraws the rest.
-    let exempt = is_exempt_from_ownership_gate(&command);
+    // Computed, and deliberately NOT used to bypass the gate below.
+    //
+    // The comment on `is_exempt_from_ownership_gate` states the intent
+    // exactly: "the gate then judges the request's cid as it judges every
+    // other: owned proceeds, held by somebody else is refused." It did not.
+    // `.filter(|_| !exempt)` skipped the entire ownership block, so an ILM key
+    // naming its own session was handed over even while a DIFFERENT connection
+    // held that session. `GetSessions` is ungated and returns every cid, so a
+    // second connection could ask for `inbound_messages-<victim>` and receive
+    // that account's stored P2P payloads.
+    //
+    // The narrowing that comment describes landed; the sentence after it never
+    // did. `gate_decision` already answers this correctly, so the fix is to
+    // stop skipping it. The predicate is kept because its tests pin the key
+    // shapes ILM uses, which is worth keeping true.
+    let _narrowed_ilm_key = is_exempt_from_ownership_gate(&command);
 
     // Writes must be OWNED, not merely unopposed.
     //
@@ -101,7 +116,7 @@ where
     // has no mapped session (after a Disconnect, say), any connection could
     // write or wipe its persistent store. `gate_decision` derives that from the
     // command itself.
-    if let Some(cid) = command.session_cid().filter(|_| !exempt) {
+    if let Some(cid) = command.session_cid() {
         let owner = {
             let map = this.server_connection_map.read();
             map.get(&cid).map(|conn| {
