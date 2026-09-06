@@ -1385,8 +1385,21 @@ pub enum InternalServiceRequest {
     },
     Register {
         request_id: Uuid,
+        /// `host:port`, resolved by the AGENT rather than by the browser.
+        ///
+        /// This was a `SocketAddr`, so the page had to resolve a hostname
+        /// before it could register -- and it did so with a DNS-over-HTTPS
+        /// fetch to `https://dns.google/resolve`. A hosted UI's own
+        /// Content-Security-Policy refuses that connection, so every hostname
+        /// address failed with a 30-second timeout while a raw IP worked; and
+        /// where it did not fail it told Google which server each user was
+        /// joining.
+        ///
+        /// The agent has a resolver and no CSP. On the wire this is unchanged:
+        /// serde renders a `SocketAddr` as exactly this string, so a client
+        /// built before this change still parses.
         #[cfg_attr(feature = "typescript", ts(type = "string"))]
-        server_addr: SocketAddr,
+        server_addr: String,
         full_name: String,
         username: String,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]

@@ -48,6 +48,48 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
     };
     let remote = this.remote();
 
+    // Resolve HERE, not in the browser.
+    //
+    // `server_addr` arrives as `host:port`. It used to be a `SocketAddr`, which
+    // forced the page to resolve a hostname itself -- with a DNS-over-HTTPS
+    // fetch to `https://dns.google/resolve`. A hosted UI's Content-Security-
+    // Policy refuses that connection, so on work.avarok.net every hostname
+    // address timed out after 30 seconds while a raw IP worked, and where it
+    // did work it disclosed each user's server to a third party.
+    //
+    // A failed lookup is answered, not logged: registration is a foreground
+    // action and "Registration timed out" is what the user saw for a name that
+    // simply does not resolve.
+    let server_addr = match tokio::net::lookup_host(&server_addr).await {
+        Ok(mut addrs) => match addrs.next() {
+            Some(addr) => addr,
+            None => {
+                return Some(HandledRequestResult {
+                    response: InternalServiceResponse::RegisterFailure(
+                        citadel_internal_service_types::RegisterFailure {
+                            cid: 0,
+                            message: format!("{server_addr} resolved to no addresses"),
+                            request_id: Some(request_id),
+                        },
+                    ),
+                    uuid,
+                });
+            }
+        },
+        Err(err) => {
+            return Some(HandledRequestResult {
+                response: InternalServiceResponse::RegisterFailure(
+                    citadel_internal_service_types::RegisterFailure {
+                        cid: 0,
+                        message: format!("could not resolve {server_addr}: {err}"),
+                        request_id: Some(request_id),
+                    },
+                ),
+                uuid,
+            });
+        }
+    };
+
     info!(target: "citadel", "About to connect to server {server_addr:?} for user {username}");
     match remote
         .register(
