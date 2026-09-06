@@ -147,6 +147,26 @@ impl<R: Ratchet> CitadelWorkspaceService<TcpIOInterface, R> {
         let ws_server_io = WebSocketInterface::new(bind_address, origins).await?;
         Ok(ws_server_io.into())
     }
+
+    #[cfg(feature = "websockets")]
+    /// The same, serving `wss://`.
+    ///
+    /// A UI served from this machine reaches the agent over loopback, where
+    /// plain is correct. A HOSTED UI cannot: the page is HTTPS and a browser
+    /// refuses a `ws://` socket from it as mixed content, so `wss://` is the
+    /// only thing it will open. Both PEM inputs are described on
+    /// `WebSocketInterface::new_tls`.
+    pub async fn new_websocket_tls(
+        bind_address: SocketAddr,
+        origins: OriginPolicy,
+        certificate_chain: &[u8],
+        private_key: &[u8],
+    ) -> std::io::Result<CitadelWorkspaceService<WebSocketInterface, R>> {
+        let ws_server_io =
+            WebSocketInterface::new_tls(bind_address, origins, certificate_chain, private_key)
+                .await?;
+        Ok(ws_server_io.into())
+    }
 }
 
 impl<R: Ratchet> CitadelWorkspaceService<InMemoryInterface, R> {

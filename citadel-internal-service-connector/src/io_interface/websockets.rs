@@ -14,7 +14,11 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::io_interface::origin_policy::OriginPolicy;
+use citadel_io::tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use citadel_io::tokio::net::{TcpListener, TcpStream};
+use std::io;
+use std::sync::Arc;
+use tokio_rustls::{rustls, TlsAcceptor};
 use tokio_tungstenite::{
     accept_hdr_async,
     tungstenite::handshake::server::{ErrorResponse, Request, Response},
@@ -23,10 +27,67 @@ use tokio_tungstenite::{
     WebSocketStream,
 };
 
+/// What the WebSocket runs over: a bare socket, or one wrapped in TLS.
+///
+/// The agent needs both. A UI served from the same machine reaches it over
+/// loopback, where plain is right and a certificate would be ceremony. A HOSTED
+/// UI cannot: the page is HTTPS, and a browser refuses to open a `ws://` socket
+/// from an HTTPS page as mixed content. `wss://` is not a preference there, it
+/// is the only thing the browser will do.
+///
+/// An enum rather than a generic parameter because the sink and stream types
+/// are named in `IOInterface`'s associated types; making them generic would
+/// spread a parameter through the whole interface for a choice made once, at
+/// bind time.
+pub enum AgentTransport {
+    Plain(TcpStream),
+    Tls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for AgentTransport {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            AgentTransport::Plain(inner) => Pin::new(inner).poll_read(cx, buf),
+            AgentTransport::Tls(inner) => Pin::new(inner.as_mut()).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for AgentTransport {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            AgentTransport::Plain(inner) => Pin::new(inner).poll_write(cx, buf),
+            AgentTransport::Tls(inner) => Pin::new(inner.as_mut()).poll_write(cx, buf),
+        }
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            AgentTransport::Plain(inner) => Pin::new(inner).poll_flush(cx),
+            AgentTransport::Tls(inner) => Pin::new(inner.as_mut()).poll_flush(cx),
+        }
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            AgentTransport::Plain(inner) => Pin::new(inner).poll_shutdown(cx),
+            AgentTransport::Tls(inner) => Pin::new(inner.as_mut()).poll_shutdown(cx),
+        }
+    }
+}
+
 pub struct WebSocketInterface {
     /// Taken when the accept loop starts, so it can move into that task.
     listener: Option<TcpListener>,
     origins: OriginPolicy,
+    /// `Some` when the listener serves TLS. See `AgentTransport`.
+    tls: Option<TlsAcceptor>,
     /// Completed handshakes, in the order they finished.
     incoming: Option<UnboundedReceiver<(WebSocketSink, WebSocketStream_)>>,
 }
@@ -49,6 +110,32 @@ impl WebSocketInterface {
         Ok(Self {
             listener: Some(listener),
             origins,
+            tls: None,
+            incoming: None,
+        })
+    }
+
+    /// Bind and serve `wss://`, presenting `certificate_chain` for `private_key`.
+    ///
+    /// Both are PEM. The chain is leaf-first, as every ACME client writes it;
+    /// the key is PKCS#8 or the older RSA form.
+    ///
+    /// This exists because a hosted page cannot reach a plain-WebSocket agent at
+    /// all. `work.avarok.net` published `wss://local.avarok.net:12345` as the
+    /// agent origin and nothing terminated TLS there, so every visitor got
+    /// `ERR_SSL_PROTOCOL_ERROR` and the app never started.
+    pub async fn new_tls(
+        addr: SocketAddr,
+        origins: OriginPolicy,
+        certificate_chain: &[u8],
+        private_key: &[u8],
+    ) -> std::io::Result<Self> {
+        let config = tls_config(certificate_chain, private_key)?;
+        let listener = TcpListener::bind(addr).await?;
+        Ok(Self {
+            listener: Some(listener),
+            origins,
+            tls: Some(TlsAcceptor::from(Arc::new(config))),
             incoming: None,
         })
     }
@@ -61,6 +148,57 @@ impl WebSocketInterface {
             .ok_or_else(|| std::io::Error::other("the listener has moved into the accept task"))?
             .local_addr()
     }
+}
+
+/// Build a rustls server config from PEM bytes.
+///
+/// Every failure is reported with what was wrong, because the alternative is an
+/// agent that exits with "invalid certificate" and leaves the operator guessing
+/// which of the two files it meant.
+fn tls_config(
+    certificate_chain: &[u8],
+    private_key: &[u8],
+) -> std::io::Result<rustls::ServerConfig> {
+    let certs: Vec<_> = rustls_pemfile::certs(&mut &certificate_chain[..])
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("certificate chain is not valid PEM: {e}"),
+            )
+        })?;
+    if certs.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "certificate chain contained no CERTIFICATE blocks",
+        ));
+    }
+
+    let key = rustls_pemfile::private_key(&mut &private_key[..])
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("private key is not valid PEM: {e}"),
+            )
+        })?
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "private key contained no PRIVATE KEY block",
+            )
+        })?;
+
+    rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        // The commonest cause is a key that does not match the chain, and
+        // rustls says so; passing its message through saves an hour.
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("certificate and key do not form a usable pair: {e}"),
+            )
+        })
 }
 
 /// Refuse the handshake unless its `Origin` is permitted.
@@ -154,6 +292,7 @@ impl IOInterface for WebSocketInterface {
         if self.incoming.is_none() {
             let listener = self.listener.take()?;
             let origins = self.origins.clone();
+            let tls = self.tls.clone();
             let (tx, rx) = unbounded_channel();
             self.incoming = Some(rx);
 
@@ -172,13 +311,26 @@ impl IOInterface for WebSocketInterface {
 
                     let origins = origins.clone();
                     let tx = tx.clone();
+                    let tls = tls.clone();
                     drop(citadel_io::tokio::task::spawn(async move {
-                        match citadel_io::tokio::time::timeout(
-                            HANDSHAKE_TIMEOUT,
-                            accept_hdr_async(stream, origin_check(&origins)),
-                        )
-                        .await
-                        {
+                        // The TLS handshake is inside the SAME timeout as the
+                        // WebSocket upgrade, and inside the same spawned task.
+                        // A peer that opens a socket and sends no ClientHello is
+                        // exactly the stall the timeout was added for; putting
+                        // TLS outside it would reopen that hole one layer down.
+                        let upgrade = async {
+                            let transport = match tls {
+                                Some(acceptor) => AgentTransport::Tls(Box::new(
+                                    acceptor
+                                        .accept(stream)
+                                        .await
+                                        .map_err(TungsteniteError::Io)?,
+                                )),
+                                None => AgentTransport::Plain(stream),
+                            };
+                            accept_hdr_async(transport, origin_check(&origins)).await
+                        };
+                        match citadel_io::tokio::time::timeout(HANDSHAKE_TIMEOUT, upgrade).await {
                             Ok(Ok(ws_stream)) => {
                                 let (sink, stream) = ws_stream.split();
                                 let _ = tx.send((
@@ -208,7 +360,7 @@ impl IOInterface for WebSocketInterface {
 }
 
 pub struct WebSocketSink {
-    inner: futures_util::stream::SplitSink<WebSocketStream<TcpStream>, Message>,
+    inner: futures_util::stream::SplitSink<WebSocketStream<AgentTransport>, Message>,
 }
 
 impl Sink<InternalServicePayload> for WebSocketSink {
@@ -246,7 +398,7 @@ impl Sink<InternalServicePayload> for WebSocketSink {
 }
 
 pub struct WebSocketStream_ {
-    inner: futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
+    inner: futures_util::stream::SplitStream<WebSocketStream<AgentTransport>>,
 }
 
 impl Stream for WebSocketStream_ {
@@ -746,6 +898,66 @@ mod tests {
     ///
     /// Spawning alone would leave a stalled socket resident for the life of the
     /// process, so enough of them would still exhaust the agent. The bound is
+    /// The TLS listener presents a certificate; the plain one does not.
+    ///
+    /// Asserted through a real TLS client handshake rather than by inspecting
+    /// the config, because what broke was observable only end to end: the agent
+    /// bound a plain socket, and `work.avarok.net` -- an HTTPS page, which a
+    /// browser forbids from opening `ws://` -- got ERR_SSL_PROTOCOL_ERROR from
+    /// every visitor's machine.
+    ///
+    /// A self-signed certificate generated here, so the test needs no fixture
+    /// and cannot be satisfied by the shipped one.
+    #[tokio::test]
+    async fn the_tls_listener_completes_a_tls_handshake() {
+        let cert = rcgen::generate_simple_self_signed(vec!["local.test".to_string()])
+            .expect("generate a self-signed certificate");
+        let chain = cert.cert.pem();
+        let key = cert.signing_key.serialize_pem();
+
+        let mut interface = WebSocketInterface::new_tls(
+            "127.0.0.1:0".parse().unwrap(),
+            OriginPolicy::Any,
+            chain.as_bytes(),
+            key.as_bytes(),
+        )
+        .await
+        .expect("bind with TLS");
+        let addr = interface.local_addr().expect("bound address");
+
+        // Drive the accept loop; the handshake completes in the spawned task.
+        let server = tokio::spawn(async move { interface.next_connection().await.is_some() });
+
+        let mut roots = tokio_rustls::rustls::RootCertStore::empty();
+        for c in rustls_pemfile::certs(&mut chain.as_bytes()).map(|c| c.unwrap()) {
+            roots.add(c).expect("trust the self-signed certificate");
+        }
+        let config = tokio_rustls::rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
+        let tcp = citadel_io::tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect");
+        let tls = connector
+            .connect("local.test".try_into().unwrap(), tcp)
+            .await
+            .expect("the listener must complete a TLS handshake");
+
+        // And the WebSocket upgrade rides over it, which is what the browser does.
+        let (_ws, _resp) = tokio_tungstenite::client_async("ws://local.test/", tls)
+            .await
+            .expect("the WebSocket upgrade must complete over TLS");
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), server)
+                .await
+                .expect("the accept loop must yield")
+                .expect("the accept task must not panic"),
+            "a completed TLS+WebSocket handshake must surface as a connection",
+        );
+    }
+
     /// what makes spawning safe; this pins that the bound exists and is not
     /// something absurd.
     #[test]

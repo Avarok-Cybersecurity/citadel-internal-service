@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-websockets = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:futures-util"]
+websockets = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:futures-util", "dep:tokio-rustls", "dep:rustls-pemfile"]
 js = ["uuid/js"]
 vendored = ["citadel_sdk/vendored"]
 
@@ -35,6 +35,17 @@ citadel_sdk = { workspace = true, optional = true }
 
 # WebSocket dependencies
 tokio-tungstenite = { version = "0.21", optional = true }
+# TLS for the agent's own WebSocket listener.
+#
+# A page served over HTTPS cannot open a `ws://` socket -- the browser blocks it
+# as mixed content -- so a hosted UI can only reach the visitor's agent over
+# `wss://`. The listener spoke plain WebSocket, which is why work.avarok.net
+# could not reach any agent that existed.
+#
+# rustls 0.23 is already in this lock via the SDK; tokio-rustls 0.26 is its
+# tokio adapter, so this adds an adapter rather than a second TLS stack.
+tokio-rustls = { version = "0.26", optional = true, default-features = false, features = ["ring"] }
+rustls-pemfile = { version = "2", optional = true }
 tungstenite = { version = "0.21", optional = true }
 futures-util = { version = "0.3", optional = true }
 
@@ -55,6 +66,9 @@ citadel-internal-service-test-common = { workspace = true }
 citadel_io = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+# Self-signed certificates for the TLS listener test, so it needs no fixture
+# and cannot be satisfied by the certificate the agent ships.
+rcgen = "0.14"
 rand = "0.8.5"
 tokio = { workspace = true, features = ["full"] }
 env_logger = "0.10"
