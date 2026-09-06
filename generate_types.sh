@@ -102,113 +102,43 @@ for ts_file in *.ts; do
 done
 
 echo "📦 Creating index.ts file for convenient imports..."
-cat > index.ts << 'EOF'
-// Auto-generated index for all TypeScript types
-// This provides a convenient single import point for all types
+# index.ts is DERIVED from what was generated, not written from a list.
+#
+# It used to be a heredoc of ~100 hardcoded `export *` lines. A newly generated
+# type was therefore not exported by anything, silently -- and nothing anywhere
+# checked, because `tsc` is perfectly happy with a file nobody imports.
+#
+# That is not hypothetical: five media types (MediaFrameNotification,
+# MediaGapNotification, MediaSessionOpened, MediaSessionFailed,
+# MediaSessionClosed) were generated, committed, and reachable from no package
+# entry point at all. The UI needed the frame shape, could not import it, and
+# hand-wrote it -- and the hand copy had already drifted, omitting `sequence`.
+# An `as` cast meant the compiler never said so.
+#
+# Anyone who fixed index.ts by hand also lost the edit on the next run of this
+# script, since the heredoc overwrote it unconditionally, while README.md
+# advertises the script as safe to re-run.
+{
+  echo "// Auto-generated index for all TypeScript types"
+  echo "// This provides a convenient single import point for all types"
+  echo "//"
+  echo "// DERIVED from the files in this directory. Do not hand-edit: this file is"
+  echo "// rewritten wholesale by generate_types.sh, and a hand-added export would be"
+  echo "// lost on the next run. Add the Rust type instead."
+  echo ""
+  # Deterministic order, so a regeneration that changes nothing produces no diff.
+  for ts_file in $(ls *.ts | grep -v '^index\.ts$' | LC_ALL=C sort); do
+    echo "export * from './${ts_file%.ts}.js';"
+  done
+} > index.ts
 
-export * from './InternalServiceRequest.js';
-export * from './InternalServiceResponse.js';
-export * from './InternalServicePayload.js';
-
-// Export all individual types
-export * from './AccountInformation.js';
-export * from './Accounts.js';
-export * from './BatchedResponseData.js';
-export * from './ConfigCommand.js';
-export * from './ConnectFailure.js';
-export * from './ConnectSuccess.js';
-export * from './ConnectionManagementFailure.js';
-export * from './ConnectionManagementSuccess.js';
-export * from './DeleteVirtualFileFailure.js';
-export * from './DeleteVirtualFileSuccess.js';
-export * from './DeregisterFailure.js';
-export * from './DeregisterSuccess.js';
-export * from './DisconnectFailure.js';
-export * from './DisconnectNotification.js';
-export * from './DownloadFileFailure.js';
-export * from './DownloadFileSuccess.js';
-export * from './FileSource.js';
-export * from './FileTransferRequestNotification.js';
-export * from './FileTransferStatusNotification.js';
-export * from './FileTransferTickNotification.js';
-export * from './GetSessionsResponse.js';
-export * from './GroupBroadcastHandleFailure.js';
-export * from './GroupChannelCreateFailure.js';
-export * from './GroupChannelCreateSuccess.js';
-export * from './GroupCreateFailure.js';
-export * from './GroupCreateSuccess.js';
-export * from './GroupDisconnectNotification.js';
-export * from './GroupEndFailure.js';
-export * from './GroupEndNotification.js';
-export * from './GroupEndSuccess.js';
-export * from './GroupInviteFailure.js';
-export * from './GroupInviteNotification.js';
-export * from './GroupInviteSuccess.js';
-export * from './GroupJoinRequestNotification.js';
-export * from './GroupKickFailure.js';
-export * from './GroupKickSuccess.js';
-export * from './GroupLeaveFailure.js';
-export * from './GroupLeaveNotification.js';
-export * from './GroupLeaveSuccess.js';
-export * from './GroupListGroupsFailure.js';
-export * from './GroupListGroupsResponse.js';
-export * from './GroupListGroupsSuccess.js';
-export * from './GroupMemberStateChangeNotification.js';
-export * from './GroupMembershipResponse.js';
-export * from './GroupMessageFailure.js';
-export * from './GroupMessageNotification.js';
-export * from './GroupMessageResponse.js';
-export * from './GroupMessageSuccess.js';
-export * from './GroupRequestJoinAcceptResponse.js';
-export * from './GroupRequestJoinDeclineResponse.js';
-export * from './GroupRequestJoinFailure.js';
-export * from './GroupRequestJoinPendingNotification.js';
-export * from './GroupRequestJoinSuccess.js';
-export * from './GroupRespondRequestFailure.js';
-export * from './GroupRespondRequestSuccess.js';
-export * from './ListAllPeersFailure.js';
-export * from './ListAllPeersResponse.js';
-export * from './ListRegisteredPeersFailure.js';
-export * from './ListRegisteredPeersResponse.js';
-export * from './LocalDBClearAllKVFailure.js';
-export * from './LocalDBClearAllKVSuccess.js';
-export * from './LocalDBDeleteKVFailure.js';
-export * from './LocalDBDeleteKVSuccess.js';
-export * from './LocalDBGetAllKVFailure.js';
-export * from './LocalDBGetAllKVSuccess.js';
-export * from './LocalDBGetKVFailure.js';
-export * from './LocalDBGetKVSuccess.js';
-export * from './LocalDBSetKVFailure.js';
-export * from './LocalDBSetKVSuccess.js';
-export * from './MessageNotification.js';
-export * from './MessageSendFailure.js';
-export * from './MessageSendSuccess.js';
-export * from './PeerConnectAcceptFailure.js';
-export * from './PeerConnectAcceptSuccess.js';
-export * from './PeerConnectFailure.js';
-export * from './PeerConnectNotification.js';
-export * from './PeerConnectSuccess.js';
-export * from './PeerDisconnectFailure.js';
-export * from './PeerDisconnectSuccess.js';
-export * from './PeerInformation.js';
-export * from './PeerRegisterFailure.js';
-export * from './PeerRegisterNotification.js';
-export * from './PeerRegisterSuccess.js';
-export * from './PeerSessionInformation.js';
-export * from './PickFileFailure.js';
-export * from './PickFileSuccess.js';
-export * from './RegisterFailure.js';
-export * from './RegisterSuccess.js';
-export * from './SendFileRequestFailure.js';
-export * from './SendFileRequestSuccess.js';
-export * from './ServiceConnectionAccepted.js';
-export * from './SessionAlreadyActive.js';
-export * from './SessionInformation.js';
-
-// Re-export protocol types used in InternalServiceRequest fields
-// so downstream packages can reference them directly.
-export type { ConnectMode, UdpMode, SessionSecuritySettings, SecurityLevel, TransferType, ObjectId, PreSharedKey, MessageGroupKey, UserIdentifier } from '@avarok/citadel-protocol-types';
-EOF
+generated_count=$(ls *.ts | grep -v '^index\.ts$' | wc -l | tr -d ' ')
+exported_count=$(grep -c "^export \* from" index.ts | tr -d ' ')
+if [ "$generated_count" != "$exported_count" ]; then
+  echo "❌ index.ts exports $exported_count of $generated_count generated types"
+  exit 1
+fi
+echo "   index.ts exports all $exported_count generated types"
 
 echo "🎉 TypeScript types generated successfully!"
 echo "📁 Types are available in: typescript-client/src/types/"

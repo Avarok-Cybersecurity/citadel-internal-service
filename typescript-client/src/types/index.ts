@@ -1,11 +1,10 @@
 // Auto-generated index for all TypeScript types
 // This provides a convenient single import point for all types
+//
+// DERIVED from the files in this directory. Do not hand-edit: this file is
+// rewritten wholesale by generate_types.sh, and a hand-added export would be
+// lost on the next run. Add the Rust type instead.
 
-export * from './InternalServiceRequest.js';
-export * from './InternalServiceResponse.js';
-export * from './InternalServicePayload.js';
-
-// Export all individual types
 export * from './AccountInformation.js';
 export * from './Accounts.js';
 export * from './BatchedResponseData.js';
@@ -61,6 +60,9 @@ export * from './GroupRequestJoinPendingNotification.js';
 export * from './GroupRequestJoinSuccess.js';
 export * from './GroupRespondRequestFailure.js';
 export * from './GroupRespondRequestSuccess.js';
+export * from './InternalServicePayload.js';
+export * from './InternalServiceRequest.js';
+export * from './InternalServiceResponse.js';
 export * from './ListAllPeersFailure.js';
 export * from './ListAllPeersResponse.js';
 export * from './ListRegisteredPeersFailure.js';
@@ -75,6 +77,11 @@ export * from './LocalDBGetKVFailure.js';
 export * from './LocalDBGetKVSuccess.js';
 export * from './LocalDBSetKVFailure.js';
 export * from './LocalDBSetKVSuccess.js';
+export * from './MediaFrameNotification.js';
+export * from './MediaGapNotification.js';
+export * from './MediaSessionClosed.js';
+export * from './MediaSessionFailed.js';
+export * from './MediaSessionOpened.js';
 export * from './MessageNotification.js';
 export * from './MessageSendFailure.js';
 export * from './MessageSendSuccess.js';
@@ -99,7 +106,3 @@ export * from './SendFileRequestSuccess.js';
 export * from './ServiceConnectionAccepted.js';
 export * from './SessionAlreadyActive.js';
 export * from './SessionInformation.js';
-
-// Re-export protocol types used in InternalServiceRequest fields
-// so downstream packages can reference them directly.
-export type { ConnectMode, UdpMode, SessionSecuritySettings, SecurityLevel, TransferType, ObjectId, PreSharedKey, MessageGroupKey, UserIdentifier } from '@avarok/citadel-protocol-types';
