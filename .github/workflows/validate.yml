@@ -43,7 +43,11 @@ jobs:
       #
       # This is a REGRESSION. docs/ROBUSTNESS.md round 564 records exactly this,
       # and the fix -- "6 passed" becoming "33 passed". The flag was lost again.
-      # check-security-tests-are-compiled.mjs now fails if it goes missing.
+      # The parent's check-feature-gated-tests-are-compiled.mjs fails if this
+      # flag goes missing. Note where that gate LIVES: this repository's CI does
+      # not run it, so dropping the flag here stays green until someone bumps
+      # the parent's submodule pointer, and the failure lands on the bumper
+      # rather than on the change that caused it.
       - run: cargo nextest run --features=vendored,websockets
         if: startsWith(matrix.os, 'windows')
       - run: cargo nextest run --features=websockets
