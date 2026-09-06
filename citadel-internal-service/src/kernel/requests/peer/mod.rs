@@ -1,6 +1,7 @@
 pub mod accept;
 pub mod connect;
 pub mod disconnect;
+pub mod disconnect_outcome;
 pub mod list_all;
 pub mod list_registered;
 pub mod register;

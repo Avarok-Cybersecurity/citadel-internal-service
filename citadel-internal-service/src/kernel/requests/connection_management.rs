@@ -182,8 +182,12 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
 /// answer "not found" because the entry is gone. No wire command could reach the
 /// session that was still there.
 ///
-/// `peer/disconnect.rs` has always done this correctly — it awaits
-/// `disconnect_removed` for the same removal — so this is that fix, propagated.
+/// This was written as "`peer/disconnect.rs` has always done this correctly — it
+/// awaits `disconnect_removed` for the same removal — so this is that fix,
+/// propagated." It awaited it and then DISCARDED the result, logging
+/// "Proceeding anyway" and returning the success notification either way. The
+/// fix was propagated from a file that never had it, which is why nothing there
+/// looked wrong for as long as it did. Both now report.
 ///
 /// The map lock is taken and released BEFORE the SDK work: `disconnect_removed`
 /// awaits, and holding a `parking_lot` write guard across an await would block

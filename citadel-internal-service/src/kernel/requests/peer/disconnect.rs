@@ -361,31 +361,53 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
     )
     .await;
 
-    match sdk_result {
+    // Reported, not swallowed.
+    //
+    // Both failure arms used to log "Proceeding anyway" and fall through to the
+    // success notification below. The map entry is already gone by then, so a
+    // caller told "disconnected" while the protocol session survived is wedged:
+    // `connect` finds no entry, calls `remote.connect()`, and the protocol
+    // refuses with `SessionManagerSessionAlreadyExists`; `ClaimSession` and
+    // `DisconnectOrphan` both answer "not found" because the entry is gone. No
+    // wire command can reach the session that is still there, until the agent
+    // restarts.
+    //
+    // `connection_management.rs` handles this correctly and its comment says
+    // "`peer/disconnect.rs` has always done this correctly -- so this is that
+    // fix, propagated". It was not: this function awaited `disconnect_removed`
+    // and then discarded the result. The fix was propagated FROM a file that
+    // never had it, which is why nothing here looked wrong.
+    let outcome: crate::kernel::requests::peer::disconnect_outcome::SdkDisconnect = match sdk_result
+    {
         Ok(Ok(())) => {
             citadel_sdk::logging::info!(
                 "[Disconnect] SDK disconnect succeeded for CID {} peer {:?}",
                 cid,
                 peer_cid
             );
+            crate::kernel::requests::peer::disconnect_outcome::SdkDisconnect::Succeeded
         }
         Ok(Err(err)) => {
             citadel_sdk::logging::warn!(
-                "[Disconnect] SDK disconnect failed for CID {} peer {:?}: {:?}. Proceeding anyway.",
+                "[Disconnect] SDK disconnect failed for CID {} peer {:?}: {:?}",
                 cid,
                 peer_cid,
                 err
             );
+            crate::kernel::requests::peer::disconnect_outcome::SdkDisconnect::Failed(format!(
+                "{err:?}"
+            ))
         }
         Err(_elapsed) => {
             citadel_sdk::logging::warn!(
-                "[Disconnect] SDK disconnect timed out after {:?} for CID {} peer {:?}. Proceeding anyway.",
+                "[Disconnect] SDK disconnect timed out after {:?} for CID {} peer {:?}",
                 SDK_DISCONNECT_TIMEOUT,
                 cid,
                 peer_cid
             );
+            crate::kernel::requests::peer::disconnect_outcome::SdkDisconnect::TimedOut
         }
-    }
+    };
 
     // STEP 3: Get the TCP UUID from the enum before dropping
     let tcp_uuid = match &disconnected {
@@ -403,13 +425,9 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         tcp_uuid
     );
 
-    // Return success notification - the session is disconnected from internal service's perspective
+    // Success only when the protocol session actually went away.
     Some(HandledRequestResult {
-        response: InternalServiceResponse::DisconnectNotification(DisconnectNotification {
-            cid,
-            peer_cid,
-            request_id: Some(request_id),
-        }),
+        response: outcome.into_response(cid, peer_cid, request_id, SDK_DISCONNECT_TIMEOUT),
         uuid,
     })
 }
