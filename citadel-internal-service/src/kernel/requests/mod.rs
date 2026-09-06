@@ -572,9 +572,18 @@ pub(crate) fn gate_decision(
 /// caller is the app itself.
 ///
 /// The message is deliberately the same for "no such session" and "not yours",
-/// so answering leaks no more than the timeout already did. Anything that is not
-/// a gated LocalDB request keeps being dropped: the gate only ever refuses these
-/// four, and inventing a response shape for the rest would be guesswork.
+/// so answering leaks no more than the timeout already did.
+///
+/// This said "the gate only ever refuses these four", which was FALSE: 38
+/// request variants return `Some` from `session_cid()` and so are gated, while
+/// this function answered six. The other 32 were refused in silence, and the
+/// caller sat out its whole budget -- thirty seconds for a P2P request -- before
+/// reporting a timeout that names the wrong cause. A browser whose session had
+/// been claimed elsewhere hit that on every message, every file, every call.
+///
+/// Twenty-two now answer with their own Failure variant. Ten stay silent for
+/// reasons written beside them, and the exhaustiveness test asserts exactly
+/// that list.
 fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<HandledRequestResult> {
     /// Same wording for every refusal; see above.
     const REFUSED: &str = "Session unavailable to this connection";
@@ -654,6 +663,167 @@ fn refusal_response(command: &InternalServiceRequest, uuid: Uuid) -> Option<Hand
                 request_id: Some(*request_id),
             })
         }
+        InternalServiceRequest::DeleteVirtualFile {
+            request_id, cid, ..
+        } => InternalServiceResponse::DeleteVirtualFileFailure(DeleteVirtualFileFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::DownloadFile {
+            request_id, cid, ..
+        } => InternalServiceResponse::DownloadFileFailure(DownloadFileFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::GroupCreate {
+            request_id, cid, ..
+        } => InternalServiceResponse::GroupCreateFailure(GroupCreateFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::GroupEnd {
+            request_id, cid, ..
+        } => InternalServiceResponse::GroupEndFailure(GroupEndFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::GroupInvite {
+            request_id, cid, ..
+        } => InternalServiceResponse::GroupInviteFailure(GroupInviteFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::GroupKick {
+            request_id, cid, ..
+        } => InternalServiceResponse::GroupKickFailure(GroupKickFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::GroupLeave {
+            request_id, cid, ..
+        } => InternalServiceResponse::GroupLeaveFailure(GroupLeaveFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::GroupMessage {
+            request_id, cid, ..
+        } => InternalServiceResponse::GroupMessageFailure(GroupMessageFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::GroupRequestJoin {
+            request_id, cid, ..
+        } => InternalServiceResponse::GroupRequestJoinFailure(GroupRequestJoinFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::GroupRespondRequest {
+            request_id, cid, ..
+        } => InternalServiceResponse::GroupRespondRequestFailure(GroupRespondRequestFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::ListAllPeers {
+            request_id, cid, ..
+        } => InternalServiceResponse::ListAllPeersFailure(ListAllPeersFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::ListRegisteredPeers {
+            request_id, cid, ..
+        } => InternalServiceResponse::ListRegisteredPeersFailure(ListRegisteredPeersFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::PeerConnect {
+            request_id, cid, ..
+        } => InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::PeerDisconnect {
+            request_id, cid, ..
+        } => InternalServiceResponse::PeerDisconnectFailure(PeerDisconnectFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::PeerRegister {
+            request_id, cid, ..
+        } => InternalServiceResponse::PeerRegisterFailure(PeerRegisterFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::PickFile {
+            request_id, cid, ..
+        } => InternalServiceResponse::PickFileFailure(PickFileFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::SendFile {
+            request_id, cid, ..
+        } => InternalServiceResponse::SendFileRequestFailure(SendFileRequestFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        InternalServiceRequest::Message {
+            request_id, cid, ..
+        } => InternalServiceResponse::MessageSendFailure(MessageSendFailure {
+            cid: *cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        // `error`, not `message` -- this one's failure struct names the field
+        // differently, which is why a blanket rewrite could not have produced it.
+        InternalServiceRequest::PeerConnectAccept {
+            request_id,
+            cid,
+            peer_cid,
+            ..
+        } => InternalServiceResponse::PeerConnectAcceptFailure(PeerConnectAcceptFailure {
+            cid: *cid,
+            peer_cid: *peer_cid,
+            message: REFUSED.to_string(),
+            request_id: Some(*request_id),
+        }),
+        // Everything else stays silent, and each is a deliberate decision.
+        //
+        // The queries -- GroupListGroupsFor and LocalDBGetKV -- return DATA,
+        // and their response types carry no failure variant. A refusal would have to invent an empty result, which reads
+        // as "there is nothing" and is the absence-for-failure confusion this
+        // codebase has spent a dozen rounds removing.
+        //
+        // The media requests (MediaOpen, MediaClose, MediaSend) and
+        // RespondFileTransfer / PeerRegisterRespond answer over their own
+        // notification streams rather than a request/response pair.
+        //
+        // Named individually so the exhaustiveness test below can assert this
+        // list and nothing wider: a variant added to the gate without a
+        // decision fails that test rather than joining a silent default.
+        InternalServiceRequest::GroupListGroupsFor { .. }
+        | InternalServiceRequest::LocalDBGetKV { .. }
+        | InternalServiceRequest::MediaOpen { .. }
+        | InternalServiceRequest::MediaClose { .. }
+        | InternalServiceRequest::MediaSend { .. }
+        | InternalServiceRequest::RespondFileTransfer { .. }
+        | InternalServiceRequest::PeerRegisterRespond { .. } => return None,
+
         _ => return None,
     };
 
