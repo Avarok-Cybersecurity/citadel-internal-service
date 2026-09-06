@@ -55,8 +55,29 @@ pub async fn handle<T: IOInterface + Sync, R: Ratchet>(
                 .map(|s| s.connections.iter().any(|c| c.peer_cid == Some(peer_cid)))
                 .unwrap_or(false),
             Err(e) => {
-                info!(target: "citadel", "[PeerConnect] Failed to query SDK sessions: {:?}, assuming no peer", e);
-                false
+                // "Assuming no peer" reaches the else branch below, which drops
+                // the peer's sink from `conn.peers` -- and requests/message.rs
+                // finds the peer through exactly that map, so a transient
+                // stream error made an established P2P channel unreachable for
+                // sending while both sides still believed it was up.
+                info!(
+                    target: "citadel",
+                    "[PeerConnect] Failed to query SDK sessions: {:?}; refusing rather than \
+                     dropping the peer channel",
+                    e
+                );
+                return Some(HandledRequestResult {
+                    response: InternalServiceResponse::PeerConnectFailure(PeerConnectFailure {
+                        cid,
+                        message: format!(
+                            "Could not determine whether the channel to peer {} is still \
+                             open: {:?}. Nothing was changed; try again.",
+                            peer_cid, e
+                        ),
+                        request_id: Some(request_id),
+                    }),
+                    uuid,
+                });
             }
         };
 

@@ -93,8 +93,26 @@ pub async fn handle<T: IOInterface, R: Ratchet>(
         let sdk_active = match remote.sessions().await {
             Ok(sessions) => sessions.sessions.iter().any(|sess| sess.cid == cid),
             Err(e) => {
-                citadel_sdk::logging::warn!(target: "citadel", "[Connect] Failed to query SDK sessions: {:?}, assuming inactive", e);
-                false
+                // A FAILED query is not an empty answer. This assumed
+                // "inactive", and the branch that assumption reaches is
+                // destructive: it removes the map entry, prunes CID-scoped
+                // state, and then runs the SDK connect against a session the
+                // SDK may still hold -- the ratchet reset the
+                // SessionAlreadyActive branch exists to prevent. Refuse and
+                // let the caller retry; a transient stream error must not
+                // cost the user a live session.
+                citadel_sdk::logging::warn!(target: "citadel", "[Connect] Failed to query SDK sessions: {:?}; refusing rather than assuming the session is gone", e);
+                cleanup_username(this, &username);
+                let response = InternalServiceResponse::ConnectFailure(ConnectFailure {
+                    cid,
+                    message: format!(
+                        "Could not determine whether session {} is still active: {:?}. \
+                         Nothing was changed; try again.",
+                        cid, e
+                    ),
+                    request_id: Some(request_id),
+                });
+                return Some(HandledRequestResult { response, uuid });
             }
         };
 

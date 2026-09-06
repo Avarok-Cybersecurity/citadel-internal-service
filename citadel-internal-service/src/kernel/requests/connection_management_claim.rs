@@ -81,8 +81,31 @@ pub(super) async fn claim_session<T: IOInterface, R: Ratchet>(
     let sdk_active_cids: Vec<u64> = match remote.sessions().await {
         Ok(conns) => conns.sessions.into_iter().map(|s| s.cid).collect(),
         Err(e) => {
-            warn!(target: "citadel", "ClaimSession: Failed to query SDK sessions: {:?}", e);
-            vec![]
+            // An empty list here is not "the SDK has no sessions", it is "we
+            // could not ask". Step 4 treats absence as proof the session is
+            // dead and REMOVES it from the map before denying the claim, so a
+            // transient stream error destroyed a live, claimable session and
+            // told the user it was not claimable.
+            warn!(
+                target: "citadel",
+                "ClaimSession: Failed to query SDK sessions: {:?}; refusing rather than \
+                 treating the session as dead",
+                e
+            );
+            return Some(HandledRequestResult {
+                response: InternalServiceResponse::ConnectionManagementFailure(
+                    ConnectionManagementFailure {
+                        cid: session_cid,
+                        request_id: Some(request_id),
+                        error: format!(
+                            "Could not determine whether session {} is still active: {:?}. \
+                             Nothing was changed; try again.",
+                            session_cid, e
+                        ),
+                    },
+                ),
+                uuid: conn_id,
+            });
         }
     };
 
