@@ -1424,7 +1424,12 @@ pub enum InternalServiceRequest {
     Message {
         request_id: Uuid,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-        #[debug(with = bytes_debug_fmt)]
+        // Length only, like the inbound counterpart. This is the SAME material
+        // -- the user's decrypted message body -- and it was printing its first
+        // and last five bytes, which for a chat line is its opening word. The
+        // response side already learned this; the request side had not, which
+        // is how the original leak happened.
+        #[debug(with = plaintext_debug_fmt)]
         message: Vec<u8>,
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
@@ -1700,7 +1705,12 @@ pub enum InternalServiceRequest {
         #[cfg_attr(feature = "typescript", ts(type = "bigint"))]
         cid: u64,
         #[cfg_attr(feature = "typescript", ts(type = "number[]"))]
-        #[debug(with = bytes_debug_fmt)]
+        // Length only, like the inbound counterpart. This is the SAME material
+        // -- the user's decrypted message body -- and it was printing its first
+        // and last five bytes, which for a chat line is its opening word. The
+        // response side already learned this; the request side had not, which
+        // is how the original leak happened.
+        #[debug(with = plaintext_debug_fmt)]
         message: Vec<u8>,
         #[cfg_attr(feature = "typescript", ts(type = "MessageGroupKey"))]
         group_key: MessageGroupKey,
