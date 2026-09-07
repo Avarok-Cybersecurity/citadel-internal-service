@@ -3,7 +3,35 @@ import type { ConnectMode,UdpMode,SessionSecuritySettings,SecurityLevel,Transfer
 import type { ConfigCommand } from "./ConfigCommand";
 import type { FileSource } from "./FileSource";
 
-export type InternalServiceRequest = { "Connect": { request_id: string, username: string, password: number[], connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, server_addr: string, full_name: string, username: string, proposed_password: number[], connect_after_register: boolean, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
+export type InternalServiceRequest = { "Connect": { request_id: string, username: string, password: number[], connect_mode: ConnectMode, udp_mode: UdpMode, keep_alive_timeout: { secs: number; nanos: number } | null, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Register": { request_id: string, 
+/**
+ * `host:port`, resolved by the AGENT rather than by the browser.
+ *
+ * This was a `SocketAddr`, so the page had to resolve a hostname
+ * before it could register -- and it did so with a DNS-over-HTTPS
+ * fetch to `https://dns.google/resolve`. A hosted UI's own
+ * Content-Security-Policy refuses that connection, so every hostname
+ * address failed with a 30-second timeout while a raw IP worked; and
+ * where it did not fail it told Google which server each user was
+ * joining.
+ *
+ * The agent has a resolver and no CSP.
+ *
+ * Compatibility is NOT symmetric, and the first version of this
+ * comment claimed it was. Serde renders a `SocketAddr` as exactly this
+ * string, so an IP:port sent by either side parses on either side --
+ * but a client still typed `SocketAddr` cannot DESERIALIZE a hostname,
+ * which is the only case this change exists for. A browser holding a
+ * WASM build from before it refuses `citadel.avarok.net:12400` with
+ * `Deserialization error: invalid socket address syntax`, in the
+ * browser, before the request is ever sent -- so the agent logs
+ * nothing and the user waits out the 30s registration timeout.
+ *
+ * The UI bundle and its WASM client therefore ship together. That is
+ * already true of every build the pipeline produces; it is written
+ * down because the failure names neither the cause nor the component.
+ */
+server_addr: string, full_name: string, username: string, proposed_password: number[], connect_after_register: boolean, session_security_settings: SessionSecuritySettings, server_password: PreSharedKey | null, } } | { "Message": { request_id: string, message: number[], cid: bigint, peer_cid: bigint | null, security_level: SecurityLevel, } } | { "Disconnect": { request_id: string, cid: bigint, } } | { "MediaOpen": { request_id: string, cid: bigint, peer_cid: bigint, } } | { "MediaSend": { request_id: string, cid: bigint, peer_cid: bigint, 
 /**
  * Which stream within the call: audio, main video, or thumbnail video.
  */
