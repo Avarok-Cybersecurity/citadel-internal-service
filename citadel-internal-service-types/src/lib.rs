@@ -1394,9 +1394,21 @@ pub enum InternalServiceRequest {
         /// where it did not fail it told Google which server each user was
         /// joining.
         ///
-        /// The agent has a resolver and no CSP. On the wire this is unchanged:
-        /// serde renders a `SocketAddr` as exactly this string, so a client
-        /// built before this change still parses.
+        /// The agent has a resolver and no CSP.
+        ///
+        /// Compatibility is NOT symmetric, and the first version of this
+        /// comment claimed it was. Serde renders a `SocketAddr` as exactly this
+        /// string, so an IP:port sent by either side parses on either side --
+        /// but a client still typed `SocketAddr` cannot DESERIALIZE a hostname,
+        /// which is the only case this change exists for. A browser holding a
+        /// WASM build from before it refuses `citadel.avarok.net:12400` with
+        /// `Deserialization error: invalid socket address syntax`, in the
+        /// browser, before the request is ever sent -- so the agent logs
+        /// nothing and the user waits out the 30s registration timeout.
+        ///
+        /// The UI bundle and its WASM client therefore ship together. That is
+        /// already true of every build the pipeline produces; it is written
+        /// down because the failure names neither the cause nor the component.
         #[cfg_attr(feature = "typescript", ts(type = "string"))]
         server_addr: String,
         full_name: String,
